@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from nbnf.server import db
@@ -21,7 +22,17 @@ app = FastAPI(title="NfBnf", version="0.1.0", lifespan=lifespan)
 
 app.include_router(ws_router)
 
-
 static_path = Path(STATIC_DIR)
+_favicon_svg = static_path / "favicon.svg"
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon_ico() -> RedirectResponse:
+    """Browsers request /favicon.ico by default; avoid 404 noise in logs."""
+    if _favicon_svg.is_file():
+        return RedirectResponse(url="/favicon.svg", status_code=307)
+    return RedirectResponse(url="/", status_code=302)
+
+
 if static_path.is_dir():
     app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
