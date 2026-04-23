@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title QuantTape — Indian markets desk
+title QuantTape - Indian markets desk
 
 where python >nul 2>&1
 if errorlevel 1 (
@@ -12,8 +12,9 @@ if errorlevel 1 (
 )
 
 echo.
-echo  QuantTape — starting server at http://127.0.0.1:8000/
-echo  A browser tab will open in a few seconds. Close this window to stop the server.
+echo   QuantTape - starting server at http://127.0.0.1:8000/
+echo   A browser tab will open in a few seconds. Close this window to stop the server.
+echo   Tip: Ctrl+C stops uvicorn; if CMD asks "Terminate batch job (Y/N)?", type Y.
 echo.
 
 start "" "http://127.0.0.1:8000/"
