@@ -49,3 +49,6 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Local docs
+plan.docx
