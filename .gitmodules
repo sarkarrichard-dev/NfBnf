@@ -4,6 +4,3 @@
 [submodule "external/ml-intern"]
 	path = external/ml-intern
 	url = https://github.com/huggingface/ml-intern.git
-[submodule "external/ollama"]
-	path = external/ollama
-	url = https://github.com/ollama/ollama.git
