@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data & secrets (trading)
+*.csv
+*.parquet
+*.db
+*.sqlite
+secrets/
+*.pem
+token.json
+kite_session/
+
+# ML artifacts
+*.pkl
+*.joblib
+*.onnx
+mlruns/
+.wandb/
+
+# Build / test
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
