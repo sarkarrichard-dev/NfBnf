@@ -12,7 +12,12 @@ dependencies = [
   "httpx>=0.27",
   "python-dotenv>=1.0",
   "yfinance>=0.2.40",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
 ]
+
+[project.scripts]
+nbnf-serve = "nbnf.server.main:run"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
