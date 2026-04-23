@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from nbnf.india.constituents import get_indices_catalog
 from nbnf.server import db
 from nbnf.server.paths import STATIC_DIR
 from nbnf.server.ws import router as ws_router
@@ -24,6 +25,12 @@ app.include_router(ws_router)
 
 static_path = Path(STATIC_DIR)
 _favicon_svg = static_path / "favicon.svg"
+
+
+@app.get("/api/india/indices-catalog", include_in_schema=False)
+async def api_indices_catalog() -> dict:
+    """Categorized index constituents for the multiselect watchlist picker."""
+    return get_indices_catalog()
 
 
 @app.get("/favicon.ico", include_in_schema=False)

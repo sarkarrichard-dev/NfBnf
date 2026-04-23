@@ -6,8 +6,98 @@ const briefingEl = document.getElementById("briefing-text");
 const istLiveEl = document.getElementById("ist-live");
 const sessionPillEl = document.getElementById("session-pill");
 const watchlistUl = document.getElementById("watchlist-ul");
+const indexPickerRoot = document.getElementById("index-picker-root");
+const catalogDisclaimerEl = document.getElementById("catalog-disclaimer");
 
 let lastBriefText = "";
+let catalogData = null;
+
+function getCheckedStocks() {
+  const out = [];
+  document.querySelectorAll("input.catalog-cb:checked").forEach((el) => {
+    out.push({
+      symbol: el.dataset.symbol || "",
+      rank: Number(el.dataset.rank),
+      name: el.dataset.name || "",
+    });
+  });
+  return out;
+}
+
+function applyCatalogFilter() {
+  const q = (document.getElementById("catalog-filter").value || "").trim().toLowerCase();
+  document.querySelectorAll("label.picker-stock").forEach((lab) => {
+    const hay = (lab.dataset.search || "").toLowerCase();
+    lab.classList.toggle("hidden", q.length > 0 && !hay.includes(q));
+  });
+}
+
+function buildCatalogUI() {
+  indexPickerRoot.innerHTML = "";
+  if (!catalogData || !catalogData.categories) return;
+  catalogDisclaimerEl.textContent = catalogData.disclaimer || "";
+  for (const cat of catalogData.categories) {
+    const det = document.createElement("details");
+    det.className = "cat";
+    det.open = true;
+    const sum = document.createElement("summary");
+    sum.textContent = cat.label;
+    det.append(sum);
+    for (const idx of cat.indices || []) {
+      const idet = document.createElement("details");
+      idet.className = "idx";
+      idet.open = cat.id === "broad" && idx.id === "nifty50";
+      const isum = document.createElement("summary");
+      isum.append(document.createTextNode(`${idx.label} `));
+      const rn = document.createElement("span");
+      rn.className = "rank-note";
+      rn.textContent = idx.rank_note || "";
+      isum.append(rn);
+      idet.append(isum);
+      const grid = document.createElement("div");
+      grid.className = "picker-stock-grid";
+      const stocks = [...(idx.stocks || [])].sort((a, b) => a.rank - b.rank);
+      for (const st of stocks) {
+        const lab = document.createElement("label");
+        lab.className = "picker-stock";
+        lab.dataset.search = `${st.symbol} ${st.name}`.toLowerCase();
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "catalog-cb";
+        cb.dataset.symbol = st.symbol;
+        cb.dataset.rank = String(st.rank);
+        cb.dataset.name = st.name || "";
+        const span = document.createElement("span");
+        const rk = document.createElement("span");
+        rk.className = "rank";
+        rk.textContent = `#${st.rank}`;
+        const nm = document.createTextNode(` ${st.name} `);
+        const sy = document.createElement("span");
+        sy.className = "mono";
+        sy.textContent = `(${st.symbol})`;
+        span.append(rk, nm, sy);
+        lab.append(cb, span);
+        grid.append(lab);
+      }
+      idet.append(grid);
+      det.append(idet);
+    }
+    indexPickerRoot.append(det);
+  }
+}
+
+async function loadIndicesCatalog() {
+  try {
+    const r = await fetch("/api/india/indices-catalog");
+    if (!r.ok) throw new Error(String(r.status));
+    catalogData = await r.json();
+    buildCatalogUI();
+    log("index catalog loaded");
+  } catch (e) {
+    log(`index catalog failed: ${e}`);
+    indexPickerRoot.textContent = "Could not load index catalog.";
+  }
+}
 
 function log(line) {
   const ts = new Date().toISOString().slice(11, 19);
@@ -256,7 +346,40 @@ document.getElementById("sweep-btn").addEventListener("click", () => {
   ws.send(JSON.stringify({ type: "sweep", period, use_llm, force }));
 });
 
+document.getElementById("catalog-filter").addEventListener("input", applyCatalogFilter);
+document.getElementById("catalog-clear-checks").addEventListener("click", () => {
+  document.querySelectorAll("input.catalog-cb:checked").forEach((c) => {
+    c.checked = false;
+  });
+});
+document.getElementById("catalog-add").addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    log("socket not ready — cannot add to watchlist");
+    return;
+  }
+  const picks = getCheckedStocks();
+  if (!picks.length) {
+    log("no symbols checked in index picker");
+    return;
+  }
+  for (const p of picks) {
+    ws.send(JSON.stringify({ type: "watchlist_add", symbol: p.symbol }));
+  }
+  log(`watchlist add: ${picks.map((p) => p.symbol).join(", ")}`);
+});
+document.getElementById("catalog-set-symbol").addEventListener("click", () => {
+  const picks = getCheckedStocks();
+  if (!picks.length) {
+    log("check one or more symbols; best rank (lowest #) fills analyse field");
+    return;
+  }
+  picks.sort((a, b) => a.rank - b.rank);
+  document.getElementById("symbol").value = picks[0].symbol;
+  log(`analyse symbol → ${picks[0].symbol} (best rank among checked)`);
+});
+
 setInterval(tickIST, 1000);
 tickIST();
 
+loadIndicesCatalog();
 connect();

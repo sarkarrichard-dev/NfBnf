@@ -73,8 +73,22 @@
     </section>
 
     <section class="panel watchlist-panel">
-      <h2>Watchlist</h2>
-      <p class="hint">QuantTape uses this for sitreps and multi-symbol sweeps.</p>
+      <h2>Watchlist &amp; index picker</h2>
+      <p class="hint">
+        Indices are grouped (Broad → Nifty 50, Sectoral → Nifty Bank). Within each index, rank 1 is the top tier
+        (approximate weight snapshot — verify vs NSE). Multi-select, then add to the watchlist or send the best rank
+        to the analyse field.
+      </p>
+      <div class="picker-toolbar">
+        <input type="search" id="catalog-filter" placeholder="Filter name or ticker…" autocomplete="off" />
+        <button type="button" id="catalog-add">Add checked to watchlist</button>
+        <button type="button" id="catalog-set-symbol" class="secondary">Best rank → analyse symbol</button>
+        <button type="button" id="catalog-clear-checks" class="secondary">Clear checks</button>
+      </div>
+      <div id="index-picker-root" class="index-picker-root"></div>
+      <p class="hint subtle" id="catalog-disclaimer"></p>
+      <hr class="hr-soft" />
+      <p class="hint">Manual symbol (any Yahoo .NS / .BO)</p>
       <div class="watchlist-row">
         <input id="wl-symbol" type="text" placeholder="e.g. TCS.NS" autocomplete="off" />
         <button id="wl-add" type="button">Add</button>
