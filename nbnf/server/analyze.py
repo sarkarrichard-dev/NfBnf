@@ -5,13 +5,27 @@ from typing import Any
 from nbnf.brain.engine import run_brain
 from nbnf.market_yfinance import history
 from nbnf.server import db
+from nbnf.yahoo_study.study import yahoo_deep_study
 
 
-def run_analyze(symbol: str, period: str, *, use_llm: bool = True) -> dict[str, Any]:
+def run_analyze(
+    symbol: str,
+    period: str,
+    *,
+    use_llm: bool = True,
+    include_yahoo_deep: bool = True,
+) -> dict[str, Any]:
     sym = symbol.strip()
-    ohlc = history(sym, period=period, interval="1d")
+    yahoo_study: dict[str, Any] | None = None
+    if include_yahoo_deep:
+        yahoo_study = yahoo_deep_study(sym)
+        ohlc = history(sym, period="5y", interval="1d")
+    else:
+        ohlc = history(sym, period=period, interval="1d")
     tag_emas = db.get_tag_emas(sym)
     pack = run_brain(sym, ohlc, tag_emas, use_llm=use_llm)
+    if yahoo_study:
+        pack["summary"] = pack["summary"] + "\n\n" + yahoo_study["text_block"]
     fid = db.insert_finding(
         symbol=sym,
         summary=pack["summary"],
@@ -27,7 +41,7 @@ def run_analyze(symbol: str, period: str, *, use_llm: bool = True) -> dict[str, 
         fused=pack["brain"],
     )
     snap = db.learning_snapshot(sym)
-    return {
+    out: dict[str, Any] = {
         "finding_id": fid,
         "symbol": sym,
         "summary": pack["summary"],
@@ -39,3 +53,6 @@ def run_analyze(symbol: str, period: str, *, use_llm: bool = True) -> dict[str, 
         "brain": pack["brain"],
         "learning": snap,
     }
+    if yahoo_study is not None:
+        out["yahoo_study"] = yahoo_study
+    return out

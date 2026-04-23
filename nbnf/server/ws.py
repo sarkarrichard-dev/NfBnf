@@ -48,12 +48,20 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         symbol = str(payload.get("symbol") or "").strip()
         period = str(payload.get("period") or "1y")
         use_llm = bool(payload.get("use_llm", True))
+        include_yahoo_deep = bool(payload.get("include_yahoo_deep", True))
         if not symbol:
             await ws.send_json({"type": "error", "message": "symbol is required"})
             return
         await ws.send_json({"type": "status", "message": f"Fetching and scoring {symbol}…"})
         try:
-            result = await asyncio.to_thread(analyze.run_analyze, symbol, period, use_llm=use_llm)
+            result = await asyncio.to_thread(
+                lambda: analyze.run_analyze(
+                    symbol,
+                    period,
+                    use_llm=use_llm,
+                    include_yahoo_deep=include_yahoo_deep,
+                )
+            )
         except Exception as e:
             await ws.send_json({"type": "error", "message": str(e)})
             return
@@ -131,6 +139,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
     if ptype == "sweep":
         period = str(payload.get("period") or "3mo")
         use_llm = bool(payload.get("use_llm", True))
+        include_yahoo_deep = bool(payload.get("include_yahoo_deep", True))
         force = bool(payload.get("force", False))
         snap = await asyncio.to_thread(market_snapshot)
         if snap.get("phase") != "regular" and not force:
@@ -164,7 +173,12 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
             await ws.send_json({"type": "status", "message": f"Sweep: {sym}…"})
             try:
                 result = await asyncio.to_thread(
-                    lambda s=sym: analyze.run_analyze(s, period, use_llm=use_llm)
+                    lambda s=sym: analyze.run_analyze(
+                        s,
+                        period,
+                        use_llm=use_llm,
+                        include_yahoo_deep=include_yahoo_deep,
+                    )
                 )
             except Exception as e:
                 await ws.send_json({"type": "sweep_error", "symbol": sym, "message": str(e)})

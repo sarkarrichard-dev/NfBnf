@@ -56,13 +56,18 @@
         <input id="symbol" type="text" value="RELIANCE.NS" autocomplete="off" />
       </label>
       <label>
-        Period
+        Period (when deep Yahoo is off)
         <select id="period">
           <option value="3mo">3 months</option>
           <option value="6mo">6 months</option>
           <option value="1y" selected>1 year</option>
           <option value="2y">2 years</option>
+          <option value="5y">5 years</option>
         </select>
+      </label>
+      <label class="inline">
+        <input id="include-yahoo-deep" type="checkbox" checked />
+        Deep Yahoo: 5y daily + intraday slices + options (brain uses 5y daily)
       </label>
       <label class="inline">
         <input id="use-llm" type="checkbox" checked />

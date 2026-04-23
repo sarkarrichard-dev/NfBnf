@@ -420,6 +420,19 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+.yahoo-study {
+  margin: 0.5rem 0 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid #4a3d2f;
+  background: #181410;
+  color: #e8dcc8;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow: auto;
+}
+
 .feedback {
   display: flex;
   gap: 0.5rem;

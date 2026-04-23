@@ -246,8 +246,16 @@ function appendFinding(msg) {
     mkBtn("Agree / bullish cue", 1, "good"),
   );
 
+  let yahooEl = null;
+  if (msg.yahoo_study) {
+    yahooEl = document.createElement("pre");
+    yahooEl.className = "yahoo-study";
+    const ys = msg.yahoo_study;
+    yahooEl.textContent = [ys.yahoo_limits || "", "", ys.text_block || ""].join("\n");
+  }
   const stack = [header, metrics, summary];
   if (brainEl) stack.push(brainEl);
+  if (yahooEl) stack.push(yahooEl);
   stack.push(fb);
   card.append(...stack);
   findingsEl.prepend(card);
@@ -309,7 +317,8 @@ document.getElementById("analyze").addEventListener("click", () => {
   const symbol = document.getElementById("symbol").value.trim();
   const period = document.getElementById("period").value;
   const use_llm = document.getElementById("use-llm").checked;
-  ws.send(JSON.stringify({ type: "analyze", symbol, period, use_llm }));
+  const include_yahoo_deep = document.getElementById("include-yahoo-deep").checked;
+  ws.send(JSON.stringify({ type: "analyze", symbol, period, use_llm, include_yahoo_deep }));
 });
 
 document.getElementById("refresh-learning").addEventListener("click", () => {
@@ -342,8 +351,9 @@ document.getElementById("sweep-btn").addEventListener("click", () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const period = document.getElementById("sweep-period").value;
   const use_llm = document.getElementById("use-llm").checked;
+  const include_yahoo_deep = document.getElementById("include-yahoo-deep").checked;
   const force = document.getElementById("sweep-force").checked;
-  ws.send(JSON.stringify({ type: "sweep", period, use_llm, force }));
+  ws.send(JSON.stringify({ type: "sweep", period, use_llm, include_yahoo_deep, force }));
 });
 
 document.getElementById("catalog-filter").addEventListener("input", applyCatalogFilter);
