@@ -41,11 +41,11 @@ h1 {
   margin-left: 0.35rem;
 }
 
-.jarvis-bar {
+.qt-bar {
   margin: 1rem 1.5rem 0;
 }
 
-.jarvis-bar-row {
+.qt-bar-row {
   display: flex;
   flex-wrap: wrap;
   gap: 1rem;
@@ -54,7 +54,7 @@ h1 {
   margin-bottom: 0.65rem;
 }
 
-.jarvis-actions {
+.qt-actions {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;

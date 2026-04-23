@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from nbnf.india.market_clock import market_snapshot
-from nbnf.jarvis.persona import JARVIS_SYSTEM_INDIA
+from nbnf.quanttape.persona import QUANTTAPE_SYSTEM_INDIA
 from nbnf.server import db
 
 
@@ -27,7 +27,7 @@ def build_briefing(*, use_llm: bool = True) -> dict[str, Any]:
             payload = {"india": snap, "watchlist": wl}
             narrative = chat(
                 [
-                    {"role": "system", "content": JARVIS_SYSTEM_INDIA},
+                    {"role": "system", "content": QUANTTAPE_SYSTEM_INDIA},
                     {
                         "role": "user",
                         "content": "Give a 4-sentence sitrep for the operator from this JSON:\n"

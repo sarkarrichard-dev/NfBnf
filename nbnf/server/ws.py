@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from nbnf.india.market_clock import market_snapshot
-from nbnf.jarvis.briefing import build_briefing
+from nbnf.quanttape.briefing import build_briefing
 from nbnf.server import analyze, db, learn
 
 router = APIRouter()
@@ -184,8 +184,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.send_json(
         {
             "type": "hello",
-            "message": "JARVIS desk online — India session context active.",
-            "jarvis": True,
+            "message": "QuantTape online — NSE/BSE context (IST), ML+AI brain ready.",
+            "quanttape": True,
         }
     )
     try:

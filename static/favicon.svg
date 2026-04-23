@@ -1,7 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <rect width="32" height="32" rx="7" fill="#0f1115"/>
-  <path
-    d="M7 23V9h3v14H7zm6-14h10v2.8h-6.2v2.4H22v2.8h-5.2V23h-3V9z"
-    fill="#5bc0eb"
-  />
+  <!-- QT monogram + tape ticks -->
+  <path d="M6 9h4v14H6V9zm6 0h3v6h4V9h3v14h-3v-6h-4v6h-3V9z" fill="#5bc0eb"/>
+  <path d="M6 25h20" stroke="#2a3140" stroke-width="1.2" stroke-dasharray="2 2"/>
 </svg>

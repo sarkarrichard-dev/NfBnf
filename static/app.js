@@ -126,7 +126,7 @@ function appendFinding(msg) {
     const ml = msg.ml || {};
     const ai = msg.ai || {};
     brainEl.textContent = [
-      `JARVIS fused: ${b.action} · score ${Number(b.score).toFixed(3)} · conf ${Number(b.confidence).toFixed(2)} · ${b.agreement}`,
+      `QuantTape fused: ${b.action} · score ${Number(b.score).toFixed(3)} · conf ${Number(b.confidence).toFixed(2)} · ${b.agreement}`,
       `ML: regime=${ml.regime} score=${Number(ml.score).toFixed(3)}`,
       `AI: ${ai.stance} conf=${Number(ai.confidence).toFixed(2)} (${ai.version || ""})`,
     ].join("\n");
@@ -171,7 +171,7 @@ function connect() {
   ws = new WebSocket(wsUrl);
   ws.addEventListener("open", () => {
     setStatus(true);
-    log("JARVIS link established");
+    log("QuantTape link established");
     ws.send(JSON.stringify({ type: "learning_state" }));
     ws.send(JSON.stringify({ type: "watchlist_list" }));
   });

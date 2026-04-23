@@ -4,29 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>JARVIS · Indian markets</title>
+    <title>QuantTape · Indian markets</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="top">
       <div>
-        <h1>JARVIS <span class="badge">India desk</span></h1>
+        <h1>QuantTape <span class="badge">India desk</span></h1>
         <p class="sub">
-          IST session context · WebSocket copilot · pandas + yfinance · brain (ML + AI + your feedback) ·
-          optional voice readout in-browser
+          Quant + tape read · IST session clock · WebSocket desk · pandas + yfinance · fused ML + AI + your
+          feedback memory · optional in-browser readout
         </p>
       </div>
       <div id="ws-status" class="pill disconnected">WS: disconnected</div>
     </header>
 
-    <section class="jarvis-bar panel">
-      <div class="jarvis-bar-row">
+    <section class="qt-bar panel">
+      <div class="qt-bar-row">
         <div>
           <strong>Local IST</strong>
           <div id="ist-live" class="mono">—</div>
         </div>
         <div id="session-pill" class="pill session unknown">Session: —</div>
-        <div class="jarvis-actions">
+        <div class="qt-actions">
           <button id="sitrep" type="button">Sitrep</button>
           <button id="speak-brief" type="button" class="secondary" title="Read last sitrep aloud">
             Speak sitrep
@@ -74,7 +74,7 @@
 
     <section class="panel watchlist-panel">
       <h2>Watchlist</h2>
-      <p class="hint">Jarvis uses this for sitreps and future multi-symbol sweeps.</p>
+      <p class="hint">QuantTape uses this for sitreps and multi-symbol sweeps.</p>
       <div class="watchlist-row">
         <input id="wl-symbol" type="text" placeholder="e.g. TCS.NS" autocomplete="off" />
         <button id="wl-add" type="button">Add</button>
@@ -91,7 +91,7 @@
       <div class="panel">
         <h2>Learned signal rewards (EMA)</h2>
         <p class="hint">
-          Rate each finding; EMAs nudge the next bias. JARVIS still fuses ML + AI + this memory.
+          Rate each finding; EMAs nudge the next bias. QuantTape still fuses ML + AI + this memory.
         </p>
         <table class="table" id="learning-table">
           <thead>

@@ -5,7 +5,7 @@ from typing import Any
 import pandas as pd
 
 from nbnf.brain import ai_core, fusion, ml_core
-from nbnf.jarvis.persona import TAGLINE
+from nbnf.quanttape.persona import TAGLINE
 from nbnf.ml.features import build_features
 from nbnf.ml.findings import blend_bias
 

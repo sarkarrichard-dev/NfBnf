@@ -5,7 +5,7 @@ from typing import Any
 
 from nbnf.brain.jsonutil import extract_json_object
 from nbnf.brain.types import AIVoice, MLSignals, Stance
-from nbnf.jarvis.persona import JARVIS_SYSTEM_INDIA
+from nbnf.quanttape.persona import QUANTTAPE_SYSTEM_INDIA
 
 
 def _heuristic_ai(metrics: dict[str, Any], ml: MLSignals) -> AIVoice:
@@ -21,9 +21,9 @@ def _heuristic_ai(metrics: dict[str, Any], ml: MLSignals) -> AIVoice:
         confidence=0.35,
         focus=["structure_only"],
         caveats=[
-            "India desk: remote LLM unavailable; stance mirrors structural ML on NSE-style prints.",
+            "QuantTape: remote LLM unavailable; stance mirrors structural ML on NSE-style prints.",
         ],
-        narrative="Heuristic JARVIS voice (no API).",
+        narrative="QuantTape local voice (no API).",
         raw_response=None,
         version="ai_heuristic_v1",
     )
@@ -62,7 +62,7 @@ def infer(
             [
                 {
                     "role": "system",
-                    "content": JARVIS_SYSTEM_INDIA + " Output strict JSON only (no markdown fences).",
+                    "content": QUANTTAPE_SYSTEM_INDIA + " Output strict JSON only (no markdown fences).",
                 },
                 {
                     "role": "user",
