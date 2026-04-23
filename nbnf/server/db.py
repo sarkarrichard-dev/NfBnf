@@ -55,6 +55,11 @@ def init_db() -> None:
                 fused_json TEXT NOT NULL,
                 FOREIGN KEY (finding_id) REFERENCES findings(id)
             );
+            CREATE TABLE IF NOT EXISTS watchlist (
+                symbol TEXT NOT NULL PRIMARY KEY,
+                added_at TEXT NOT NULL,
+                note TEXT
+            );
             """
         )
         cx.commit()
@@ -149,6 +154,36 @@ def get_tag_emas(symbol: str) -> dict[str, float]:
             (symbol,),
         ).fetchall()
     return {str(r["tag"]): float(r["ema"]) for r in rows}
+
+
+def watchlist_add(symbol: str, note: str | None = None) -> None:
+    sym = symbol.strip()
+    if not sym:
+        return
+    with connect() as cx:
+        cx.execute(
+            """
+            INSERT INTO watchlist (symbol, added_at, note)
+            VALUES (?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET note = COALESCE(excluded.note, watchlist.note)
+            """,
+            (sym, _utc_now(), note),
+        )
+
+
+def watchlist_remove(symbol: str) -> bool:
+    sym = symbol.strip()
+    if not sym:
+        return False
+    with connect() as cx:
+        cur = cx.execute("DELETE FROM watchlist WHERE symbol = ?", (sym,))
+        return cur.rowcount > 0
+
+
+def watchlist_list() -> list[str]:
+    with connect() as cx:
+        rows = cx.execute("SELECT symbol FROM watchlist ORDER BY added_at ASC").fetchall()
+    return [str(r["symbol"]) for r in rows]
 
 
 def learning_snapshot(symbol: str | None) -> dict[str, Any]:

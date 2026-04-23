@@ -2,6 +2,12 @@ const logEl = document.getElementById("log");
 const statusEl = document.getElementById("ws-status");
 const findingsEl = document.getElementById("findings");
 const learningBody = document.querySelector("#learning-table tbody");
+const briefingEl = document.getElementById("briefing-text");
+const istLiveEl = document.getElementById("ist-live");
+const sessionPillEl = document.getElementById("session-pill");
+const watchlistUl = document.getElementById("watchlist-ul");
+
+let lastBriefText = "";
 
 function log(line) {
   const ts = new Date().toISOString().slice(11, 19);
@@ -12,6 +18,69 @@ function setStatus(connected) {
   statusEl.textContent = connected ? "WS: connected" : "WS: disconnected";
   statusEl.classList.toggle("connected", connected);
   statusEl.classList.toggle("disconnected", !connected);
+}
+
+function tickIST() {
+  const s = new Date().toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  istLiveEl.textContent = s + " (Asia/Kolkata)";
+}
+
+function renderSessionPill(india) {
+  if (!india) return;
+  sessionPillEl.textContent = `Session: ${india.phase} — ${india.label || ""}`;
+  sessionPillEl.classList.remove("unknown", "regular", "pre", "closed", "holiday");
+  const ph = india.phase || "";
+  if (ph === "regular") sessionPillEl.classList.add("regular");
+  else if (ph === "pre_open") sessionPillEl.classList.add("pre");
+  else if (ph === "weekend" || ph === "after_hours") sessionPillEl.classList.add("closed");
+  else if (ph === "holiday") sessionPillEl.classList.add("holiday");
+  else sessionPillEl.classList.add("unknown");
+}
+
+function renderBriefing(msg) {
+  lastBriefText = msg.text || "";
+  briefingEl.textContent = lastBriefText || JSON.stringify(msg.lines || [], null, 2);
+  renderSessionPill(msg.india);
+}
+
+function renderWatchlist(symbols) {
+  watchlistUl.innerHTML = "";
+  for (const sym of symbols || []) {
+    const li = document.createElement("li");
+    li.className = "watchlist-li";
+    const span = document.createElement("span");
+    span.textContent = sym;
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "wl-rm secondary";
+    rm.textContent = "Remove";
+    rm.addEventListener("click", () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "watchlist_remove", symbol: sym }));
+      }
+    });
+    li.append(span, rm);
+    watchlistUl.appendChild(li);
+  }
+}
+
+function speakLastBrief() {
+  if (!lastBriefText || !window.speechSynthesis) {
+    log("nothing to speak or speech API unavailable");
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(lastBriefText);
+  u.lang = "en-IN";
+  u.rate = 1.0;
+  window.speechSynthesis.speak(u);
 }
 
 function renderLearning(payload) {
@@ -57,7 +126,7 @@ function appendFinding(msg) {
     const ml = msg.ml || {};
     const ai = msg.ai || {};
     brainEl.textContent = [
-      `Fused: ${b.action} · score ${Number(b.score).toFixed(3)} · conf ${Number(b.confidence).toFixed(2)} · ${b.agreement}`,
+      `JARVIS fused: ${b.action} · score ${Number(b.score).toFixed(3)} · conf ${Number(b.confidence).toFixed(2)} · ${b.agreement}`,
       `ML: regime=${ml.regime} score=${Number(ml.score).toFixed(3)}`,
       `AI: ${ai.stance} conf=${Number(ai.confidence).toFixed(2)} (${ai.version || ""})`,
     ].join("\n");
@@ -68,7 +137,7 @@ function appendFinding(msg) {
   const hint = document.createElement("span");
   hint.style.color = "#9aa7b5";
   hint.style.fontSize = "0.85rem";
-  hint.textContent = "Feedback (feeds learning):";
+  hint.textContent = "Feedback (trains memory):";
   const mkBtn = (label, rating, cls) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -102,8 +171,9 @@ function connect() {
   ws = new WebSocket(wsUrl);
   ws.addEventListener("open", () => {
     setStatus(true);
-    log("socket open");
+    log("JARVIS link established");
     ws.send(JSON.stringify({ type: "learning_state" }));
+    ws.send(JSON.stringify({ type: "watchlist_list" }));
   });
   ws.addEventListener("close", () => {
     setStatus(false);
@@ -120,6 +190,12 @@ function connect() {
       return;
     }
     if (msg.type === "hello") log(msg.message || "hello");
+    if (msg.type === "briefing") {
+      renderBriefing(msg);
+      renderWatchlist(msg.watchlist);
+      log("sitrep updated");
+    }
+    if (msg.type === "watchlist") renderWatchlist(msg.symbols);
     if (msg.type === "status") log(msg.message || "status");
     if (msg.type === "error") log(`ERROR: ${msg.message}`);
     if (msg.type === "finding") appendFinding(msg);
@@ -144,5 +220,29 @@ document.getElementById("refresh-learning").addEventListener("click", () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "learning_state" }));
 });
+
+document.getElementById("sitrep").addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const use_llm = document.getElementById("use-llm").checked;
+  ws.send(JSON.stringify({ type: "brief", use_llm }));
+});
+
+document.getElementById("speak-brief").addEventListener("click", speakLastBrief);
+
+document.getElementById("wl-add").addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const symbol = document.getElementById("wl-symbol").value.trim();
+  if (!symbol) return;
+  ws.send(JSON.stringify({ type: "watchlist_add", symbol }));
+  document.getElementById("wl-symbol").value = "";
+});
+
+document.getElementById("wl-refresh").addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: "watchlist_list" }));
+});
+
+setInterval(tickIST, 1000);
+tickIST();
 
 connect();

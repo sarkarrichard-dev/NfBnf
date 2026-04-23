@@ -33,6 +33,111 @@ h1 {
   font-size: 1.35rem;
 }
 
+.badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+  vertical-align: middle;
+  margin-left: 0.35rem;
+}
+
+.jarvis-bar {
+  margin: 1rem 1.5rem 0;
+}
+
+.jarvis-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.65rem;
+}
+
+.jarvis-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+  color: var(--accent);
+}
+
+.briefing {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.85rem;
+  color: #d0dae6;
+  white-space: pre-wrap;
+}
+
+.pill.session.regular {
+  border-color: #2f5d3d;
+  color: var(--good);
+}
+
+.pill.session.pre {
+  border-color: #6b5a2a;
+  color: var(--warn);
+}
+
+.pill.session.closed {
+  color: var(--muted);
+}
+
+.pill.session.holiday {
+  border-color: #6b3a3a;
+  color: var(--bad);
+}
+
+.pill.session.unknown {
+  color: var(--muted);
+}
+
+.watchlist-panel {
+  margin: 1rem 1.5rem;
+}
+
+.watchlist-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.watchlist-row input {
+  min-width: 10rem;
+}
+
+.watchlist-ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.watchlist-li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: #12161d;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.25rem 0.45rem;
+  font-size: 0.85rem;
+}
+
+.wl-rm {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.45rem;
+}
+
 .sub {
   margin: 0;
   color: var(--muted);

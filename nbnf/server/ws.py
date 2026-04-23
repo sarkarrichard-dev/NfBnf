@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from nbnf.jarvis.briefing import build_briefing
 from nbnf.server import analyze, db, learn
 
 router = APIRouter()
@@ -94,13 +95,56 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         await ws.send_json({"type": "learning_update", **snap})
         return
 
+    if ptype == "brief":
+        use_llm = bool(payload.get("use_llm", True))
+        brief = await asyncio.to_thread(build_briefing, use_llm=use_llm)
+        await ws.send_json(brief)
+        return
+
+    if ptype == "watchlist_add":
+        sym = str(payload.get("symbol") or "").strip()
+        if not sym:
+            await ws.send_json({"type": "error", "message": "symbol is required"})
+            return
+        note = str(payload.get("note") or "").strip() or None
+        await asyncio.to_thread(db.watchlist_add, sym, note)
+        syms = await asyncio.to_thread(db.watchlist_list)
+        await ws.send_json({"type": "watchlist", "symbols": syms})
+        return
+
+    if ptype == "watchlist_remove":
+        sym = str(payload.get("symbol") or "").strip()
+        if not sym:
+            await ws.send_json({"type": "error", "message": "symbol is required"})
+            return
+        await asyncio.to_thread(db.watchlist_remove, sym)
+        syms = await asyncio.to_thread(db.watchlist_list)
+        await ws.send_json({"type": "watchlist", "symbols": syms})
+        return
+
+    if ptype == "watchlist_list":
+        syms = await asyncio.to_thread(db.watchlist_list)
+        await ws.send_json({"type": "watchlist", "symbols": syms})
+        return
+
     await ws.send_json({"type": "error", "message": f"unknown type: {ptype}"})
 
 
 @router.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     await manager.connect(ws)
-    await ws.send_json({"type": "hello", "message": "connected"})
+    await ws.send_json(
+        {
+            "type": "hello",
+            "message": "JARVIS desk online — India session context active.",
+            "jarvis": True,
+        }
+    )
+    try:
+        brief = await asyncio.to_thread(build_briefing, use_llm=True)
+        await ws.send_json(brief)
+    except Exception as e:
+        await ws.send_json({"type": "error", "message": f"briefing failed: {e}"})
     try:
         while True:
             raw = await ws.receive_text()

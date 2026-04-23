@@ -5,6 +5,7 @@ from typing import Any
 import pandas as pd
 
 from nbnf.brain import ai_core, fusion, ml_core
+from nbnf.jarvis.persona import TAGLINE
 from nbnf.ml.features import build_features
 from nbnf.ml.findings import blend_bias
 
@@ -29,7 +30,7 @@ def run_brain(
     fused = fusion.fuse(ml, ai, learned_bias)
 
     summary_lines = [
-        f"=== Brain ({symbol}) ===",
+        f"=== {TAGLINE} // Brain // {symbol} ===",
         f"[ML {ml.version}] regime={ml.regime} score={ml.score:+.3f} conf={ml.confidence:.2f}",
         f"  {ml.rationale}",
         f"[AI {ai.version}] stance={ai.stance} conf={ai.confidence:.2f} focus={ai.focus}",
