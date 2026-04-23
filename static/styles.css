@@ -197,6 +197,17 @@ button:disabled {
   white-space: pre-wrap;
 }
 
+.brain {
+  margin: 0.5rem 0 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid #2f4a63;
+  background: #101820;
+  color: #c9e4f5;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+}
+
 .feedback {
   display: flex;
   gap: 0.5rem;

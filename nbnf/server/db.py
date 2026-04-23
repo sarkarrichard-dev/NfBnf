@@ -45,6 +45,16 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (symbol, tag)
             );
+            CREATE TABLE IF NOT EXISTS brain_decisions (
+                id TEXT PRIMARY KEY,
+                finding_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                ml_json TEXT NOT NULL,
+                ai_json TEXT NOT NULL,
+                fused_json TEXT NOT NULL,
+                FOREIGN KEY (finding_id) REFERENCES findings(id)
+            );
             """
         )
         cx.commit()
@@ -80,6 +90,34 @@ def insert_finding(
             (fid, symbol, _utc_now(), summary, json.dumps(tags), json.dumps(metrics, default=str), bias),
         )
     return fid
+
+
+def insert_brain_decision(
+    *,
+    finding_id: str,
+    symbol: str,
+    ml: dict[str, Any],
+    ai: dict[str, Any],
+    fused: dict[str, Any],
+) -> str:
+    bid = str(uuid.uuid4())
+    with connect() as cx:
+        cx.execute(
+            """
+            INSERT INTO brain_decisions (id, finding_id, symbol, created_at, ml_json, ai_json, fused_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                bid,
+                finding_id,
+                symbol,
+                _utc_now(),
+                json.dumps(ml, default=str),
+                json.dumps(ai, default=str),
+                json.dumps(fused, default=str),
+            ),
+        )
+    return bid
 
 
 def get_finding(finding_id: str) -> dict[str, Any] | None:

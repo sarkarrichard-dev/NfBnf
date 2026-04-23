@@ -49,6 +49,20 @@ function appendFinding(msg) {
   summary.className = "summary";
   summary.textContent = msg.summary || "";
 
+  let brainEl = null;
+  if (msg.brain) {
+    brainEl = document.createElement("div");
+    brainEl.className = "brain";
+    const b = msg.brain;
+    const ml = msg.ml || {};
+    const ai = msg.ai || {};
+    brainEl.textContent = [
+      `Fused: ${b.action} · score ${Number(b.score).toFixed(3)} · conf ${Number(b.confidence).toFixed(2)} · ${b.agreement}`,
+      `ML: regime=${ml.regime} score=${Number(ml.score).toFixed(3)}`,
+      `AI: ${ai.stance} conf=${Number(ai.confidence).toFixed(2)} (${ai.version || ""})`,
+    ].join("\n");
+  }
+
   const fb = document.createElement("div");
   fb.className = "feedback";
   const hint = document.createElement("span");
@@ -73,7 +87,10 @@ function appendFinding(msg) {
     mkBtn("Agree / bullish cue", 1, "good"),
   );
 
-  card.append(header, metrics, summary, fb);
+  const stack = [header, metrics, summary];
+  if (brainEl) stack.push(brainEl);
+  stack.push(fb);
+  card.append(...stack);
   findingsEl.prepend(card);
 }
 
