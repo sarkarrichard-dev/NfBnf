@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from nbnf.india.market_clock import market_snapshot
 from nbnf.jarvis.briefing import build_briefing
 from nbnf.server import analyze, db, learn
 
@@ -125,6 +126,53 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
     if ptype == "watchlist_list":
         syms = await asyncio.to_thread(db.watchlist_list)
         await ws.send_json({"type": "watchlist", "symbols": syms})
+        return
+
+    if ptype == "sweep":
+        period = str(payload.get("period") or "3mo")
+        use_llm = bool(payload.get("use_llm", True))
+        force = bool(payload.get("force", False))
+        snap = await asyncio.to_thread(market_snapshot)
+        if snap.get("phase") != "regular" and not force:
+            await ws.send_json(
+                {
+                    "type": "error",
+                    "message": (
+                        "Sweep is meant during NSE regular cash session (IST). "
+                        f"Current phase: {snap.get('phase')}. "
+                        "Send {\"type\":\"sweep\",\"force\":true,...} to run anyway."
+                    ),
+                }
+            )
+            return
+        wl = await asyncio.to_thread(db.watchlist_list)
+        if not wl:
+            await ws.send_json(
+                {"type": "error", "message": "Watchlist is empty — add symbols first."}
+            )
+            return
+        await ws.send_json(
+            {
+                "type": "sweep_start",
+                "symbols": wl,
+                "count": len(wl),
+                "period": period,
+                "india": snap,
+            }
+        )
+        for sym in wl:
+            await ws.send_json({"type": "status", "message": f"Sweep: {sym}…"})
+            try:
+                result = await asyncio.to_thread(
+                    lambda s=sym: analyze.run_analyze(s, period, use_llm=use_llm)
+                )
+            except Exception as e:
+                await ws.send_json({"type": "sweep_error", "symbol": sym, "message": str(e)})
+                continue
+            await ws.send_json({"type": "sweep_item", **result})
+        learn_snap = await asyncio.to_thread(db.learning_snapshot, None)
+        await ws.send_json({"type": "learning_update", **learn_snap})
+        await ws.send_json({"type": "sweep_done", "count": len(wl)})
         return
 
     await ws.send_json({"type": "error", "message": f"unknown type: {ptype}"})

@@ -30,6 +30,20 @@
           <button id="speak-brief" type="button" class="secondary" title="Read last sitrep aloud">
             Speak sitrep
           </button>
+          <label class="inline tight">
+            Sweep period
+            <select id="sweep-period">
+              <option value="1mo">1 month</option>
+              <option value="3mo" selected>3 months</option>
+              <option value="6mo">6 months</option>
+              <option value="1y">1 year</option>
+            </select>
+          </label>
+          <label class="inline tight">
+            <input id="sweep-force" type="checkbox" />
+            Force outside session
+          </label>
+          <button id="sweep-btn" type="button">Sweep watchlist</button>
         </div>
       </div>
       <pre id="briefing-text" class="briefing">Waiting for link…</pre>

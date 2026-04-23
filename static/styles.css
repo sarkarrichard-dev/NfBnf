@@ -202,6 +202,17 @@ label.inline {
   gap: 0.5rem;
 }
 
+label.inline.tight {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+label.inline.tight select {
+  min-width: 6.5rem;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.4rem;
+}
+
 button {
   background: var(--accent);
   color: #0b0d11;

@@ -199,6 +199,12 @@ function connect() {
     if (msg.type === "status") log(msg.message || "status");
     if (msg.type === "error") log(`ERROR: ${msg.message}`);
     if (msg.type === "finding") appendFinding(msg);
+    if (msg.type === "sweep_start") {
+      log(`sweep start: ${msg.count} symbols (${(msg.symbols || []).join(", ")})`);
+    }
+    if (msg.type === "sweep_item") appendFinding(msg);
+    if (msg.type === "sweep_error") log(`sweep error ${msg.symbol}: ${msg.message}`);
+    if (msg.type === "sweep_done") log(`sweep done (${msg.count} symbols)`);
     if (msg.type === "learning_update") renderLearning(msg);
     if (msg.type === "feedback_ack") log(`feedback stored for ${msg.finding_id} (${msg.rating})`);
     if (msg.type === "pong") log("pong");
@@ -240,6 +246,14 @@ document.getElementById("wl-add").addEventListener("click", () => {
 document.getElementById("wl-refresh").addEventListener("click", () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: "watchlist_list" }));
+});
+
+document.getElementById("sweep-btn").addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const period = document.getElementById("sweep-period").value;
+  const use_llm = document.getElementById("use-llm").checked;
+  const force = document.getElementById("sweep-force").checked;
+  ws.send(JSON.stringify({ type: "sweep", period, use_llm, force }));
 });
 
 setInterval(tickIST, 1000);
