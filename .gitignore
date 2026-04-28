@@ -24,10 +24,15 @@ env/
 Thumbs.db
 
 # Data & secrets (trading)
+data/
+data for ml/
+local_data/
 *.csv
 *.parquet
 *.db
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 secrets/
 *.pem
 token.json

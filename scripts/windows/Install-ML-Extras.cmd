@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
 
 title QuantTape - ML extras (data + Hugging Face)
 
@@ -26,7 +26,7 @@ if errorlevel 1 (
 
 echo.
 echo   Done. You can run:
-echo     Preview-ML-HF-Stream.cmd
-echo     Run-ML-Ingest-DataForML.cmd
+echo     scripts\windows\Preview-ML-HF-Stream.cmd
+echo     scripts\windows\Run-ML-Ingest-DataForML.cmd
 echo.
 pause

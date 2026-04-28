@@ -1,6 +1,0 @@
-[submodule "external/Agent-Reach"]
-	path = external/Agent-Reach
-	url = https://github.com/Panniantong/Agent-Reach.git
-[submodule "external/ml-intern"]
-	path = external/ml-intern
-	url = https://github.com/huggingface/ml-intern.git

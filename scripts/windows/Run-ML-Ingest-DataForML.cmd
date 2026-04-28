@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
 
 title QuantTape - SQLite ML catalog ingest ^(data for ml^)
 
@@ -11,7 +11,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-set "ROOT=%~dp0data for ml"
+set "ROOT=%CD%\data for ml"
 if not exist "%ROOT%" (
   echo [ERROR] Folder not found: "%ROOT%"
   pause
