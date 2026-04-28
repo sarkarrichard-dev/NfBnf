@@ -6,9 +6,14 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from nbnf.dhan.config import dhan_readiness
+from nbnf.dhan.market_feed import market_feed_status
 from nbnf.india.market_clock import market_snapshot
+from nbnf.ml.ingest import scan_and_ingest
+from nbnf.options.local_chain import local_option_chain_heatmap
 from nbnf.quanttape.briefing import build_briefing
 from nbnf.server import analyze, db, learn
+from nbnf.server.research import run_symbol_backtest
 
 router = APIRouter()
 
@@ -49,10 +54,11 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         period = str(payload.get("period") or "1y")
         use_llm = bool(payload.get("use_llm", True))
         include_yahoo_deep = bool(payload.get("include_yahoo_deep", True))
+        include_ml_digest = bool(payload.get("include_ml_digest", True))
         if not symbol:
             await ws.send_json({"type": "error", "message": "symbol is required"})
             return
-        await ws.send_json({"type": "status", "message": f"Fetching and scoring {symbol}…"})
+        await ws.send_json({"type": "status", "message": f"Fetching and scoring {symbol}..."})
         try:
             result = await asyncio.to_thread(
                 lambda: analyze.run_analyze(
@@ -60,6 +66,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
                     period,
                     use_llm=use_llm,
                     include_yahoo_deep=include_yahoo_deep,
+                    include_ml_digest=include_ml_digest,
                 )
             )
         except Exception as e:
@@ -136,10 +143,61 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         await ws.send_json({"type": "watchlist", "symbols": syms})
         return
 
+    if ptype == "ingest_ml_data":
+        await ws.send_json({"type": "status", "message": "Scanning local profile data folders..."})
+        try:
+            summary = await asyncio.to_thread(scan_and_ingest)
+        except Exception as e:
+            await ws.send_json({"type": "error", "message": str(e)})
+            return
+        await ws.send_json({"type": "ml_ingest_done", **summary})
+        return
+
+    if ptype == "ml_datasets_list":
+        rows = await asyncio.to_thread(lambda: db.fetch_ml_datasets(limit=500))
+        n = await asyncio.to_thread(db.ml_datasets_count)
+        summary = await asyncio.to_thread(db.ml_datasets_summary)
+        await ws.send_json({"type": "ml_datasets", "count": n, "summary": summary, "datasets": rows})
+        return
+
+    if ptype == "research_backtest":
+        symbol = str(payload.get("symbol") or "").strip()
+        period = str(payload.get("period") or "5y")
+        horizon = int(payload.get("horizon_bars") or 5)
+        if not symbol:
+            await ws.send_json({"type": "error", "message": "symbol is required"})
+            return
+        await ws.send_json({"type": "status", "message": f"Backtesting {symbol} over {period}..."})
+        try:
+            result = await asyncio.to_thread(
+                lambda: run_symbol_backtest(symbol, period=period, horizon_bars=horizon)
+            )
+        except Exception as e:
+            await ws.send_json({"type": "error", "message": str(e)})
+            return
+        await ws.send_json({"type": "research_backtest", **result})
+        return
+
+    if ptype == "options_heatmap":
+        underlying = str(payload.get("underlying") or "nifty").strip() or "nifty"
+        trade_date = str(payload.get("trade_date") or "").strip() or None
+        result = await asyncio.to_thread(
+            lambda: local_option_chain_heatmap(underlying, trade_date=trade_date)
+        )
+        await ws.send_json({"type": "options_heatmap", **result})
+        return
+
+    if ptype == "dhan_status":
+        ready = await asyncio.to_thread(dhan_readiness)
+        feed = await asyncio.to_thread(market_feed_status)
+        await ws.send_json({"type": "dhan_status", "readiness": ready, "feed": feed})
+        return
+
     if ptype == "sweep":
         period = str(payload.get("period") or "3mo")
         use_llm = bool(payload.get("use_llm", True))
         include_yahoo_deep = bool(payload.get("include_yahoo_deep", True))
+        include_ml_digest = bool(payload.get("include_ml_digest", True))
         force = bool(payload.get("force", False))
         snap = await asyncio.to_thread(market_snapshot)
         if snap.get("phase") != "regular" and not force:
@@ -157,7 +215,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         wl = await asyncio.to_thread(db.watchlist_list)
         if not wl:
             await ws.send_json(
-                {"type": "error", "message": "Watchlist is empty — add symbols first."}
+                {"type": "error", "message": "Watchlist is empty - add symbols first."}
             )
             return
         await ws.send_json(
@@ -170,7 +228,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
             }
         )
         for sym in wl:
-            await ws.send_json({"type": "status", "message": f"Sweep: {sym}…"})
+            await ws.send_json({"type": "status", "message": f"Sweep: {sym}..."})
             try:
                 result = await asyncio.to_thread(
                     lambda s=sym: analyze.run_analyze(
@@ -178,6 +236,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
                         period,
                         use_llm=use_llm,
                         include_yahoo_deep=include_yahoo_deep,
+                        include_ml_digest=include_ml_digest,
                     )
                 )
             except Exception as e:
@@ -198,7 +257,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.send_json(
         {
             "type": "hello",
-            "message": "QuantTape online — NSE/BSE context (IST), ML+AI brain ready.",
+            "message": "QuantTape online - NSE/BSE context (IST), profile catalog + brain ready.",
             "quanttape": True,
         }
     )

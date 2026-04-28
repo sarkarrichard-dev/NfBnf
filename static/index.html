@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>QuantTape · Indian markets</title>
+    <title>QuantTape - Indian markets</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -12,8 +12,7 @@
       <div>
         <h1>QuantTape <span class="badge">India desk</span></h1>
         <p class="sub">
-          Quant + tape read · IST session clock · WebSocket desk · pandas + yfinance · fused ML + AI + your
-          feedback memory · optional in-browser readout
+          Market scan, Yahoo data, local profile catalog, AI voice, and feedback memory in one operator console.
         </p>
       </div>
       <div id="ws-status" class="pill disconnected">WS: disconnected</div>
@@ -23,9 +22,9 @@
       <div class="qt-bar-row">
         <div>
           <strong>Local IST</strong>
-          <div id="ist-live" class="mono">—</div>
+          <div id="ist-live" class="mono">-</div>
         </div>
-        <div id="session-pill" class="pill session unknown">Session: —</div>
+        <div id="session-pill" class="pill session unknown">Session: -</div>
         <div class="qt-actions">
           <button id="sitrep" type="button">Sitrep</button>
           <button id="speak-brief" type="button" class="secondary" title="Read last sitrep aloud">
@@ -47,7 +46,7 @@
           <button id="sweep-btn" type="button">Sweep watchlist</button>
         </div>
       </div>
-      <pre id="briefing-text" class="briefing">Waiting for link…</pre>
+      <pre id="briefing-text" class="briefing">Waiting for link...</pre>
     </section>
 
     <section class="panel controls">
@@ -73,21 +72,94 @@
         <input id="use-llm" type="checkbox" checked />
         Remote LLM (server API key)
       </label>
+      <label class="inline" title="Passes a compact digest of ingested local tables into the brain">
+        <input id="include-ml-digest" type="checkbox" checked />
+        Include local data digest
+      </label>
       <button id="analyze" type="button">Run analysis</button>
       <button id="refresh-learning" type="button" class="secondary">Learning table</button>
+    </section>
+
+    <section class="panel ml-ingest-panel">
+      <h2>Local Data Audit</h2>
+      <p class="hint">
+        This section is a profile catalog, not model training. It scans <span class="mono">data/</span>,
+        <span class="mono">data for ml/</span>, and <span class="mono">NBNF_ML_EXTRA_DIRS</span>, then stores file paths,
+        size, row samples, columns, and errors in SQLite. Analysis can include only a capped digest of that catalog.
+      </p>
+      <div id="ml-audit-cards" class="audit-cards" aria-live="polite"></div>
+      <div class="ml-ingest-row">
+        <button id="ml-ingest" type="button">Rescan folders</button>
+        <button id="ml-list" type="button" class="secondary">Refresh audit</button>
+      </div>
+      <pre id="ml-datasets-text" class="ml-datasets-preview">No audit loaded yet.</pre>
+    </section>
+
+    <section class="panel research-panel">
+      <h2>Bot Research Lab</h2>
+      <p class="hint">
+        Research mode only. This builds an ML-ready feature/label table from historical OHLCV and runs a walk-forward
+        backtest of the current structural signal. No broker orders are placed.
+      </p>
+      <div class="research-row">
+        <label>
+          Backtest horizon
+          <select id="bt-horizon">
+            <option value="3">3 bars</option>
+            <option value="5" selected>5 bars</option>
+            <option value="10">10 bars</option>
+            <option value="20">20 bars</option>
+          </select>
+        </label>
+        <label>
+          Backtest period
+          <select id="bt-period">
+            <option value="1y">1 year</option>
+            <option value="2y">2 years</option>
+            <option value="5y" selected>5 years</option>
+          </select>
+        </label>
+        <button id="run-backtest" type="button">Run backtest</button>
+      </div>
+      <pre id="backtest-text" class="backtest-preview">No backtest run yet.</pre>
+    </section>
+
+    <section class="panel heatmap-panel">
+      <h2>Options Heatmap</h2>
+      <p class="hint">
+        Local mode uses your historical option CSVs. Dhan mode is prepared for live market data once you add client ID,
+        access token, and security-ID mappings.
+      </p>
+      <div class="heatmap-row">
+        <label>
+          Underlying
+          <select id="heatmap-underlying">
+            <option value="nifty" selected>NIFTY</option>
+          </select>
+        </label>
+        <label>
+          Trade date
+          <input id="heatmap-date" type="text" placeholder="latest" autocomplete="off" />
+        </label>
+        <button id="load-heatmap" type="button">Load local heatmap</button>
+        <button id="dhan-status" type="button" class="secondary">Dhan status</button>
+      </div>
+      <div id="heatmap-summary" class="heatmap-summary">No option heatmap loaded yet.</div>
+      <div id="heatmap-table-wrap" class="heatmap-table-wrap"></div>
+      <pre id="dhan-status-text" class="backtest-preview">Dhan status not checked yet.</pre>
     </section>
 
     <section class="panel watchlist-panel">
       <h2>Watchlist &amp; index picker</h2>
       <p class="hint">
-        Indices are grouped (Broad → Nifty 50, Sectoral → Nifty Bank). Within each index, rank 1 is the top tier
-        (approximate weight snapshot — verify vs NSE). Multi-select, then add to the watchlist or send the best rank
+        Indices are grouped (Broad to Nifty 50, Sectoral to Nifty Bank). Within each index, rank 1 is the top tier
+        (approximate weight snapshot - verify vs NSE). Multi-select, then add to the watchlist or send the best rank
         to the analyse field.
       </p>
       <div class="picker-toolbar">
-        <input type="search" id="catalog-filter" placeholder="Filter name or ticker…" autocomplete="off" />
+        <input type="search" id="catalog-filter" placeholder="Filter name or ticker..." autocomplete="off" />
         <button type="button" id="catalog-add">Add checked to watchlist</button>
-        <button type="button" id="catalog-set-symbol" class="secondary">Best rank → analyse symbol</button>
+        <button type="button" id="catalog-set-symbol" class="secondary">Best rank to analyse</button>
         <button type="button" id="catalog-clear-checks" class="secondary">Clear checks</button>
       </div>
       <div id="index-picker-root" class="index-picker-root"></div>
@@ -110,7 +182,7 @@
       <div class="panel">
         <h2>Learned signal rewards (EMA)</h2>
         <p class="hint">
-          Rate each finding; EMAs nudge the next bias. QuantTape still fuses ML + AI + this memory.
+          Rate each finding; EMAs nudge the next bias. QuantTape still fuses structural signals, AI, and this memory.
         </p>
         <table class="table" id="learning-table">
           <thead>

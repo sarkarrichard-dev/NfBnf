@@ -16,6 +16,7 @@ def run_brain(
     tag_emas: dict[str, float],
     *,
     use_llm: bool = True,
+    ml_digest: str | None = None,
 ) -> dict[str, Any]:
     """
     One pass: features → ML signals → AI voice → fused decision.
@@ -26,7 +27,7 @@ def run_brain(
     learned_bias = blend_bias(metrics, tag_emas)
 
     ml = ml_core.infer(metrics, tags, ohlc)
-    ai = ai_core.infer(symbol, metrics, ml, learned_bias, use_llm=use_llm)
+    ai = ai_core.infer(symbol, metrics, ml, learned_bias, use_llm=use_llm, ml_digest=ml_digest)
     fused = fusion.fuse(ml, ai, learned_bias)
 
     summary_lines = [
@@ -40,6 +41,9 @@ def run_brain(
         f"  {fused.rationale}",
         f"[Learned bias from feedback EMAs] {learned_bias:+.3f}",
     ]
+    if ml_digest:
+        summary_lines.append("[Local data catalog digest - profiled files, not trained weights]")
+        summary_lines.append(ml_digest[:6000] + ("..." if len(ml_digest) > 6000 else ""))
     summary = "\n".join(summary_lines)
 
     return {

@@ -102,6 +102,149 @@ h1 {
   margin: 1rem 1.5rem;
 }
 
+.ml-ingest-panel {
+  margin: 1rem 1.5rem;
+}
+
+.research-panel {
+  margin: 1rem 1.5rem;
+}
+
+.heatmap-panel {
+  margin: 1rem 1.5rem;
+}
+
+.research-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 0.65rem;
+}
+
+.heatmap-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 0.65rem;
+}
+
+.heatmap-summary {
+  color: #d8e1ec;
+  font-size: 0.88rem;
+  margin: 0.4rem 0 0.65rem;
+}
+
+.heatmap-table-wrap {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.heatmap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.heatmap-table th,
+.heatmap-table td {
+  padding: 0.38rem 0.45rem;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.heatmap-table th {
+  position: sticky;
+  top: 0;
+  background: #111720;
+  color: #e8ecf1;
+}
+
+.heatmap-table tbody th {
+  position: static;
+  text-align: center;
+  color: var(--accent);
+  background: #0b0d11;
+}
+
+.heatmap-table .hot-1 {
+  background: #183126;
+}
+
+.heatmap-table .hot-2 {
+  background: #245237;
+}
+
+.heatmap-table .hot-3 {
+  background: #367d4c;
+  color: #effff2;
+  font-weight: 700;
+}
+
+.ml-ingest-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.audit-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.6rem;
+  margin: 0.8rem 0;
+}
+
+.audit-card {
+  border: 1px solid var(--border);
+  background: #0b0d11;
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+}
+
+.audit-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.audit-card strong {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
+.ml-datasets-preview {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 0.8rem;
+  color: #c8d2de;
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  background: #0b0d11;
+}
+
+.backtest-preview {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 0.8rem;
+  color: #d8e1ec;
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  background: #0b0d11;
+}
+
 .hr-soft {
   border: none;
   border-top: 1px solid var(--border);

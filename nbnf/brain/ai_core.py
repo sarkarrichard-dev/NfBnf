@@ -36,6 +36,7 @@ def infer(
     data_bias: float,
     *,
     use_llm: bool,
+    ml_digest: str | None = None,
 ) -> AIVoice:
     if not use_llm:
         return _heuristic_ai(metrics, ml)
@@ -45,17 +46,20 @@ def infer(
     except Exception:
         return _heuristic_ai(metrics, ml)
 
-    payload = {
+    payload: dict[str, Any] = {
         "symbol": symbol,
         "metrics": metrics,
         "ml": ml.to_dict(),
         "learned_bias": data_bias,
     }
+    if ml_digest:
+        payload["ml_local_datasets_digest"] = ml_digest[:8000]
     instruction = (
         "Return ONLY a JSON object (no markdown) with keys: "
         "stance (bullish|bearish|neutral), confidence (0-1 number), "
         "focus (string array of short topics), caveats (string array), "
-        "narrative (one short paragraph, data-only, no trade advice)."
+        "narrative (one short paragraph, data-only, no trade advice). "
+        "If ml_local_datasets_digest is present, mention how it complements the price snapshot (no promises)."
     )
     try:
         raw = chat(
