@@ -22,6 +22,7 @@ def run_brain(
     extra_metrics: dict[str, Any] | None = None,
     online_hf_digest: str | None = None,
     global_context_digest: str | None = None,
+    dhan_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     One pass: features → ML signals → AI voice → fused decision.
@@ -49,6 +50,7 @@ def run_brain(
         heatmap_digest=(heatmap_context or {}).get("digest") if heatmap_context else None,
         online_hf_digest=online_hf_digest,
         global_context_digest=global_context_digest,
+        dhan_quote_digest=(dhan_context or {}).get("digest") if dhan_context else None,
     )
     fused = fusion.fuse(ml, ai, learned_bias, learning_context)
 
@@ -85,6 +87,10 @@ def run_brain(
     if global_context_digest:
         summary_lines.append("[Global cross-asset Yahoo snapshot]")
         summary_lines.append(global_context_digest[:4000] + ("..." if len(global_context_digest) > 4000 else ""))
+    if dhan_context and (dhan_context.get("digest") or "").strip():
+        summary_lines.append("[Dhan LTP / quote (when mapped)]")
+        d = str(dhan_context.get("digest") or "")
+        summary_lines.append(d[:3500] + ("..." if len(d) > 3500 else ""))
     if ml_digest:
         summary_lines.append("[Optional local file catalog digest — SQLite ingest, not Hub]")
         summary_lines.append(ml_digest[:6000] + ("..." if len(ml_digest) > 6000 else ""))
@@ -104,5 +110,6 @@ def run_brain(
         "brain": fused.to_dict(),
         "learning_context": learning_context or {},
         "heatmap_context": heatmap_context or {},
+        "dhan_context": dhan_context or {},
         "summary": summary,
     }

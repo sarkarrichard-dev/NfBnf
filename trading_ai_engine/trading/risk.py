@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from math import floor
 from typing import Any
 
+from trading_ai_engine.trading.fno_instruments import fno_contract_context
+
 
 @dataclass(frozen=True)
 class RiskConfig:
@@ -107,30 +109,59 @@ def build_trade_plan(
 
     risk_budget = cfg.starting_equity * cfg.risk_per_trade_pct
     max_notional = cfg.starting_equity * cfg.max_position_pct
-    qty_by_risk = floor(risk_budget / max(close_f * stop_pct, 0.01)) if close_f > 0 else 0
-    qty_by_notional = floor(max_notional / close_f) if close_f > 0 else 0
-    qty = max(0, min(qty_by_risk, qty_by_notional))
-    if qty < 1 and not vetoes:
-        vetoes.append("size_below_one_share")
+    focus = str(metrics.get("market_focus") or "")
+    fno_ctx = fno_contract_context(symbol, market_focus=focus)
+    instrument = str(fno_ctx.get("instrument_type") or "equity")
+    lot_size = int(fno_ctx.get("lot_size") or 1)
 
+    qty = 0
+    notional = 0.0
+    risk_amount = 0.0
+    stop_loss: float | None = None
+    target: float | None = None
     direction = 1 if side == "long" else -1 if side == "short" else 0
-    stop_loss = close_f * (1 - stop_pct * direction) if direction else None
-    target = close_f * (1 + stop_pct * cfg.reward_risk * direction) if direction else None
-    notional = qty * close_f
-    risk_amount = qty * close_f * stop_pct
+
+    if instrument == "fno" and close_f > 0 and lot_size >= 1:
+        risk_per_contract = lot_size * close_f * stop_pct
+        max_lots_risk = floor(risk_budget / max(risk_per_contract, 1e-9))
+        contract_exposure = lot_size * close_f
+        max_lots_notional = floor(max_notional / max(contract_exposure, 1e-9))
+        lots = max(0, min(max_lots_risk, max_lots_notional))
+        qty = int(lots)
+        if qty < 1 and not vetoes:
+            vetoes.append("size_below_one_lot")
+        notional = qty * contract_exposure
+        risk_amount = qty * risk_per_contract if qty else 0.0
+        if direction:
+            stop_loss = close_f * (1 - stop_pct * direction)
+            target = close_f * (1 + stop_pct * cfg.reward_risk * direction)
+        sym_u = symbol.upper()
+        if "CE" in sym_u or "PE" in sym_u:
+            warnings.append(
+                "option_premium_model_stub: notional uses underlying-style exposure; refine with option price + delta when wired."
+            )
+    else:
+        qty_by_risk = floor(risk_budget / max(close_f * stop_pct, 0.01)) if close_f > 0 else 0
+        qty_by_notional = floor(max_notional / close_f) if close_f > 0 else 0
+        qty = max(0, min(qty_by_risk, qty_by_notional))
+        if qty < 1 and not vetoes:
+            vetoes.append("size_below_one_share")
+        notional = qty * close_f
+        risk_amount = qty * close_f * stop_pct
+        stop_loss = close_f * (1 - stop_pct * direction) if direction else None
+        target = close_f * (1 + stop_pct * cfg.reward_risk * direction) if direction else None
 
     if cfg.live_trading_enabled:
         warnings.append("live_trading_flag_seen_but_order_router_is_blocked")
-    if str(metrics.get("market_focus") or "") == "derivatives_intraday":
-        warnings.append(
-            "fno_qty_proxy: plan uses spot-style units; options/futures need lot size and margin model."
-        )
 
     return {
         "symbol": symbol,
         "mode": "paper",
         "action": action,
         "side": side,
+        "instrument_type": instrument,
+        "lot_size": lot_size if instrument == "fno" else 1,
+        "lots": int(qty) if instrument == "fno" else int(qty),
         "entry_price": round(close_f, 4) if close_f else None,
         "quantity": int(qty) if not vetoes else 0,
         "notional": round(notional, 2) if not vetoes else 0.0,
@@ -143,6 +174,7 @@ def build_trade_plan(
         "eligible": not vetoes,
         "reason": (
             f"{side} plan from brain score={score:+.3f}, confidence={confidence:.2f}; "
-            f"risk_per_trade={cfg.risk_per_trade_pct:.3%}, stop={stop_pct:.2%}"
+            f"risk_per_trade={cfg.risk_per_trade_pct:.3%}, stop={stop_pct:.2%}; "
+            f"instrument={instrument}, lot_size={lot_size}"
         ),
     }

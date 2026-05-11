@@ -37,7 +37,8 @@ def dhan_readiness() -> dict[str, Any]:
     data["mode"] = "data_feed_ready" if cfg.data_ready else "waiting_for_credentials"
     data["notes"] = [
         "Dhan live market feed is WebSocket-based and returns binary market packets.",
-        "This app will use Dhan for live heatmaps before any order placement is enabled.",
+        "REST LTP batch: POST /v2/marketfeed/ltp (see trading_ai_engine.dhan.quote_client) when credentials + TRADING_AI_DHAN_LTP_MAP are set.",
+        "This app will use Dhan for live heatmaps and LTP snapshots before any order placement is enabled.",
         "Live order placement remains blocked by the bot readiness gate.",
     ]
     return data

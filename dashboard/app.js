@@ -185,7 +185,7 @@ function renderAnalysis(data) {
       `Finding id: ${data.finding_id || "-"}`,
       `ML: ${ml.regime || "-"} | score ${Number(ml.score || 0).toFixed(3)}`,
       `Brain: ${brain.action || "-"} | confidence ${Number(brain.confidence || 0).toFixed(2)}`,
-      `Paper side: ${plan.side || "flat"} | quantity ${fmt(plan.quantity)}`,
+      `Paper side: ${plan.side || "flat"} | qty ${fmt(plan.quantity)} | type ${plan.instrument_type || "-"} | lots ${fmt(plan.lots)} @ lot ${plan.lot_size ?? "-"}`,
       `Entry: ${plan.entry_price ?? "-"} | Stop: ${plan.stop_loss ?? "-"} | Target: ${plan.target ?? "-"}`,
       `Vetoes: ${(plan.vetoes || []).join(", ") || "none"}`,
       `Warnings: ${(plan.warnings || []).join(", ") || "none"}`,
@@ -227,6 +227,28 @@ $("refresh-online-learning").addEventListener("click", async () => {
   try {
     const st = await api("/api/ml/online-learning/status");
     write("learning-output", JSON.stringify(st, null, 2));
+  } catch (e) {
+    write("learning-output", String(e.message || e));
+  }
+});
+
+$("dhan-quote-map").addEventListener("click", async () => {
+  try {
+    const st = await api("/api/dhan/quote-map");
+    write("learning-output", JSON.stringify(st, null, 2));
+  } catch (e) {
+    write("learning-output", String(e.message || e));
+  }
+});
+
+$("eval-research-modes").addEventListener("click", async () => {
+  const sym = $("brain-symbol").value.trim() || "^NSEI";
+  write("learning-output", "Running mode comparison (may take a minute)...");
+  try {
+    const data = await api(
+      `/api/research/eval-modes?symbol=${encodeURIComponent(sym)}&period=2y&interval=1d&horizon=5&cost_bps=12&spread_bps=0`
+    );
+    write("learning-output", JSON.stringify(data, null, 2));
   } catch (e) {
     write("learning-output", String(e.message || e));
   }
@@ -333,8 +355,9 @@ $("run-backtest").addEventListener("click", async () => {
   const mode = ($("bt-signal-mode") && $("bt-signal-mode").value) || "structural";
   write("backtest-output", "Running backtest...");
   try {
+    const sp = Number($("bt-spread")?.value || 0);
     const data = await api(
-      `/api/research/backtest?symbol=${encodeURIComponent(sym)}&period=5y&horizon=${h}&cost_bps=${cost}&signal_mode=${encodeURIComponent(mode)}`
+      `/api/research/backtest?symbol=${encodeURIComponent(sym)}&period=5y&horizon=${h}&cost_bps=${cost}&spread_bps=${sp}&signal_mode=${encodeURIComponent(mode)}`
     );
     const s = data.summary || {};
     const cfg = data.config || {};

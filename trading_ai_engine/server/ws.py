@@ -91,6 +91,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
                     include_global_context=bool(payload.get("include_global_context", True)),
                     include_hf_online_digest=bool(payload.get("include_hf_online_digest", True)),
                     include_strategy_features=bool(payload.get("include_strategy_features", True)),
+                    include_dhan_snapshot=bool(payload.get("include_dhan_snapshot", True)),
                 )
             )
         except Exception as e:
@@ -272,6 +273,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         interval = str(payload.get("interval") or "1d")
         horizon = int(payload.get("horizon_bars") or 5)
         cost_bps = float(payload.get("cost_bps") or 8.0)
+        spread_bps = float(payload.get("spread_bps") or 0.0)
         signal_mode = str(payload.get("signal_mode") or "structural")
         fast_ma = int(payload.get("fast_ma") or 20)
         slow_ma = int(payload.get("slow_ma") or 50)
@@ -289,6 +291,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
                     interval=interval,
                     horizon_bars=horizon,
                     cost_bps=cost_bps,
+                    spread_bps=spread_bps,
                     signal_mode=signal_mode,
                     fast_ma=fast_ma,
                     slow_ma=slow_ma,
@@ -364,6 +367,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
                         include_global_context=bool(payload.get("include_global_context", True)),
                         include_hf_online_digest=bool(payload.get("include_hf_online_digest", True)),
                         include_strategy_features=bool(payload.get("include_strategy_features", True)),
+                        include_dhan_snapshot=bool(payload.get("include_dhan_snapshot", True)),
                     )
                 )
             except Exception as e:

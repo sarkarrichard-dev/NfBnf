@@ -120,7 +120,10 @@ LEARNABLE_PARAMETER_CATALOG: dict[str, Any] = {
             "workstation_mapping": [
                 {"name": "TRADING_AI_HF_LEARNING_DATASETS", "type": "string", "env": True},
                 {"name": "HF_TOKEN / HUGGING_FACE_HUB_TOKEN", "type": "secret", "env": True},
+                {"name": "TRADING_AI_HF_TEXT_COL / TRADING_AI_HF_LABEL_COL", "type": "string", "env": True},
                 {"name": "ml.hf_online_digest.build_hf_online_learning_digest", "type": "code", "module": "trading_ai_engine.ml.hf_online_digest"},
+                {"name": "ml.hf_text_head_train.train_and_save", "type": "code", "module": "trading_ai_engine.ml.hf_text_head_train"},
+                {"name": "CLI trading-ai-train-hf-text", "type": "cli"},
                 {"name": "GET /api/ml/online-learning/status", "type": "api"},
                 {"name": "GET /api/ml/online-learning/preview", "type": "api"},
             ],
@@ -136,6 +139,9 @@ LEARNABLE_PARAMETER_CATALOG: dict[str, Any] = {
                 {"name": "TRADING_AI_GLOBAL_CONTEXT_PERIOD", "type": "string", "env": True},
                 {"name": "TRADING_AI_GLOBAL_CONTEXT_INTERVAL", "type": "string", "env": True},
                 {"name": "market_context.global_pack.fetch_global_context_snapshot", "type": "code", "module": "trading_ai_engine.market_context.global_pack"},
+                {"name": "TRADING_AI_DHAN_LTP_MAP", "type": "json", "env": True},
+                {"name": "dhan.quote_client.fetch_dhan_ltp_snapshot", "type": "code", "module": "trading_ai_engine.dhan.quote_client"},
+                {"name": "GET /api/dhan/quote-map", "type": "api"},
             ],
         },
         {
@@ -146,6 +152,8 @@ LEARNABLE_PARAMETER_CATALOG: dict[str, Any] = {
             ),
             "workstation_mapping": [
                 {"name": "market_context.strategy_features.extra_strategy_metrics", "type": "code", "module": "trading_ai_engine.market_context.strategy_features"},
+                {"name": "trading.fno_instruments.lot_size_for_symbol", "type": "code", "module": "trading_ai_engine.trading.fno_instruments"},
+                {"name": "TRADING_AI_FNO_LOT_MAP", "type": "json", "env": True},
             ],
         },
         {
@@ -162,6 +170,13 @@ LEARNABLE_PARAMETER_CATALOG: dict[str, Any] = {
                     "range_hint": "0-50 bps typical sensitivity",
                     "api": "GET /api/research/backtest?cost_bps=X",
                 },
+                {
+                    "name": "research_backtest.spread_bps",
+                    "type": "float",
+                    "api": "GET /api/research/backtest?spread_bps=4",
+                    "note": "Extra bps on top of cost_bps for wider spreads (F&O / illiquid names).",
+                },
+                {"name": "GET /api/research/eval-modes", "type": "api"},
                 {
                     "name": "quant.backtest_sweep",
                     "type": "code",

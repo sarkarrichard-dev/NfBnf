@@ -10,10 +10,12 @@ from trading_ai_engine.ml.hf_online_digest import build_hf_online_learning_diges
 from trading_ai_engine.ml.ingest import text_digest
 from trading_ai_engine.ml.market_learn import load_market_model
 from trading_ai_engine.server import db
+from trading_ai_engine.dhan.quote_client import fetch_dhan_ltp_snapshot
 from trading_ai_engine.trading.derivatives_focus import (
     FOCUS_DERIVATIVES_INTRADAY,
     resolve_brain_ohlc,
 )
+from trading_ai_engine.trading.fno_instruments import fno_contract_context
 from trading_ai_engine.trading.paper import plan_from_analysis
 from trading_ai_engine.trading.paper_gates import paper_placement_allowed
 from trading_ai_engine.yahoo_study.study import yahoo_deep_study
@@ -45,6 +47,7 @@ def run_analyze(
     include_global_context: bool = True,
     include_hf_online_digest: bool = True,
     include_strategy_features: bool = True,
+    include_dhan_snapshot: bool = True,
 ) -> dict[str, Any]:
     sym = symbol.strip()
     focus = (market_focus or os.environ.get("TRADING_AI_MARKET_FOCUS") or "balanced").strip().lower()
@@ -85,6 +88,13 @@ def run_analyze(
     if include_strategy_features:
         strat_metrics = extra_strategy_metrics(ohlc)
 
+    merged_extra: dict[str, Any] = {**(strat_metrics or {}), "market_focus": focus}
+    merged_extra.update(fno_contract_context(sym, market_focus=focus))
+
+    dhan_snap: dict[str, Any] = {}
+    if include_dhan_snapshot:
+        dhan_snap = fetch_dhan_ltp_snapshot(symbol=sym)
+
     heatmap_context: dict[str, Any] | None = None
     if include_heatmap:
         src_raw = (heatmap_source or "auto").strip().lower()
@@ -112,9 +122,10 @@ def run_analyze(
         ml_digest=ml_digest or None,
         learning_context=learning_context,
         heatmap_context=heatmap_context,
-        extra_metrics=strat_metrics or None,
+        extra_metrics=merged_extra or None,
         online_hf_digest=(hf_digest.strip() if hf_digest else None) or None,
         global_context_digest=(global_digest.strip() if global_digest else None) or None,
+        dhan_context=dhan_snap or None,
     )
     pack["metrics"]["market_focus"] = focus
     pack["metrics"]["ohlc_interval"] = ohlc_interval
@@ -129,8 +140,8 @@ def run_analyze(
     if focus == FOCUS_DERIVATIVES_INTRADAY:
         pack["summary"] = (
             pack["summary"]
-            + "\n[F&O / intraday] Heatmap + Yahoo options snapshot (when deep study on) support "
-            "options context; paper plan still uses spot-style quantity until lot sizing is wired."
+            + "\n[F&O / intraday] Heatmap + Yahoo options (when deep on); paper uses lot-sized contracts when "
+            "classified as F&O (see trade_plan.instrument_type). Map Dhan security IDs for live LTP."
         )
     if yahoo_study:
         pack["summary"] = pack["summary"] + "\n\n" + yahoo_study["text_block"]
@@ -161,6 +172,7 @@ def run_analyze(
         "brain": pack["brain"],
         "learning_context": pack["learning_context"],
         "heatmap_context": pack.get("heatmap_context") or {},
+        "dhan_context": pack.get("dhan_context") or {},
         "learning": snap,
     }
     out["trade_plan"] = plan_from_analysis(out)
@@ -182,6 +194,11 @@ def run_analyze(
         "global_context": global_meta,
         "hf_hub": hf_meta,
         "strategy_features": strat_metrics,
+        "dhan_ltp": {
+            "credentials_ready": bool((dhan_snap or {}).get("credentials_ready")),
+            "mapped_batch": (dhan_snap or {}).get("batch") or {},
+            "error": (dhan_snap or {}).get("error"),
+        },
         "local_file_digest_included": bool(ml_digest),
     }
     if ml_digest:

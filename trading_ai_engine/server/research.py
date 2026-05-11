@@ -15,6 +15,7 @@ def run_symbol_backtest(
     interval: str = "1d",
     horizon_bars: int = 5,
     cost_bps: float = 8.0,
+    spread_bps: float = 0.0,
     signal_mode: str = "structural",
     fast_ma: int = 20,
     slow_ma: int = 50,
@@ -40,6 +41,8 @@ def run_symbol_backtest(
         BacktestConfig(
             horizon_bars=max(1, int(horizon_bars)),
             cost_bps=float(cost_bps),
+            bar_interval=interval.strip() or "1d",
+            spread_bps=float(spread_bps),
             signal_mode=sm,
             fast_ma=max(2, int(fast_ma)),
             slow_ma=max(3, int(slow_ma)),

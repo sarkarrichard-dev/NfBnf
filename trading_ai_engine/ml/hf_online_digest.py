@@ -28,7 +28,7 @@ def online_learning_status() -> dict[str, Any]:
     }
 
 
-def _parse_dataset_spec(spec: str) -> tuple[str, str | None, str]:
+def parse_hub_dataset_spec(spec: str) -> tuple[str, str | None, str]:
     """Return (repo_id, config_name_or_none, split_name)."""
     parts = [p.strip() for p in spec.split(":") if p.strip()]
     if len(parts) == 1:
@@ -73,7 +73,7 @@ def build_hf_online_learning_digest(
 
     chunks: list[str] = []
     for spec in [s.strip() for s in raw.split(",") if s.strip()][:4]:
-        repo, config, split = _parse_dataset_spec(spec)
+        repo, config, split = parse_hub_dataset_spec(spec)
         entry: dict[str, Any] = {"spec": spec, "repo": repo, "config": config, "split": split}
         try:
             if config:

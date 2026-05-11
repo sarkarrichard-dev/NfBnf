@@ -41,6 +41,7 @@ def infer(
     heatmap_digest: str | None = None,
     online_hf_digest: str | None = None,
     global_context_digest: str | None = None,
+    dhan_quote_digest: str | None = None,
 ) -> AIVoice:
     if not use_llm:
         return _heuristic_ai(metrics, ml)
@@ -77,6 +78,8 @@ def infer(
         payload["online_hf_hub_digest"] = online_hf_digest[:8000]
     if global_context_digest:
         payload["global_cross_asset_digest"] = global_context_digest[:6000]
+    if dhan_quote_digest:
+        payload["dhan_market_quote_digest"] = dhan_quote_digest[:5000]
     instruction = (
         "Return ONLY a JSON object (no markdown) with keys: "
         "stance (bullish|bearish|neutral), confidence (0-1 number), "
@@ -88,7 +91,8 @@ def infer(
         "If online_hf_hub_digest is present, treat it as uncorrelated text/label samples from the Hub — "
         "possible sampling bias; do not treat as market truth. "
         "If global_cross_asset_digest is present, use it only as macro / cross-asset context vs the primary symbol. "
-        "Numeric keys strat_* and global_* in metrics are derived strategy / cross-asset features (heuristic proxies)."
+        "Numeric keys strat_* and global_* in metrics are derived strategy / cross-asset features (heuristic proxies). "
+        "If dhan_market_quote_digest is present, treat as broker LTP snapshot for mapped instruments only."
     )
     try:
         raw = chat(

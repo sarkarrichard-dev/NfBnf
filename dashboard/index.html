@@ -51,6 +51,8 @@
               <button id="refresh-learning" class="secondary" type="button">Model status</button>
               <button id="refresh-online-learning" type="button">HF online status</button>
               <button id="preview-hf-digest" class="secondary" type="button">Preview Hub sample</button>
+              <button id="dhan-quote-map" class="secondary" type="button">Dhan LTP map</button>
+              <button id="eval-research-modes" type="button">Eval research modes</button>
             </div>
           </header>
           <p class="subtitle tight">
@@ -199,6 +201,10 @@
             <label>
               Cost (bps / trade)
               <input id="bt-cost" type="number" min="0" max="200" value="8" step="0.5" />
+            </label>
+            <label>
+              Spread (bps, F&amp;O friction)
+              <input id="bt-spread" type="number" min="0" max="200" value="0" step="0.5" />
             </label>
           </div>
           <p class="subtitle tight">

@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from trading_ai_engine.dhan.config import dhan_readiness
 from trading_ai_engine.dhan.market_feed import market_feed_status
+from trading_ai_engine.dhan.quote_client import dhan_quote_operator_status
 from trading_ai_engine.india.constituents import get_indices_catalog
 from trading_ai_engine.ml.hf_online_digest import (
     build_hf_online_learning_digest,
@@ -42,6 +43,7 @@ from trading_ai_engine.market_vision.providers import HeatmapSource, fetch_heatm
 from trading_ai_engine.quant.backtest_sweep import sweep_backtest_grid
 from trading_ai_engine.quant.learnable_parameters import LEARNABLE_PARAMETER_CATALOG
 from trading_ai_engine.quant.strategy_taxonomy import GROWW_STRATEGY_TAXONOMY
+from trading_ai_engine.research.eval_harness import run_mode_comparison
 
 
 @asynccontextmanager
@@ -141,6 +143,7 @@ async def api_brain_analyze(payload: dict[str, Any] = Body(default_factory=dict)
         include_global_context=bool(payload.get("include_global_context", True)),
         include_hf_online_digest=bool(payload.get("include_hf_online_digest", True)),
         include_strategy_features=bool(payload.get("include_strategy_features", True)),
+        include_dhan_snapshot=bool(payload.get("include_dhan_snapshot", True)),
     )
 
 
@@ -177,6 +180,27 @@ async def api_learning_loops() -> dict:
     }
 
 
+@app.get("/api/research/eval-modes", include_in_schema=False)
+async def api_research_eval_modes(
+    symbol: str = "^NSEI",
+    period: str = "2y",
+    interval: str = "1d",
+    horizon: int = 5,
+    cost_bps: float = 12.0,
+    spread_bps: float = 0.0,
+) -> dict:
+    """Compare structural vs trend_ma vs mean_reversion_z on one symbol (research only)."""
+    rows = run_mode_comparison(
+        symbol,
+        period=period,
+        interval=interval,
+        horizon_bars=horizon,
+        cost_bps=cost_bps,
+        spread_bps=spread_bps,
+    )
+    return {"symbol": symbol, "period": period, "interval": interval, "rows": rows}
+
+
 @app.get("/api/research/backtest", include_in_schema=False)
 async def api_research_backtest(
     symbol: str = "RELIANCE.NS",
@@ -184,6 +208,7 @@ async def api_research_backtest(
     interval: str = "1d",
     horizon: int = 5,
     cost_bps: float = 8.0,
+    spread_bps: float = 0.0,
     signal_mode: str = "structural",
     fast_ma: int = 20,
     slow_ma: int = 50,
@@ -197,6 +222,7 @@ async def api_research_backtest(
         interval=interval,
         horizon_bars=horizon,
         cost_bps=cost_bps,
+        spread_bps=spread_bps,
         signal_mode=signal_mode,
         fast_ma=fast_ma,
         slow_ma=slow_ma,
@@ -289,6 +315,12 @@ async def api_dhan_readiness() -> dict:
 async def api_dhan_feed_status() -> dict:
     """Dhan live-feed capabilities and configured state."""
     return market_feed_status()
+
+
+@app.get("/api/dhan/quote-map", include_in_schema=False)
+async def api_dhan_quote_map() -> dict:
+    """Operator view: which symbols have Dhan LTP security_id mappings (see TRADING_AI_DHAN_LTP_MAP)."""
+    return dhan_quote_operator_status()
 
 
 @app.get("/favicon.ico", include_in_schema=False)

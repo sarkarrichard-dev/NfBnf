@@ -26,6 +26,23 @@ class BacktestConfig:
     slow_ma: int = 50
     z_lookback: int = 20
     z_entry: float = 1.0
+    bar_interval: str = "1d"
+    spread_bps: float = 0.0
+
+
+def bar_minutes_for_interval(interval: str) -> int | None:
+    i = (interval or "1d").strip().lower()
+    return {
+        "1m": 1,
+        "2m": 2,
+        "5m": 5,
+        "15m": 15,
+        "30m": 30,
+        "60m": 60,
+        "1h": 60,
+        "90m": 90,
+        "1d": 1440,
+    }.get(i)
 
 
 def _effective_min_bars(cfg: BacktestConfig) -> int:
@@ -109,7 +126,7 @@ def run_research_backtest(
         }
 
     trades: list[dict[str, Any]] = []
-    cost = cfg.cost_bps / 10_000.0
+    cost = (cfg.cost_bps + cfg.spread_bps) / 10_000.0
     for i in range(min_start, len(df) - cfg.horizon_bars):
         hist = df.iloc[: i + 1].copy()
         closes = hist["close"]
@@ -185,6 +202,13 @@ def run_research_backtest(
             "Research only. Results exclude intraday fills, option liquidity, broker limits, and taxes. "
             "Proxy modes (trend_ma, mean_reversion_z) are simplified teaching baselines, not venue-specific strategies."
         ),
+        "assumptions": {
+            "bar_interval": cfg.bar_interval,
+            "bar_minutes": bar_minutes_for_interval(cfg.bar_interval),
+            "horizon_bars": cfg.horizon_bars,
+            "round_trip_cost_bps": round(cfg.cost_bps + cfg.spread_bps, 4),
+            "spread_bps_note": "Add spread_bps for F&O / wider market friction on top of cost_bps.",
+        },
     }
     return {
         "symbol": symbol,
