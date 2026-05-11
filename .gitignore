@@ -26,6 +26,8 @@ Thumbs.db
 # Data & secrets (trading)
 data/
 data for ml/
+Your Trading Data/
+Files To Teach AI/
 local_data/
 *.csv
 *.parquet
@@ -55,5 +57,6 @@ dist/
 build/
 *.egg-info/
 
-# Local docs
+# Local guides
 plan.docx
+Original Project Plan.docx

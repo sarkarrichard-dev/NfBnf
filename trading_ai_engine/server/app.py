@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+from fastapi import Body, FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
+from trading_ai_engine.dhan.config import dhan_readiness
+from trading_ai_engine.dhan.market_feed import market_feed_status
+from trading_ai_engine.india.constituents import get_indices_catalog
+from trading_ai_engine.ml.ingest import scan_and_ingest
+from trading_ai_engine.ml.market_learn import (
+    InternetDatasetConfig,
+    build_market_training_frame,
+    download_indian_market_history,
+    learning_status,
+    train_market_model,
+)
+from trading_ai_engine.options.local_chain import available_trade_dates, local_option_chain_heatmap
+from trading_ai_engine.research.readiness import bot_readiness_snapshot
+from trading_ai_engine.server import db
+from trading_ai_engine.server.paths import DASHBOARD_DIR
+from trading_ai_engine.server.research import run_symbol_backtest
+from trading_ai_engine.server.ws import router as ws_router
+from trading_ai_engine.trading.evolution import evolution_snapshot
+from trading_ai_engine.trading.paper import place_paper_order, recent_paper_orders
+from trading_ai_engine.trading.risk import load_risk_config
+from trading_ai_engine.server import analyze
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    yield
+
+
+app = FastAPI(title="Trading AI Workstation", version="0.1.0", lifespan=lifespan)
+
+app.include_router(ws_router)
+
+dashboard_path = Path(DASHBOARD_DIR)
+_favicon_svg = dashboard_path / "favicon.svg"
+
+
+@app.get("/api/india/indices-catalog", include_in_schema=False)
+async def api_indices_catalog() -> dict:
+    """Categorized index constituents for the multiselect watchlist picker."""
+    return get_indices_catalog()
+
+
+@app.get("/api/ml/datasets", include_in_schema=False)
+async def api_ml_datasets() -> dict:
+    """Last-ingested tabular dataset profiles (from local folders)."""
+    return {
+        "count": db.ml_datasets_count(),
+        "summary": db.ml_datasets_summary(),
+        "datasets": db.fetch_ml_datasets(limit=500),
+    }
+
+
+@app.post("/api/ml/datasets/ingest", include_in_schema=False)
+async def api_ml_datasets_ingest() -> dict:
+    """Re-scan local data folders into SQLite."""
+    return scan_and_ingest()
+
+
+@app.get("/api/ml/market-learning/status", include_in_schema=False)
+async def api_market_learning_status() -> dict:
+    """Downloaded Indian market internet dataset and trained model status."""
+    return learning_status()
+
+
+@app.post("/api/ml/market-learning/train", include_in_schema=False)
+async def api_market_learning_train() -> dict:
+    """Train the local market model from the downloaded supervised frame."""
+    return train_market_model()
+
+
+@app.post("/api/ml/market-learning/download", include_in_schema=False)
+async def api_market_learning_download(years: int = 7, max_symbols: int = 25) -> dict:
+    """Download Indian daily market candles and build the supervised learning frame."""
+    cfg = InternetDatasetConfig(years=years, period=f"{years}y", max_symbols=max_symbols)
+    download = download_indian_market_history(config=cfg)
+    frame = build_market_training_frame(cfg)
+    return {"download": download, "frame": frame, "status": learning_status()}
+
+
+@app.post("/api/brain/analyze", include_in_schema=False)
+async def api_brain_analyze(payload: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    """Run the brain for one symbol and return the paper trade plan."""
+    symbol = str(payload.get("symbol") or "RELIANCE.NS").strip()
+    period = str(payload.get("period") or "1y")
+    return analyze.run_analyze(
+        symbol,
+        period,
+        use_llm=bool(payload.get("use_llm", False)),
+        include_yahoo_deep=bool(payload.get("include_yahoo_deep", False)),
+        include_ml_digest=bool(payload.get("include_ml_digest", False)),
+    )
+
+
+@app.get("/api/research/backtest", include_in_schema=False)
+async def api_research_backtest(symbol: str = "RELIANCE.NS", period: str = "5y", horizon: int = 5) -> dict:
+    """Research-only walk-forward backtest of the current structural signal logic."""
+    return run_symbol_backtest(symbol, period=period, horizon_bars=horizon)
+
+
+@app.get("/api/bot/readiness", include_in_schema=False)
+async def api_bot_readiness() -> dict:
+    """Hard gate: explain why this build is research-only until live safeguards exist."""
+    return bot_readiness_snapshot()
+
+
+@app.get("/api/trading/risk", include_in_schema=False)
+async def api_trading_risk() -> dict:
+    """Risk configuration used by the paper-trading router."""
+    return load_risk_config().to_dict()
+
+
+@app.get("/api/trading/paper/orders", include_in_schema=False)
+async def api_trading_paper_orders() -> dict:
+    """Recent paper orders and aggregate paper exposure."""
+    return recent_paper_orders()
+
+
+@app.post("/api/trading/paper/order", include_in_schema=False)
+async def api_trading_paper_order(payload: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    """Place a risk-checked paper order from the current brain plan."""
+    return place_paper_order(
+        finding_id=str(payload.get("finding_id") or ""),
+        symbol=str(payload.get("symbol") or ""),
+        plan=payload.get("plan") if isinstance(payload.get("plan"), dict) else {},
+        brain=payload.get("brain") if isinstance(payload.get("brain"), dict) else {},
+    )
+
+
+@app.get("/api/trading/evolution", include_in_schema=False)
+async def api_trading_evolution(symbol: str | None = None) -> dict:
+    """Brain evolution events from feedback and paper execution."""
+    return evolution_snapshot(symbol)
+
+
+@app.get("/api/options/dates", include_in_schema=False)
+async def api_options_dates(underlying: str = "nifty") -> dict:
+    """Available local option-chain trade dates."""
+    return {"underlying": underlying.upper(), "dates": available_trade_dates(underlying)}
+
+
+@app.get("/api/options/heatmap", include_in_schema=False)
+async def api_options_heatmap(underlying: str = "nifty", trade_date: str | None = None) -> dict:
+    """Local option-chain heatmap from historical CSVs."""
+    return local_option_chain_heatmap(underlying, trade_date=trade_date)
+
+
+@app.get("/api/dhan/readiness", include_in_schema=False)
+async def api_dhan_readiness() -> dict:
+    """Dhan data-feed readiness without exposing secrets."""
+    return dhan_readiness()
+
+
+@app.get("/api/dhan/feed/status", include_in_schema=False)
+async def api_dhan_feed_status() -> dict:
+    """Dhan live-feed capabilities and configured state."""
+    return market_feed_status()
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon_ico() -> RedirectResponse:
+    """Browsers request /favicon.ico by default; avoid 404 noise in logs."""
+    if _favicon_svg.is_file():
+        return RedirectResponse(url="/favicon.svg", status_code=307)
+    return RedirectResponse(url="/", status_code=302)
+
+
+if dashboard_path.is_dir():
+    app.mount("/", StaticFiles(directory=str(dashboard_path), html=True), name="dashboard")

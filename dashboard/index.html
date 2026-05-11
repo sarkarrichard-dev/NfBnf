@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Trading AI Workstation</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Trading AI Workstation</h1>
+        <div class="subtitle">Indian market learning, brain analysis, and paper trading</div>
+      </div>
+      <div class="status-row">
+        <span id="server-pill" class="pill waiting">Checking</span>
+        <span id="model-pill" class="pill waiting">Model</span>
+        <span id="paper-pill" class="pill waiting">Paper</span>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="panel overview">
+        <div class="metric">
+          <span>Market rows</span>
+          <strong id="metric-market-rows">-</strong>
+        </div>
+        <div class="metric">
+          <span>Training rows</span>
+          <strong id="metric-training-rows">-</strong>
+        </div>
+        <div class="metric">
+          <span>Paper orders</span>
+          <strong id="metric-paper-orders">-</strong>
+        </div>
+        <div class="metric">
+          <span>Live trading</span>
+          <strong id="metric-live">Blocked</strong>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Learn From Market Data</h2>
+            <button id="refresh-learning" class="secondary" type="button">Refresh</button>
+          </header>
+          <div class="form-grid">
+            <label>
+              Years
+              <select id="learn-years">
+                <option value="6">6</option>
+                <option value="7" selected>7</option>
+              </select>
+            </label>
+            <label>
+              Symbols
+              <input id="learn-symbols" type="number" min="5" max="120" value="25" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="download-data" type="button">Download Data</button>
+            <button id="train-model" class="secondary" type="button">Train Model</button>
+          </div>
+          <pre id="learning-output" class="readout">No model status loaded yet.</pre>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Run The Brain</h2>
+            <button id="analyze-symbol" class="secondary" type="button">Analyze</button>
+          </header>
+          <div class="form-grid">
+            <label>
+              Symbol
+              <input id="brain-symbol" type="text" value="RELIANCE.NS" autocomplete="off" />
+            </label>
+            <label>
+              Period
+              <select id="brain-period">
+                <option value="6mo">6 months</option>
+                <option value="1y" selected>1 year</option>
+                <option value="2y">2 years</option>
+                <option value="5y">5 years</option>
+              </select>
+            </label>
+          </div>
+          <div id="brain-summary" class="decision">No analysis yet.</div>
+          <button id="place-paper-order" class="trade-action" type="button" disabled>
+            Place Paper Order
+          </button>
+          <pre id="brain-output" class="readout">Waiting for analysis.</pre>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Paper Trading Journal</h2>
+            <button id="refresh-orders" class="secondary" type="button">Refresh</button>
+          </header>
+          <div id="orders-summary" class="decision">No paper orders loaded.</div>
+          <pre id="orders-output" class="readout">No orders yet.</pre>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Where Things Are</h2>
+          </header>
+          <div class="folder-list">
+            <div><strong>dashboard</strong><span>Fresh screen and buttons</span></div>
+            <div><strong>trading_ai_engine</strong><span>Brain, learning, risk, server</span></div>
+            <div><strong>Your Trading Data</strong><span>Private market data and memory</span></div>
+            <div><strong>Files To Teach AI</strong><span>Your extra CSV or Excel files</span></div>
+            <div><strong>guides</strong><span>Roadmap and safety notes</span></div>
+            <div><strong>learning_examples</strong><span>Optional Hugging Face examples</span></div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

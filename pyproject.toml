@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nbnf"
+name = "trading-ai-workstation"
 version = "0.1.0"
 description = "Indian equity research/trading helpers: pandas locally, intelligence via HTTP APIs."
 requires-python = ">=3.11"
@@ -17,9 +17,10 @@ dependencies = [
 ]
 
 [project.scripts]
-nbnf-serve = "nbnf.server.main:run"
-nbnf-ml-ingest = "nbnf.ml.ingest_cli:main"
-nbnf-ml-hf = "nbnf.ml.hf_cli:main"
+trading-ai-start = "trading_ai_engine.server.main:run"
+trading-ai-import-files = "trading_ai_engine.ml.ingest_cli:main"
+trading-ai-hugging-face = "trading_ai_engine.ml.hf_cli:main"
+trading-ai-learn-market = "trading_ai_engine.ml.market_learn_cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
@@ -28,7 +29,7 @@ hf = ["datasets>=3.0", "huggingface_hub>=0.24"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["nbnf*"]
+include = ["trading_ai_engine*"]
 
 [tool.ruff]
 line-length = 100
