@@ -34,6 +34,8 @@ from trading_ai_engine.server import analyze
 from trading_ai_engine.learning.post_mortem import run_post_mortem
 from trading_ai_engine.learning.refinement import learning_loop_status, load_refinement_for_context
 from trading_ai_engine.market_vision.providers import HeatmapSource, fetch_heatmap_snapshot
+from trading_ai_engine.quant.backtest_sweep import sweep_backtest_grid
+from trading_ai_engine.quant.learnable_parameters import LEARNABLE_PARAMETER_CATALOG
 
 
 @asynccontextmanager
@@ -158,6 +160,21 @@ async def api_research_backtest(
 ) -> dict:
     """Research-only walk-forward backtest of the current structural signal logic (costs in bps per round trip)."""
     return run_symbol_backtest(symbol, period=period, horizon_bars=horizon, cost_bps=cost_bps)
+
+
+@app.get("/api/quant/parameter-catalog", include_in_schema=False)
+async def api_quant_parameter_catalog() -> dict:
+    """Maps classic quant learnable families to this repo's env vars, modules, and HTTP knobs."""
+    return LEARNABLE_PARAMETER_CATALOG
+
+
+@app.get("/api/quant/backtest-sweep", include_in_schema=False)
+async def api_quant_backtest_sweep(
+    symbol: str = "RELIANCE.NS",
+    period: str = "5y",
+) -> dict:
+    """Coarse grid over horizon × cost_bps (research only); ranks combinations by equity / PF / drawdown."""
+    return sweep_backtest_grid(symbol, period=period)
 
 
 @app.get("/api/bot/readiness", include_in_schema=False)

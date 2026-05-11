@@ -228,6 +228,25 @@ $("run-post-mortem").addEventListener("click", async () => {
 
 $("refresh-loops").addEventListener("click", async () => renderLoops(await api("/api/learning/loops")));
 
+$("sweep-backtest").addEventListener("click", async () => {
+  const sym = $("brain-symbol").value.trim() || "RELIANCE.NS";
+  write("backtest-output", "Running coarse horizon × cost grid (may take a minute)...");
+  try {
+    const data = await api(`/api/quant/backtest-sweep?symbol=${encodeURIComponent(sym)}&period=5y`);
+    write(
+      "backtest-output",
+      [
+        `Best grid cell: ${JSON.stringify(data.best || {})}`,
+        "",
+        "Top ranked:",
+        ...(data.ranked || []).map((r) => JSON.stringify(r)),
+      ].join("\n")
+    );
+  } catch (e) {
+    write("backtest-output", String(e.message || e));
+  }
+});
+
 $("run-backtest").addEventListener("click", async () => {
   const sym = $("brain-symbol").value.trim() || "RELIANCE.NS";
   const h = Number($("bt-horizon").value || 5);
