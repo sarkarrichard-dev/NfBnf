@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from trading_ai_engine.brain.engine import run_brain
 from trading_ai_engine.market_yfinance import history
@@ -10,6 +10,9 @@ from trading_ai_engine.server import db
 from trading_ai_engine.trading.paper import plan_from_analysis
 from trading_ai_engine.trading.paper_gates import paper_placement_allowed
 from trading_ai_engine.yahoo_study.study import yahoo_deep_study
+from trading_ai_engine.learning.refinement import load_refinement_for_context
+from trading_ai_engine.market_vision.features import heatmap_ml_features, heatmap_text_digest
+from trading_ai_engine.market_vision.providers import HeatmapSource, fetch_heatmap_snapshot
 
 
 def run_analyze(
@@ -19,6 +22,9 @@ def run_analyze(
     use_llm: bool = True,
     include_yahoo_deep: bool = True,
     include_ml_digest: bool = True,
+    include_heatmap: bool = False,
+    heatmap_underlying: str = "nifty",
+    heatmap_source: str = "auto",
 ) -> dict[str, Any]:
     sym = symbol.strip()
     yahoo_study: dict[str, Any] | None = None
@@ -28,8 +34,28 @@ def run_analyze(
     else:
         ohlc = history(sym, period=period, interval="1d")
     learning_context = db.learning_context(sym)
+    learning_context.update(load_refinement_for_context())
     tag_emas = learning_context["tag_emas"]
     ml_digest = text_digest() if include_ml_digest else None
+    heatmap_context: dict[str, Any] | None = None
+    if include_heatmap:
+        src_raw = (heatmap_source or "auto").strip().lower()
+        src: HeatmapSource = cast(
+            HeatmapSource, src_raw if src_raw in ("auto", "local", "dhan") else "auto"
+        )
+        snap = fetch_heatmap_snapshot(
+            heatmap_underlying.strip().lower() or "nifty",
+            trade_date=None,
+            source=src,
+        )
+        heatmap_context = {
+            "features": heatmap_ml_features(snap),
+            "digest": heatmap_text_digest(snap),
+            "underlying": heatmap_underlying,
+            "trade_date": snap.get("trade_date"),
+            "summary": snap.get("summary"),
+            "heatmap_source": src,
+        }
     pack = run_brain(
         sym,
         ohlc,
@@ -37,6 +63,7 @@ def run_analyze(
         use_llm=use_llm,
         ml_digest=ml_digest or None,
         learning_context=learning_context,
+        heatmap_context=heatmap_context,
     )
     if yahoo_study:
         pack["summary"] = pack["summary"] + "\n\n" + yahoo_study["text_block"]
@@ -66,6 +93,7 @@ def run_analyze(
         "ai": pack["ai"],
         "brain": pack["brain"],
         "learning_context": pack["learning_context"],
+        "heatmap_context": pack.get("heatmap_context") or {},
         "learning": snap,
     }
     out["trade_plan"] = plan_from_analysis(out)

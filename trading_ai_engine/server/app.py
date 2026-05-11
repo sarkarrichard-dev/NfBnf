@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Body, FastAPI
 from fastapi.responses import RedirectResponse
@@ -31,6 +31,9 @@ from trading_ai_engine.trading.paper import place_paper_order, recent_paper_orde
 from trading_ai_engine.trading.readiness import workstation_readiness
 from trading_ai_engine.trading.risk import load_risk_config
 from trading_ai_engine.server import analyze
+from trading_ai_engine.learning.post_mortem import run_post_mortem
+from trading_ai_engine.learning.refinement import learning_loop_status, load_refinement_for_context
+from trading_ai_engine.market_vision.providers import HeatmapSource, fetch_heatmap_snapshot
 
 
 @asynccontextmanager
@@ -107,7 +110,43 @@ async def api_brain_analyze(payload: dict[str, Any] = Body(default_factory=dict)
         use_llm=bool(payload.get("use_llm", False)),
         include_yahoo_deep=bool(payload.get("include_yahoo_deep", False)),
         include_ml_digest=bool(payload.get("include_ml_digest", False)),
+        include_heatmap=bool(payload.get("include_heatmap", False)),
+        heatmap_underlying=str(payload.get("heatmap_underlying") or "nifty"),
+        heatmap_source=str(payload.get("heatmap_source") or "auto"),
     )
+
+
+@app.get("/api/market/heatmap", include_in_schema=False)
+async def api_market_heatmap(
+    underlying: str = "nifty",
+    trade_date: str | None = None,
+    source: str = "auto",
+) -> dict:
+    """Unified heatmap snapshot (local CSV now; Dhan when wired)."""
+    src = source.strip().lower()
+    hs: HeatmapSource = cast(HeatmapSource, src if src in ("auto", "local", "dhan") else "auto")
+    return fetch_heatmap_snapshot(underlying, trade_date=trade_date, source=hs)
+
+
+@app.post("/api/learning/post-mortem", include_in_schema=False)
+async def api_learning_post_mortem(payload: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    """Compare a past finding to forward returns; feeds the self-learning refinement loop."""
+    return run_post_mortem(
+        str(payload.get("finding_id") or ""),
+        horizon_bars=int(payload.get("horizon_bars") or 5),
+    )
+
+
+@app.get("/api/learning/loops", include_in_schema=False)
+async def api_learning_loops() -> dict:
+    """Self-learning file state + next-pass refinement nudge + recent post-mortems."""
+    events = db.fetch_evolution_events(limit=60)
+    pm = [e for e in events if e.get("event_type") == "post_mortem"]
+    return {
+        "refinement_for_next_brain": load_refinement_for_context(),
+        "loop_file": learning_loop_status(),
+        "recent_post_mortems": pm[:15],
+    }
 
 
 @app.get("/api/research/backtest", include_in_schema=False)

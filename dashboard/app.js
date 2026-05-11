@@ -1,5 +1,6 @@
 const state = {
   lastAnalysis: null,
+  lastFindingId: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -95,8 +96,27 @@ function renderReadiness(data) {
   ].join("\n"));
 }
 
+function renderLoops(data) {
+  const r = data.refinement_for_next_brain || {};
+  const pm = data.recent_post_mortems || [];
+  const file = data.loop_file || {};
+  write(
+    "loops-output",
+    [
+      `Next-brain nudge: ${r.refinement_score_nudge ?? "-"}`,
+      `Post-mortem window: ${JSON.stringify(r.post_mortem_summary || {})}`,
+      `Stored outcomes: ${file.outcomes_stored ?? 0}`,
+      "",
+      pm.length ? pm.map((e) => `${e.created_at} | ${e.event_type} | ${JSON.stringify(e.payload || {})}`).join("\n") : "No post-mortems yet.",
+    ].join("\n"),
+  );
+}
+
 function renderAnalysis(data) {
   state.lastAnalysis = data;
+  state.lastFindingId = data.finding_id || "";
+  const pmInput = $("post-mortem-id");
+  if (pmInput && state.lastFindingId) pmInput.value = state.lastFindingId;
   const brain = data.brain || {};
   const ml = data.ml || {};
   const plan = data.trade_plan || {};
@@ -104,33 +124,44 @@ function renderAnalysis(data) {
     `${data.symbol} | ${brain.action || "-"} | score ${Number(brain.score || 0).toFixed(3)} | ` +
     `plan ${plan.eligible ? "eligible" : "blocked"}`;
   $("place-paper-order").disabled = !plan.eligible;
+  const hm = data.heatmap_context || {};
+  const hmLine =
+    hm && hm.features
+      ? `Heatmap (${hm.underlying || "?"} @ ${hm.trade_date || "?"}): ${JSON.stringify(hm.features)}`
+      : "";
   write(
     "brain-output",
     [
+      `Finding id: ${data.finding_id || "-"}`,
       `ML: ${ml.regime || "-"} | score ${Number(ml.score || 0).toFixed(3)}`,
       `Brain: ${brain.action || "-"} | confidence ${Number(brain.confidence || 0).toFixed(2)}`,
       `Paper side: ${plan.side || "flat"} | quantity ${fmt(plan.quantity)}`,
       `Entry: ${plan.entry_price ?? "-"} | Stop: ${plan.stop_loss ?? "-"} | Target: ${plan.target ?? "-"}`,
       `Vetoes: ${(plan.vetoes || []).join(", ") || "none"}`,
+      hmLine,
       "",
       ml.rationale || "",
-    ].join("\n"),
+    ]
+      .filter(Boolean)
+      .join("\n"),
   );
 }
 
 async function refreshAll() {
   try {
     setPill("server-pill", "Online", true);
-    const [learning, orders, risk, readiness] = await Promise.all([
+    const [learning, orders, risk, readiness, loops] = await Promise.all([
       api("/api/ml/market-learning/status"),
       api("/api/trading/paper/orders"),
       api("/api/trading/risk"),
       api("/api/trading/readiness"),
+      api("/api/learning/loops"),
     ]);
     renderLearning(learning);
     renderOrders(orders);
     renderRisk(risk);
     renderReadiness(readiness);
+    renderLoops(loops);
   } catch (err) {
     setPill("server-pill", "Offline", false);
     write("learning-output", `Could not load status: ${err.message}`);
@@ -167,10 +198,35 @@ $("analyze-symbol").addEventListener("click", async () => {
       use_llm: false,
       include_yahoo_deep: false,
       include_ml_digest: false,
+      include_heatmap: $("include-heatmap").checked,
+      heatmap_underlying: $("heatmap-underlying").value,
+      heatmap_source: $("heatmap-source").value,
     }),
   });
   renderAnalysis(data);
 });
+
+$("run-post-mortem").addEventListener("click", async () => {
+  const fid = ($("post-mortem-id").value || "").trim() || state.lastFindingId;
+  if (!fid) {
+    write("loops-output", "Set finding id or run Analyze first.");
+    return;
+  }
+  const h = Number($("post-mortem-horizon").value || 5);
+  write("loops-output", "Running post-mortem...");
+  try {
+    const out = await api("/api/learning/post-mortem", {
+      method: "POST",
+      body: JSON.stringify({ finding_id: fid, horizon_bars: h }),
+    });
+    write("loops-output", JSON.stringify(out, null, 2));
+    renderLoops(await api("/api/learning/loops"));
+  } catch (e) {
+    write("loops-output", String(e.message || e));
+  }
+});
+
+$("refresh-loops").addEventListener("click", async () => renderLoops(await api("/api/learning/loops")));
 
 $("run-backtest").addEventListener("click", async () => {
   const sym = $("brain-symbol").value.trim() || "RELIANCE.NS";

@@ -34,6 +34,20 @@ def _normalize_ohlcv(raw: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def history_range(
+    symbol: str,
+    *,
+    start: str,
+    end: str,
+    interval: str = "1d",
+    auto_adjust: bool = False,
+) -> pd.DataFrame:
+    """OHLCV between ``start`` and ``end`` (YYYY-MM-DD). Used for post-mortem forward returns."""
+    t = yf.Ticker(symbol)
+    raw = t.history(start=start, end=end, interval=interval, auto_adjust=auto_adjust, prepost=False)
+    return _normalize_ohlcv(raw)
+
+
 def history(
     symbol: str,
     *,

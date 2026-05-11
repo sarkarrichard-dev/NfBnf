@@ -18,6 +18,7 @@ def run_brain(
     use_llm: bool = True,
     ml_digest: str | None = None,
     learning_context: dict[str, Any] | None = None,
+    heatmap_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     One pass: features → ML signals → AI voice → fused decision.
@@ -25,6 +26,9 @@ def run_brain(
     """
     metrics, tags = build_features(ohlc)
     metrics["tags"] = tags
+    if heatmap_context and heatmap_context.get("features"):
+        for k, v in heatmap_context["features"].items():
+            metrics[k] = v
     learned_bias = blend_bias(metrics, tag_emas, learning_context)
 
     ml = ml_core.infer(metrics, tags, ohlc)
@@ -36,6 +40,7 @@ def run_brain(
         use_llm=use_llm,
         ml_digest=ml_digest,
         learning_context=learning_context,
+        heatmap_digest=(heatmap_context or {}).get("digest") if heatmap_context else None,
     )
     fused = fusion.fuse(ml, ai, learned_bias, learning_context)
 
@@ -69,6 +74,10 @@ def run_brain(
     if ml_digest:
         summary_lines.append("[Local data catalog digest - profiled files, not trained weights]")
         summary_lines.append(ml_digest[:6000] + ("..." if len(ml_digest) > 6000 else ""))
+    if heatmap_context and heatmap_context.get("digest"):
+        summary_lines.append("[Option-chain heatmap digest]")
+        d = str(heatmap_context["digest"])
+        summary_lines.append(d[:4000] + ("..." if len(d) > 4000 else ""))
     summary = "\n".join(summary_lines)
 
     return {
@@ -80,5 +89,6 @@ def run_brain(
         "ai": ai.to_dict(),
         "brain": fused.to_dict(),
         "learning_context": learning_context or {},
+        "heatmap_context": heatmap_context or {},
         "summary": summary,
     }

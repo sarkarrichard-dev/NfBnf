@@ -38,6 +38,7 @@ def infer(
     use_llm: bool,
     ml_digest: str | None = None,
     learning_context: dict[str, Any] | None = None,
+    heatmap_digest: str | None = None,
 ) -> AIVoice:
     if not use_llm:
         return _heuristic_ai(metrics, ml)
@@ -68,13 +69,16 @@ def infer(
         }
     if ml_digest:
         payload["ml_local_datasets_digest"] = ml_digest[:8000]
+    if heatmap_digest:
+        payload["option_chain_heatmap_digest"] = heatmap_digest[:6000]
     instruction = (
         "Return ONLY a JSON object (no markdown) with keys: "
         "stance (bullish|bearish|neutral), confidence (0-1 number), "
         "focus (string array of short topics), caveats (string array), "
         "narrative (one short paragraph, data-only, no trade advice). "
         "If feedback_memory is present, account for it as learned operator feedback, not truth. "
-        "If ml_local_datasets_digest is present, mention how it complements the price snapshot (no promises)."
+        "If ml_local_datasets_digest is present, mention how it complements the price snapshot (no promises). "
+        "If option_chain_heatmap_digest is present, relate skew/PCR/volume shape to the equity view (no promises)."
     )
     try:
         raw = chat(

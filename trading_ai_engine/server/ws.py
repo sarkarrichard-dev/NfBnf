@@ -22,6 +22,7 @@ from trading_ai_engine.ai_voice.briefing import build_briefing
 from trading_ai_engine.server import analyze, db, learn
 from trading_ai_engine.server.research import run_symbol_backtest
 from trading_ai_engine.trading.evolution import evolution_snapshot
+from trading_ai_engine.learning.post_mortem import run_post_mortem
 from trading_ai_engine.trading.paper import place_paper_order, recent_paper_orders
 
 router = APIRouter()
@@ -64,6 +65,9 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         use_llm = bool(payload.get("use_llm", True))
         include_yahoo_deep = bool(payload.get("include_yahoo_deep", True))
         include_ml_digest = bool(payload.get("include_ml_digest", True))
+        include_heatmap = bool(payload.get("include_heatmap", False))
+        heatmap_underlying = str(payload.get("heatmap_underlying") or "nifty")
+        heatmap_source = str(payload.get("heatmap_source") or "auto")
         if not symbol:
             await ws.send_json({"type": "error", "message": "symbol is required"})
             return
@@ -76,6 +80,9 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
                     use_llm=use_llm,
                     include_yahoo_deep=include_yahoo_deep,
                     include_ml_digest=include_ml_digest,
+                    include_heatmap=include_heatmap,
+                    heatmap_underlying=heatmap_underlying,
+                    heatmap_source=heatmap_source,
                 )
             )
         except Exception as e:
@@ -110,6 +117,25 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
 
     if ptype == "paper_orders":
         await ws.send_json({"type": "paper_orders", **await asyncio.to_thread(recent_paper_orders)})
+        return
+
+    if ptype == "post_mortem":
+        finding_id = str(payload.get("finding_id") or "")
+        if not finding_id:
+            await ws.send_json({"type": "error", "message": "finding_id is required"})
+            return
+        horizon = int(payload.get("horizon_bars") or 5)
+        try:
+            out = await asyncio.to_thread(lambda: run_post_mortem(finding_id, horizon_bars=horizon))
+        except Exception as e:
+            await ws.send_json({"type": "error", "message": str(e)})
+            return
+        await ws.send_json({"type": "post_mortem_result", **out})
+        if out.get("status") == "ok":
+            sym = str(out.get("symbol") or "").strip() or None
+            await ws.send_json(
+                {"type": "evolution", **await asyncio.to_thread(lambda: evolution_snapshot(sym))}
+            )
         return
 
     if ptype == "evolution":

@@ -39,6 +39,8 @@ def fuse(
     structural_only = w_ml * ml.score + w_ai * ai_score
     feedback_effect = w_bias * learned_bias
     combined = structural_only + feedback_effect
+    nudge = float((learning_context or {}).get("refinement_score_nudge") or 0.0)
+    combined = combined + nudge
     combined = max(-1.0, min(1.0, combined))
 
     ml_sign = 0 if abs(ml.score) < 0.12 else (1 if ml.score > 0 else -1)
@@ -74,7 +76,7 @@ def fuse(
     rationale = (
         f"fused_score={combined:+.3f}; ml={ml.score:+.3f}; bias={learned_bias:+.3f}; "
         f"ai={ai.stance}@{ai.confidence:.2f}; feedback_effect={feedback_effect:+.3f}; "
-        f"feedback_count={feedback_count}; agreement={agreement}"
+        f"self_learning_nudge={nudge:+.4f}; feedback_count={feedback_count}; agreement={agreement}"
     )
 
     return FusedDecision(
@@ -90,5 +92,7 @@ def fuse(
             "avg_rating": float(feedback_summary.get("avg_rating") or 0.0),
             "recent_ratings": [int(x.get("rating") or 0) for x in recent_feedback[:5]],
             "memory_active": feedback_count > 0,
+            "refinement_score_nudge": nudge,
+            "post_mortem_summary": (learning_context or {}).get("post_mortem_summary") or {},
         },
     )

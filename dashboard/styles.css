@@ -62,6 +62,17 @@ label,
   line-height: 1.35;
 }
 
+.form-grid.tight-top {
+  margin-top: 0.75rem;
+}
+
+label.inline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  grid-column: 1 / -1;
+}
+
 .status-row,
 .button-row,
 .panel-head {

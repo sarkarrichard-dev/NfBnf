@@ -71,7 +71,7 @@
             <h2>Run The Brain</h2>
             <button id="analyze-symbol" class="secondary" type="button">Analyze</button>
           </header>
-          <div class="form-grid">
+            <div class="form-grid">
             <label>
               Symbol
               <input id="brain-symbol" type="text" value="RELIANCE.NS" autocomplete="off" />
@@ -85,12 +85,46 @@
                 <option value="5y">5 years</option>
               </select>
             </label>
+            <label class="inline">
+              <input id="include-heatmap" type="checkbox" />
+              Include option heatmap (AIML)
+            </label>
+            <label>
+              Heatmap root
+              <select id="heatmap-underlying">
+                <option value="nifty" selected>NIFTY (Files To Teach AI)</option>
+                <option value="sensex">SENSEX</option>
+              </select>
+            </label>
+            <label>
+              Heatmap source
+              <select id="heatmap-source">
+                <option value="auto" selected>auto (local then Dhan stub)</option>
+                <option value="local">local CSV only</option>
+                <option value="dhan">Dhan (stub until API)</option>
+              </select>
+            </label>
           </div>
           <div id="brain-summary" class="decision">No analysis yet.</div>
           <button id="place-paper-order" class="trade-action" type="button" disabled>
             Place Paper Order
           </button>
           <pre id="brain-output" class="readout">Waiting for analysis.</pre>
+          <div class="form-grid tight-top">
+            <label>
+              Post-mortem finding id
+              <input id="post-mortem-id" type="text" placeholder="filled after Analyze" autocomplete="off" />
+            </label>
+            <label>
+              Forward bars
+              <input id="post-mortem-horizon" type="number" min="1" max="30" value="5" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="run-post-mortem" type="button" class="secondary">Run post-mortem (self-learning)</button>
+            <button id="refresh-loops" type="button" class="secondary">Refresh learning loops</button>
+          </div>
+          <pre id="loops-output" class="readout">Learning loop status not loaded.</pre>
         </article>
 
         <article class="panel">
