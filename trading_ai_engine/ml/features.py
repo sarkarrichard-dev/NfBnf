@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 
+from trading_ai_engine.ml.candlestick_patterns import last_bar_pattern_dict
+from trading_ai_engine.ml.cpr_ema import last_row_cpr_ema_metrics
+
 
 def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()
@@ -55,6 +58,27 @@ def build_features(ohlc: pd.DataFrame) -> tuple[dict, list[str]]:
     if pd.notna(vz) and vz > 2:
         tags.append("volume_spike")
 
+    cpr_ema = last_row_cpr_ema_metrics(df)
+    em9 = cpr_ema.get("ema9")
+    em21 = cpr_ema.get("ema21")
+    if em9 is not None and em21 is not None:
+        if em9 > em21:
+            tags.append("ema_bull_stack")
+        elif em9 < em21:
+            tags.append("ema_bear_stack")
+    cp, cbc, ctc = cpr_ema.get("cpr_p"), cpr_ema.get("cpr_bc"), cpr_ema.get("cpr_tc")
+    lc = last.get("close")
+    if cp is not None and cbc is not None and ctc is not None and pd.notna(lc):
+        fc = float(lc)
+        if fc > float(ctc):
+            tags.append("cpr_above_tc")
+        elif fc < float(cbc):
+            tags.append("cpr_below_bc")
+        elif fc > float(cp):
+            tags.append("cpr_above_pivot")
+        elif fc < float(cp):
+            tags.append("cpr_below_pivot")
+
     metrics = {
         "last_date": str(last["date"]) if "date" in last.index else None,
         "close": float(last["close"]) if pd.notna(last["close"]) else None,
@@ -65,4 +89,6 @@ def build_features(ohlc: pd.DataFrame) -> tuple[dict, list[str]]:
         "vol_z": float(vz) if pd.notna(vz) else None,
         "tags": tags,
     }
+    metrics.update(last_bar_pattern_dict(df))
+    metrics.update({k: v for k, v in cpr_ema.items() if k != "tags"})
     return metrics, tags

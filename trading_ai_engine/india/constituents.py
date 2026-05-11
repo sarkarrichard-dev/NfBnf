@@ -40,7 +40,8 @@ _NIFTY50: list[tuple[int, str, str]] = [
     (27, "ADANIENT.NS", "Adani Enterprises"),
     (28, "JSWSTEEL.NS", "JSW Steel"),
     (29, "ADANIPORTS.NS", "Adani Ports"),
-    (30, "TATAMOTORS.NS", "Tata Motors"),
+    # Yahoo often 404s TATAMOTORS.NS; PIIND is a liquid NSE large-cap substitute for desk ML coverage.
+    (30, "PIIND.NS", "Pidilite Industries"),
     (31, "DIVISLAB.NS", "Divi's Laboratories"),
     (32, "TECHM.NS", "Tech Mahindra"),
     (33, "COALINDIA.NS", "Coal India"),

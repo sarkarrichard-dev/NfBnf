@@ -109,17 +109,80 @@ label.inline {
   padding: 1rem;
 }
 
+.shell.tight-bottom {
+  padding-bottom: 0.35rem;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.portal-tabs {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.portal-tab {
+  min-height: 2.35rem;
+  border-radius: 8px 8px 0 0;
+  padding: 0.5rem 1rem;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.portal-tab.active {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.portal-view {
+  padding-top: 0.75rem;
+}
+
+.subportal-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.subportal-tab {
+  min-height: 2rem;
+  border-radius: 6px;
+  padding: 0.4rem 0.85rem;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.subportal-tab.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .overview {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   gap: 0.75rem;
-  margin-bottom: 1rem;
 }
 
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
+}
+
+.grid .span-2 {
+  grid-column: 1 / -1;
 }
 
 .panel {
@@ -205,7 +268,7 @@ button:disabled {
 
 .readout {
   margin: 0.75rem 0 0;
-  min-height: 11rem;
+  min-height: 8rem;
   max-height: 18rem;
   overflow: auto;
   white-space: pre-wrap;
@@ -215,6 +278,62 @@ button:disabled {
   color: #cdd8de;
   padding: 0.75rem;
   font-size: 0.8rem;
+}
+
+.readout-short {
+  min-height: 5rem;
+  max-height: 14rem;
+}
+
+.readout-tall {
+  min-height: 12rem;
+  max-height: 22rem;
+}
+
+.readout-errors {
+  min-height: 4rem;
+  max-height: 10rem;
+  border-color: #5a3030;
+  color: #f0c4c0;
+}
+
+.ui-error-section {
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.table-wrap {
+  overflow: auto;
+  max-height: 20rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.data-table th {
+  color: var(--muted);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--panel-2);
+}
+
+.data-table tbody tr:hover {
+  background: rgba(110, 208, 184, 0.06);
 }
 
 .folder-list {
@@ -239,6 +358,10 @@ button:disabled {
   .grid,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .grid .span-2 {
+    grid-column: 1;
   }
 
   .topbar {

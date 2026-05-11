@@ -57,6 +57,9 @@ dist/
 build/
 *.egg-info/
 
+# Launcher / local logs
+logs/
+
 # Local guides
 plan.docx
 Original Project Plan.docx

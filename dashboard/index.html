@@ -12,8 +12,7 @@
       <div>
         <h1>Trading AI Workstation</h1>
         <div class="subtitle">
-          Indian F&amp;O + intraday-oriented research (options heatmap, sub-daily charts); paper still
-          spot-style until lot sizing ships
+          NSE Yahoo tickers (e.g. RELIANCE.NS, ^NSEI), IST session context, and NIFTY-only option heatmaps.
         </div>
       </div>
       <div class="status-row">
@@ -23,43 +22,57 @@
       </div>
     </header>
 
-    <main class="shell">
-      <section class="panel overview">
-        <div class="metric">
-          <span>Market rows</span>
-          <strong id="metric-market-rows">-</strong>
-        </div>
-        <div class="metric">
-          <span>Training rows</span>
-          <strong id="metric-training-rows">-</strong>
-        </div>
-        <div class="metric">
-          <span>Paper orders</span>
-          <strong id="metric-paper-orders">-</strong>
-        </div>
-        <div class="metric">
-          <span>Live trading</span>
-          <strong id="metric-live">Blocked</strong>
-        </div>
-      </section>
+    <section class="overview shell tight-bottom">
+      <div class="metric">
+        <span>Market rows</span>
+        <strong id="metric-market-rows">-</strong>
+      </div>
+      <div class="metric">
+        <span>Training rows</span>
+        <strong id="metric-training-rows">-</strong>
+      </div>
+      <div class="metric">
+        <span>Paper orders</span>
+        <strong id="metric-paper-orders">-</strong>
+      </div>
+      <div class="metric">
+        <span>Live trading</span>
+        <strong id="metric-live">Blocked</strong>
+      </div>
+    </section>
 
-      <section class="grid">
+    <nav class="portal-tabs shell" aria-label="Primary portals">
+      <button type="button" class="portal-tab active" data-portal="ml" id="tab-ml">ML portal</button>
+      <button type="button" class="portal-tab" data-portal="trading" id="tab-trading">Trading portal</button>
+    </nav>
+
+    <div id="portal-ml" class="portal-view shell">
+      <div class="grid">
         <article class="panel">
           <header class="panel-head">
-            <h2>Learn From Market Data</h2>
+            <h2>Online sources</h2>
             <div class="button-row">
-              <button id="refresh-learning" class="secondary" type="button">Model status</button>
               <button id="refresh-online-learning" type="button">HF online status</button>
               <button id="preview-hf-digest" class="secondary" type="button">Preview Hub sample</button>
               <button id="dhan-quote-map" class="secondary" type="button">Dhan LTP map</button>
-              <button id="eval-research-modes" type="button">Eval research modes</button>
+              <button id="eval-research-modes" class="secondary" type="button">Eval research modes</button>
             </div>
           </header>
           <p class="subtitle tight">
-            AIML context for the brain is <strong>online-first</strong>: Hugging Face Hub streaming samples
-            (<code>TRADING_AI_HF_LEARNING_DATASETS</code>), Yahoo <strong>global</strong> cross-asset pack, and
-            <code>strat_*</code> strategy proxies on your chart. Local CSV ingest is optional catalog only (off by
-            default for the LLM).
+            Hugging Face Hub (<code>TRADING_AI_HF_LEARNING_DATASETS</code>), Yahoo global pack, Dhan stubs, and
+            research mode comparison.
+          </p>
+          <pre id="ml-online-readout" class="readout readout-short">Use the buttons above for a plain-English summary.</pre>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Local market model</h2>
+            <button id="refresh-learning" class="secondary" type="button">Model status</button>
+          </header>
+          <p class="subtitle tight">
+            NSE cash names via Yahoo <code>.NS</code> plus headline indices; daily download builds the supervised frame
+            (timestamps shown in IST in the UI).
           </p>
           <div class="form-grid">
             <label>
@@ -81,105 +94,49 @@
           <pre id="learning-output" class="readout">No model status loaded yet.</pre>
         </article>
 
-        <article class="panel">
+        <article class="panel span-2">
           <header class="panel-head">
-            <h2>Run The Brain</h2>
-            <button id="analyze-symbol" class="secondary" type="button">Analyze</button>
+            <h2>Findings (what the machine recorded)</h2>
+            <button id="refresh-findings" class="secondary" type="button">Refresh</button>
           </header>
-            <div class="form-grid">
-            <label>
-              Market focus
-              <select id="brain-market-focus">
-                <option value="balanced">Equity / daily chart</option>
-                <option value="derivatives_intraday" selected>F&amp;O — intraday chart</option>
-              </select>
-            </label>
-            <label>
-              Symbol
-              <input id="brain-symbol" type="text" value="^NSEI" autocomplete="off" title="Nifty 50 index on Yahoo; use RELIANCE.NS for single-name equity" />
-            </label>
-            <label>
-              <span id="brain-period-label">Data window</span>
-              <select id="brain-period"></select>
-            </label>
-            <label id="brain-interval-wrap">
-              Bar size
-              <select id="brain-interval">
-                <option value="5m" selected>5m</option>
-                <option value="15m">15m</option>
-                <option value="1h">1h</option>
-              </select>
-            </label>
-            <label class="inline">
-              <input id="include-yahoo-deep" type="checkbox" checked />
-              Yahoo deep (daily + intraday + options text)
-            </label>
-            <label class="inline">
-              <input id="include-heatmap" type="checkbox" checked />
-              Include option heatmap (AIML)
-            </label>
-            <label>
-              Heatmap root
-              <select id="heatmap-underlying">
-                <option value="nifty" selected>NIFTY (Files To Teach AI)</option>
-                <option value="sensex">SENSEX</option>
-              </select>
-            </label>
-            <label>
-              Heatmap source
-              <select id="heatmap-source">
-                <option value="auto" selected>auto (local then Dhan stub)</option>
-                <option value="local">local CSV only</option>
-                <option value="dhan">Dhan (stub until API)</option>
-              </select>
-            </label>
+          <div class="table-wrap">
+            <table class="data-table" id="findings-table">
+              <thead>
+                <tr>
+                  <th>Time (IST)</th>
+                  <th>Symbol</th>
+                  <th>Summary</th>
+                  <th>Tags</th>
+                </tr>
+              </thead>
+              <tbody id="findings-tbody"></tbody>
+            </table>
           </div>
-          <div id="brain-summary" class="decision">No analysis yet.</div>
-          <button id="place-paper-order" class="trade-action" type="button" disabled>
-            Place Paper Order
-          </button>
-          <pre id="brain-output" class="readout">Waiting for analysis.</pre>
-          <div class="form-grid tight-top">
-            <label>
-              Post-mortem finding id
-              <input id="post-mortem-id" type="text" placeholder="filled after Analyze" autocomplete="off" />
-            </label>
-            <label>
-              Forward bars
-              <input id="post-mortem-horizon" type="number" min="1" max="30" value="5" />
-            </label>
-          </div>
-          <div class="button-row">
-            <button id="run-post-mortem" type="button" class="secondary">Run post-mortem (self-learning)</button>
-            <button id="refresh-loops" type="button" class="secondary">Refresh learning loops</button>
-          </div>
-          <pre id="loops-output" class="readout">Learning loop status not loaded.</pre>
         </article>
 
         <article class="panel">
           <header class="panel-head">
-            <h2>Paper Trading Journal</h2>
-            <button id="refresh-orders" class="secondary" type="button">Refresh</button>
+            <h2>Strategies &amp; learnable parameters</h2>
+            <div class="button-row">
+              <button id="load-strategy-taxonomy" type="button">Strategy taxonomy</button>
+              <button id="load-param-catalog" class="secondary" type="button">Parameter catalog</button>
+            </div>
           </header>
-          <div id="orders-summary" class="decision">No paper orders loaded.</div>
-          <pre id="orders-output" class="readout">No orders yet.</pre>
+          <pre id="ml-strat-readout" class="readout readout-short">Open Strategy taxonomy or Parameter catalog for readable descriptions.</pre>
         </article>
 
         <article class="panel">
           <header class="panel-head">
-            <h2>Road To Live (Plan Gates)</h2>
-            <button id="refresh-readiness" class="secondary" type="button">Refresh</button>
+            <h2>Plans &amp; self-learning loops</h2>
+            <button id="refresh-loops-ml" class="secondary" type="button">Refresh loops</button>
           </header>
-          <p class="subtitle tight">
-            Kill switch, IST paper sessions, daily trade limits, and data-quality snapshot. Live broker
-            orders stay off until the full checklist in the API is satisfied.
-          </p>
-          <pre id="readiness-output" class="readout">Load status with Refresh.</pre>
+          <p class="subtitle tight">Roadmap gates, refinement nudges, and recent post-mortems.</p>
+          <pre id="loops-output" class="readout readout-short">Learning loop status not loaded.</pre>
         </article>
 
-        <article class="panel">
+        <article class="panel span-2">
           <header class="panel-head">
-            <h2>Research Backtest (Costs)</h2>
+            <h2>Research backtest</h2>
             <div class="button-row">
               <button id="run-backtest" class="secondary" type="button">Run</button>
               <button id="sweep-backtest" type="button">Coarse sweep</button>
@@ -207,30 +164,196 @@
               <input id="bt-spread" type="number" min="0" max="200" value="0" step="0.5" />
             </label>
           </div>
-          <p class="subtitle tight">
-            Uses the same symbol as Run The Brain. Walk-forward test only; trend/MR modes are simplified
-            research proxies (see
-            <a href="https://groww.in/blog/algorithmic-trading-strategies" target="_blank" rel="noopener">Groww overview</a>).
-          </p>
           <pre id="backtest-output" class="readout">Not run yet.</pre>
         </article>
 
-        <article class="panel">
+        <article class="panel span-2">
           <header class="panel-head">
-            <h2>Where Things Are</h2>
+            <h2>Post-mortem (self-learning)</h2>
           </header>
-          <div class="folder-list">
-            <div><strong>dashboard</strong><span>Fresh screen and buttons</span></div>
-            <div><strong>trading_ai_engine</strong><span>Brain, learning, risk, server</span></div>
-            <div><strong>Your Trading Data</strong><span>Private market data and memory</span></div>
-            <div><strong>Files To Teach AI</strong><span>Your extra CSV or Excel files</span></div>
-            <div><strong>guides</strong><span>Roadmap and safety notes</span></div>
-            <div><strong>learning_examples</strong><span>Optional Hugging Face examples</span></div>
+          <div class="form-grid">
+            <label>
+              Post-mortem finding id
+              <input id="post-mortem-id" type="text" placeholder="filled after Analyze" autocomplete="off" />
+            </label>
+            <label>
+              Forward bars
+              <input id="post-mortem-horizon" type="number" min="1" max="30" value="5" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="run-post-mortem" type="button" class="secondary">Run post-mortem</button>
           </div>
         </article>
-      </section>
-    </main>
+      </div>
+    </div>
 
-    <script src="/app.js" defer></script>
+    <div id="portal-trading" class="portal-view shell hidden">
+      <div class="subportal-tabs" role="tablist" aria-label="Trading mode">
+        <button type="button" class="subportal-tab active" data-sub="paper" id="subtab-paper">Paper trading</button>
+        <button type="button" class="subportal-tab" data-sub="live" id="subtab-live">Live trading</button>
+      </div>
+
+      <div id="trading-paper" class="subportal-view">
+        <div class="grid">
+          <article class="panel span-2">
+            <header class="panel-head">
+              <h2>Run the brain &amp; place paper</h2>
+              <button id="analyze-symbol" class="secondary" type="button">Analyze</button>
+            </header>
+            <div class="form-grid">
+              <label>
+                Market focus
+                <select id="brain-market-focus">
+                  <option value="balanced">Equity / daily chart</option>
+                  <option value="derivatives_intraday" selected>F&amp;O - intraday chart</option>
+                </select>
+              </label>
+              <label>
+                Symbol
+                <input
+                  id="brain-symbol"
+                  type="text"
+                  value="^NSEI"
+                  autocomplete="off"
+                  title="NSE only: Yahoo index ^NSEI / ^NSEBANK or equity tickers ending in .NS (e.g. TCS.NS)"
+                />
+              </label>
+              <label>
+                <span id="brain-period-label">Data window</span>
+                <select id="brain-period"></select>
+              </label>
+              <label id="brain-interval-wrap">
+                Bar size
+                <select id="brain-interval">
+                  <option value="5m" selected>5m</option>
+                  <option value="15m">15m</option>
+                  <option value="1h">1h</option>
+                </select>
+              </label>
+              <label class="inline">
+                <input id="include-yahoo-deep" type="checkbox" checked />
+                Yahoo deep (daily + intraday + options text)
+              </label>
+              <label class="inline">
+                <input id="include-heatmap" type="checkbox" checked />
+                Include NIFTY option heatmap (AIML, NSE)
+              </label>
+              <input type="hidden" id="heatmap-underlying" value="nifty" />
+              <p class="subtitle tight">
+                Option chain data path is fixed to <strong>NIFTY</strong> (NSE) in this build.
+              </p>
+              <label>
+                Heatmap source
+                <select id="heatmap-source">
+                  <option value="auto" selected>auto (local then Dhan stub)</option>
+                  <option value="local">local CSV only</option>
+                  <option value="dhan">Dhan (stub until API)</option>
+                </select>
+              </label>
+            </div>
+            <div id="brain-summary" class="decision">No analysis yet.</div>
+            <button id="place-paper-order" class="trade-action" type="button" disabled>Place paper order</button>
+            <pre id="brain-output" class="readout">Waiting for analysis.</pre>
+          </article>
+
+          <article class="panel">
+            <header class="panel-head">
+              <h2>Paper summary</h2>
+              <button id="refresh-orders" class="secondary" type="button">Refresh</button>
+            </header>
+            <div id="orders-summary" class="decision">No paper orders loaded.</div>
+            <pre id="orders-output" class="readout readout-tall">No orders yet.</pre>
+          </article>
+
+          <article class="panel span-2">
+            <header class="panel-head">
+              <h2>History, PnL window, exports</h2>
+              <button id="load-paper-history" type="button">Load range</button>
+            </header>
+            <p class="subtitle tight">
+              <strong>IST calendar days</strong> (Asia/Kolkata): each date covers 00:00-23:59 IST, mapped to UTC for
+              stored <code>created_at</code>. CSV includes exit columns when you close a paper row. Close at Yahoo last
+              close if you leave exit blank in the API; the table uses last close when you click Close.
+            </p>
+            <div class="form-grid">
+              <label>
+                From (IST date)
+                <input id="paper-from-date" type="date" />
+              </label>
+              <label>
+                To (IST date)
+                <input id="paper-to-date" type="date" />
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="download-trades-csv" class="secondary" type="button">Download trades CSV</button>
+              <button id="download-pnl-json" class="secondary" type="button">Download PnL JSON</button>
+            </div>
+            <pre id="paper-pnl-readout" class="readout readout-short">Pick dates and Load range.</pre>
+            <div class="table-wrap">
+              <table class="data-table" id="paper-history-table">
+                <thead>
+                  <tr>
+                    <th>Time (IST)</th>
+                    <th>Symbol</th>
+                    <th>Side</th>
+                    <th>Qty</th>
+                    <th>Entry</th>
+                    <th>Notional</th>
+                    <th>Risk</th>
+                    <th>Status</th>
+                    <th>Exit</th>
+                    <th>PnL</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="paper-history-tbody"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <div id="trading-live" class="subportal-view hidden">
+        <div class="grid">
+          <article class="panel span-2">
+            <header class="panel-head">
+              <h2>Live trading gates</h2>
+              <button id="refresh-readiness" class="secondary" type="button">Refresh readiness</button>
+            </header>
+            <p class="subtitle tight">
+              Live broker execution stays disabled until checklist and safeguards in the guide are satisfied.
+              This panel mirrors server readiness and risk config.
+            </p>
+            <pre id="readiness-output" class="readout readout-tall">Load status with Refresh.</pre>
+          </article>
+          <article class="panel">
+            <header class="panel-head">
+              <h2>Risk config snapshot</h2>
+              <button id="refresh-risk-live" class="secondary" type="button">Refresh risk</button>
+            </header>
+            <pre id="live-risk-readout" class="readout readout-tall">Not loaded.</pre>
+          </article>
+          <article class="panel">
+            <header class="panel-head">
+              <h2>Evolution log</h2>
+              <button id="refresh-evolution" class="secondary" type="button">Refresh</button>
+            </header>
+            <pre id="evolution-readout" class="readout readout-tall">Not loaded.</pre>
+          </article>
+        </div>
+      </div>
+    </div>
+
+    <section class="shell ui-error-section">
+      <header class="panel-head">
+        <h2>UI &amp; API error log</h2>
+        <button type="button" class="secondary" id="clear-ui-errors">Clear</button>
+      </header>
+      <pre id="ui-error-log" class="readout readout-errors">No errors yet.</pre>
+    </section>
+
+    <script src="/app.js?v=5" defer></script>
   </body>
 </html>

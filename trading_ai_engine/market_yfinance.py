@@ -1,7 +1,25 @@
 from __future__ import annotations
 
+import contextlib
+import os
+import sys
+from typing import Iterator
+
 import pandas as pd
 import yfinance as yf
+
+
+@contextlib.contextmanager
+def _yfinance_quiet_stderr() -> Iterator[None]:
+    """yfinance prints HTTP 404 / delisting hints to stderr; keep workstation logs readable."""
+    devnull = open(os.devnull, "w", encoding="utf-8")
+    old = sys.stderr
+    try:
+        sys.stderr = devnull
+        yield
+    finally:
+        sys.stderr = old
+        devnull.close()
 
 
 def _normalize_ohlcv(raw: pd.DataFrame) -> pd.DataFrame:
@@ -43,8 +61,9 @@ def history_range(
     auto_adjust: bool = False,
 ) -> pd.DataFrame:
     """OHLCV between ``start`` and ``end`` (YYYY-MM-DD). Used for post-mortem forward returns."""
-    t = yf.Ticker(symbol)
-    raw = t.history(start=start, end=end, interval=interval, auto_adjust=auto_adjust, prepost=False)
+    with _yfinance_quiet_stderr():
+        t = yf.Ticker(symbol)
+        raw = t.history(start=start, end=end, interval=interval, auto_adjust=auto_adjust, prepost=False)
     return _normalize_ohlcv(raw)
 
 
@@ -62,6 +81,19 @@ def history(
     ``RELIANCE.BO`` (BSE). This is a stopgap until Dhan (or another broker) feeds
     replace the source.
     """
-    t = yf.Ticker(symbol)
-    raw = t.history(period=period, interval=interval, auto_adjust=auto_adjust, prepost=False)
+    with _yfinance_quiet_stderr():
+        t = yf.Ticker(symbol)
+        raw = t.history(period=period, interval=interval, auto_adjust=auto_adjust, prepost=False)
     return _normalize_ohlcv(raw)
+
+
+def last_daily_close(symbol: str, *, lookback_days: int = 15) -> float | None:
+    """Most recent daily close from Yahoo (best-effort for paper marks)."""
+    period = f"{max(5, min(lookback_days, 60))}d"
+    df = history(symbol, period=period, interval="1d", auto_adjust=False)
+    if df.empty or "close" not in df.columns:
+        return None
+    last = df["close"].iloc[-1]
+    if pd.isna(last):
+        return None
+    return float(last)

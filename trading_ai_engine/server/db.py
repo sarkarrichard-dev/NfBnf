@@ -21,6 +21,12 @@ def _migrate_schema(cx: sqlite3.Connection) -> None:
     cols = {str(r[1]) for r in cx.execute("PRAGMA table_info(paper_orders)").fetchall()}
     if "model_version" not in cols:
         cx.execute("ALTER TABLE paper_orders ADD COLUMN model_version TEXT")
+    if "exit_price" not in cols:
+        cx.execute("ALTER TABLE paper_orders ADD COLUMN exit_price REAL")
+    if "exit_at" not in cols:
+        cx.execute("ALTER TABLE paper_orders ADD COLUMN exit_at TEXT")
+    if "realized_pnl" not in cols:
+        cx.execute("ALTER TABLE paper_orders ADD COLUMN realized_pnl REAL")
 
 
 def init_db() -> None:
@@ -481,21 +487,162 @@ def insert_paper_order(order: dict[str, Any]) -> str:
     return oid
 
 
+def fetch_closed_paper_for_pattern_feedback(*, limit: int = 400) -> list[dict[str, Any]]:
+    """Closed paper rows with parsed ``plan`` for candlestick outcome learning."""
+    with connect() as cx:
+        rows = cx.execute(
+            """
+            SELECT id, symbol, side, realized_pnl, plan_json, exit_at
+            FROM paper_orders
+            WHERE status = 'closed_paper' AND plan_json IS NOT NULL AND plan_json != ''
+            ORDER BY datetime(exit_at) DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        raw = d.pop("plan_json", "{}")
+        try:
+            d["plan"] = json.loads(str(raw or "{}"))
+        except json.JSONDecodeError:
+            d["plan"] = {}
+        out.append(d)
+    return out
+
+
+def fetch_paper_order_by_id(order_id: str) -> dict[str, Any] | None:
+    with connect() as cx:
+        row = cx.execute("SELECT * FROM paper_orders WHERE id = ?", (order_id,)).fetchone()
+    return _paper_order_row_to_dict(row) if row else None
+
+
+def close_paper_order_row(
+    *,
+    order_id: str,
+    exit_price: float,
+    exit_at: str,
+    realized_pnl: float,
+) -> bool:
+    with connect() as cx:
+        cur = cx.execute(
+            """
+            UPDATE paper_orders
+            SET exit_price = ?, exit_at = ?, realized_pnl = ?, status = 'closed_paper'
+            WHERE id = ? AND status = 'filled_paper' AND exit_at IS NULL
+            """,
+            (float(exit_price), exit_at, float(realized_pnl), order_id),
+        )
+        return cur.rowcount == 1
+
+
+def _paper_order_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    d = dict(row)
+    for key in ("plan_json", "brain_json"):
+        raw = d.pop(key, "{}")
+        try:
+            d[key.removesuffix("_json")] = json.loads(str(raw or "{}"))
+        except json.JSONDecodeError:
+            d[key.removesuffix("_json")] = {}
+    return d
+
+
 def fetch_paper_orders(*, limit: int = 50) -> list[dict[str, Any]]:
     with connect() as cx:
         rows = cx.execute(
             "SELECT * FROM paper_orders ORDER BY created_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
+    return [_paper_order_row_to_dict(r) for r in rows]
+
+
+def fetch_paper_orders_in_range(
+    *,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    limit: int = 2000,
+) -> list[dict[str, Any]]:
+    """Paper orders filtered by UTC ``created_at`` (ISO strings). Use IST calendar bounds from ``ist_date_window_to_utc_bounds`` when querying by day."""
+    with connect() as cx:
+        q = "SELECT * FROM paper_orders WHERE 1=1"
+        params: list[Any] = []
+        if created_after:
+            q += " AND created_at >= ?"
+            params.append(created_after)
+        if created_before:
+            q += " AND created_at <= ?"
+            params.append(created_before)
+        q += " ORDER BY created_at DESC LIMIT ?"
+        params.append(int(limit))
+        rows = cx.execute(q, params).fetchall()
+    return [_paper_order_row_to_dict(r) for r in rows]
+
+
+def paper_trading_summary_in_range(
+    *,
+    created_after: str | None = None,
+    created_before: str | None = None,
+) -> dict[str, Any]:
+    """Aggregate paper stats for a time window (same filters as ``fetch_paper_orders_in_range``)."""
+    with connect() as cx:
+        q = """
+            SELECT
+                COUNT(*) AS orders,
+                COALESCE(SUM(notional), 0.0) AS notional,
+                COALESCE(SUM(risk_amount), 0.0) AS risk_amount,
+                MIN(created_at) AS first_order_at,
+                MAX(created_at) AS last_order_at,
+                SUM(CASE WHEN status = 'closed_paper' THEN 1 ELSE 0 END) AS closed_orders,
+                SUM(CASE WHEN status = 'filled_paper' THEN 1 ELSE 0 END) AS open_filled_orders,
+                COALESCE(SUM(realized_pnl), 0.0) AS realized_pnl_total
+            FROM paper_orders
+            WHERE 1=1
+        """
+        params: list[Any] = []
+        if created_after:
+            q += " AND created_at >= ?"
+            params.append(created_after)
+        if created_before:
+            q += " AND created_at <= ?"
+            params.append(created_before)
+        row = cx.execute(q, params).fetchone()
+    t = dict(row) if row else {}
+    return {
+        "orders": int(t.get("orders") or 0),
+        "notional": float(t.get("notional") or 0.0),
+        "risk_amount": float(t.get("risk_amount") or 0.0),
+        "first_order_at": t.get("first_order_at"),
+        "last_order_at": t.get("last_order_at"),
+        "closed_orders": int(t.get("closed_orders") or 0),
+        "open_filled_orders": int(t.get("open_filled_orders") or 0),
+        "realized_pnl_total": float(t.get("realized_pnl_total") or 0.0),
+        "mode": "paper_only",
+    }
+
+
+def fetch_findings_recent(*, limit: int = 40) -> list[dict[str, Any]]:
+    with connect() as cx:
+        rows = cx.execute(
+            """
+            SELECT id, symbol, created_at, summary, tags_json, metrics_json, bias
+            FROM findings
+            ORDER BY datetime(created_at) DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
         d = dict(row)
-        for key in ("plan_json", "brain_json"):
-            raw = d.pop(key, "{}")
-            try:
-                d[key.removesuffix("_json")] = json.loads(str(raw or "{}"))
-            except json.JSONDecodeError:
-                d[key.removesuffix("_json")] = {}
+        try:
+            d["tags"] = json.loads(str(d.pop("tags_json") or "[]"))
+        except json.JSONDecodeError:
+            d["tags"] = []
+        try:
+            d["metrics"] = json.loads(str(d.pop("metrics_json") or "{}"))
+        except json.JSONDecodeError:
+            d["metrics"] = {}
         out.append(d)
     return out
 
@@ -549,7 +696,10 @@ def paper_trading_summary() -> dict[str, Any]:
                 COALESCE(SUM(notional), 0.0) AS notional,
                 COALESCE(SUM(risk_amount), 0.0) AS risk_amount,
                 MIN(created_at) AS first_order_at,
-                MAX(created_at) AS last_order_at
+                MAX(created_at) AS last_order_at,
+                SUM(CASE WHEN status = 'closed_paper' THEN 1 ELSE 0 END) AS closed_orders,
+                SUM(CASE WHEN status = 'filled_paper' THEN 1 ELSE 0 END) AS open_filled_orders,
+                COALESCE(SUM(realized_pnl), 0.0) AS realized_pnl_total
             FROM paper_orders
             """
         ).fetchone()
@@ -568,6 +718,9 @@ def paper_trading_summary() -> dict[str, Any]:
         "risk_amount": float(t.get("risk_amount") or 0.0),
         "first_order_at": t.get("first_order_at"),
         "last_order_at": t.get("last_order_at"),
+        "closed_orders": int(t.get("closed_orders") or 0),
+        "open_filled_orders": int(t.get("open_filled_orders") or 0),
+        "realized_pnl_total": float(t.get("realized_pnl_total") or 0.0),
         "by_side": [dict(r) for r in by_side],
         "mode": "paper_only",
     }

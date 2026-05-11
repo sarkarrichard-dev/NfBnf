@@ -10,6 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from trading_ai_engine.dhan.config import dhan_readiness
 from trading_ai_engine.dhan.market_feed import market_feed_status
 from trading_ai_engine.india.market_clock import market_snapshot
+from trading_ai_engine.india.nse_yahoo import normalize_nse_yahoo_symbol, require_nifty_option_underlying
 from trading_ai_engine.ml.ingest import scan_and_ingest
 from trading_ai_engine.ml.market_learn import (
     InternetDatasetConfig,
@@ -61,7 +62,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         return
 
     if ptype == "analyze":
-        symbol = str(payload.get("symbol") or "").strip()
+        symbol = str(payload.get("symbol") or "^NSEI").strip()
         period = str(payload.get("period") or "1y")
         interval = str(payload.get("interval") or "1d")
         market_focus = str(payload.get("market_focus") or os.environ.get("TRADING_AI_MARKET_FOCUS") or "balanced")
@@ -71,9 +72,6 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         include_heatmap = bool(payload.get("include_heatmap", False))
         heatmap_underlying = str(payload.get("heatmap_underlying") or "nifty")
         heatmap_source = str(payload.get("heatmap_source") or "auto")
-        if not symbol:
-            await ws.send_json({"type": "error", "message": "symbol is required"})
-            return
         await ws.send_json({"type": "status", "message": f"Fetching and scoring {symbol}..."})
         try:
             result = await asyncio.to_thread(
@@ -110,6 +108,11 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
             await ws.send_json(
                 {"type": "error", "message": "finding_id, symbol, and plan are required"}
             )
+            return
+        try:
+            symbol = normalize_nse_yahoo_symbol(symbol)
+        except ValueError as e:
+            await ws.send_json({"type": "error", "message": str(e)})
             return
         result = await asyncio.to_thread(
             lambda: place_paper_order(
@@ -268,7 +271,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         return
 
     if ptype == "research_backtest":
-        symbol = str(payload.get("symbol") or "").strip()
+        symbol = str(payload.get("symbol") or "^NSEI").strip()
         period = str(payload.get("period") or "5y")
         interval = str(payload.get("interval") or "1d")
         horizon = int(payload.get("horizon_bars") or 5)
@@ -279,8 +282,10 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         slow_ma = int(payload.get("slow_ma") or 50)
         z_lookback = int(payload.get("z_lookback") or 20)
         z_entry = float(payload.get("z_entry") or 1.0)
-        if not symbol:
-            await ws.send_json({"type": "error", "message": "symbol is required"})
+        try:
+            symbol = normalize_nse_yahoo_symbol(symbol)
+        except ValueError as e:
+            await ws.send_json({"type": "error", "message": str(e)})
             return
         await ws.send_json({"type": "status", "message": f"Backtesting {symbol} over {period}..."})
         try:
@@ -306,7 +311,11 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         return
 
     if ptype == "options_heatmap":
-        underlying = str(payload.get("underlying") or "nifty").strip() or "nifty"
+        try:
+            underlying = require_nifty_option_underlying(str(payload.get("underlying") or "nifty"))
+        except ValueError as e:
+            await ws.send_json({"type": "error", "message": str(e)})
+            return
         trade_date = str(payload.get("trade_date") or "").strip() or None
         result = await asyncio.to_thread(
             lambda: local_option_chain_heatmap(underlying, trade_date=trade_date)
@@ -355,10 +364,15 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
             }
         )
         for sym in wl:
-            await ws.send_json({"type": "status", "message": f"Sweep: {sym}..."})
+            try:
+                sym_n = normalize_nse_yahoo_symbol(sym)
+            except ValueError as e:
+                await ws.send_json({"type": "sweep_error", "symbol": sym, "message": str(e)})
+                continue
+            await ws.send_json({"type": "status", "message": f"Sweep: {sym_n}..."})
             try:
                 result = await asyncio.to_thread(
-                    lambda s=sym: analyze.run_analyze(
+                    lambda s=sym_n: analyze.run_analyze(
                         s,
                         period,
                         use_llm=use_llm,

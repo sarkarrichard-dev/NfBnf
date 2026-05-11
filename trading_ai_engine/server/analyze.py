@@ -4,11 +4,13 @@ import os
 from typing import Any, cast
 
 from trading_ai_engine.brain.engine import run_brain
+from trading_ai_engine.india.nse_yahoo import normalize_nse_yahoo_symbol, require_nifty_option_underlying
 from trading_ai_engine.market_context import extra_strategy_metrics, fetch_global_context_snapshot
 from trading_ai_engine.market_yfinance import history
 from trading_ai_engine.ml.hf_online_digest import build_hf_online_learning_digest
 from trading_ai_engine.ml.ingest import text_digest
 from trading_ai_engine.ml.market_learn import load_market_model
+from trading_ai_engine.ml.pattern_context import attach_pattern_context_to_metrics
 from trading_ai_engine.server import db
 from trading_ai_engine.dhan.quote_client import fetch_dhan_ltp_snapshot
 from trading_ai_engine.trading.derivatives_focus import (
@@ -49,7 +51,9 @@ def run_analyze(
     include_strategy_features: bool = True,
     include_dhan_snapshot: bool = True,
 ) -> dict[str, Any]:
-    sym = symbol.strip()
+    sym = normalize_nse_yahoo_symbol(symbol.strip())
+    if include_heatmap:
+        heatmap_underlying = require_nifty_option_underlying(heatmap_underlying)
     focus = (market_focus or os.environ.get("TRADING_AI_MARKET_FOCUS") or "balanced").strip().lower()
     ohlc_period, ohlc_interval = resolve_brain_ohlc(
         market_focus=focus,
@@ -131,6 +135,7 @@ def run_analyze(
     pack["metrics"]["ohlc_interval"] = ohlc_interval
     pack["metrics"]["ohlc_period"] = ohlc_period
     pack["metrics"]["ohlc_bars"] = int(len(ohlc))
+    attach_pattern_context_to_metrics(pack["metrics"], sym)
     if ohlc_interval != "1d":
         pack["summary"] = (
             pack["summary"]
@@ -145,6 +150,15 @@ def run_analyze(
         )
     if yahoo_study:
         pack["summary"] = pack["summary"] + "\n\n" + yahoo_study["text_block"]
+    ctx = pack["metrics"].get("candle_pattern_context") or {}
+    if ctx and not ctx.get("error"):
+        pack["summary"] = (
+            pack["summary"]
+            + "\n[Candlestick AIML — multi-TF 5m–3h] "
+            + f"max calibrated win-rate (bullish-pattern set): {ctx.get('max_win_rate_bullish_patterns')}; "
+            + f"(bearish-pattern set): {ctx.get('max_win_rate_bearish_patterns')}; "
+            + f"trade gate floor={ctx.get('min_win_rate')} (env TRADING_AI_PATTERN_MIN_WIN_RATE / TRADING_AI_PATTERN_GATE)."
+        )
     fid = db.insert_finding(
         symbol=sym,
         summary=pack["summary"],
@@ -176,6 +190,9 @@ def run_analyze(
         "learning": snap,
     }
     out["trade_plan"] = plan_from_analysis(out)
+    ps = out["metrics"].get("pattern_snapshot") or {}
+    if ps and isinstance(out["trade_plan"], dict):
+        out["trade_plan"] = {**out["trade_plan"], "pattern_snapshot": ps}
     if out["trade_plan"].get("eligible"):
         ok, gate_reason, gate_meta = paper_placement_allowed(plan=out["trade_plan"])
         if not ok:

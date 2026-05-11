@@ -96,6 +96,12 @@ def build_trade_plan(
     if kill_switch_active():
         vetoes.append("kill_switch_active")
 
+    if not vetoes:
+        from trading_ai_engine.ml.pattern_context import pattern_gate_blocks_plan
+
+        if pattern_gate_blocks_plan(metrics, action):
+            vetoes.append("pattern_win_rate_below_threshold")
+
     side = "flat"
     if action == "bullish":
         side = "long"

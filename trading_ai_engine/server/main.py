@@ -16,6 +16,7 @@ def run() -> None:
         port=port,
         reload=False,
         factory=False,
+        use_colors=False,
     )
 
 
