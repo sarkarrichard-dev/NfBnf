@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -11,6 +12,10 @@ from fastapi.staticfiles import StaticFiles
 from trading_ai_engine.dhan.config import dhan_readiness
 from trading_ai_engine.dhan.market_feed import market_feed_status
 from trading_ai_engine.india.constituents import get_indices_catalog
+from trading_ai_engine.ml.hf_online_digest import (
+    build_hf_online_learning_digest,
+    online_learning_status,
+)
 from trading_ai_engine.ml.ingest import scan_and_ingest
 from trading_ai_engine.ml.market_learn import (
     InternetDatasetConfig,
@@ -36,6 +41,7 @@ from trading_ai_engine.learning.refinement import learning_loop_status, load_ref
 from trading_ai_engine.market_vision.providers import HeatmapSource, fetch_heatmap_snapshot
 from trading_ai_engine.quant.backtest_sweep import sweep_backtest_grid
 from trading_ai_engine.quant.learnable_parameters import LEARNABLE_PARAMETER_CATALOG
+from trading_ai_engine.quant.strategy_taxonomy import GROWW_STRATEGY_TAXONOMY
 
 
 @asynccontextmanager
@@ -70,8 +76,21 @@ async def api_ml_datasets() -> dict:
 
 @app.post("/api/ml/datasets/ingest", include_in_schema=False)
 async def api_ml_datasets_ingest() -> dict:
-    """Re-scan local data folders into SQLite."""
+    """Re-scan local data folders into SQLite (optional catalog; brain learning defaults to online Hub + Yahoo)."""
     return scan_and_ingest()
+
+
+@app.get("/api/ml/online-learning/status", include_in_schema=False)
+async def api_ml_online_learning_status() -> dict:
+    """Hugging Face Hub streaming config for brain digests (no local uploads required)."""
+    return online_learning_status()
+
+
+@app.get("/api/ml/online-learning/preview", include_in_schema=False)
+async def api_ml_online_learning_preview(max_rows: int = 8) -> dict:
+    """Pull a short streaming sample from TRADING_AI_HF_LEARNING_DATASETS (for operator verification)."""
+    text, meta = build_hf_online_learning_digest(max_rows_per_dataset=max(3, min(max_rows, 40)))
+    return {"meta": meta, "digest_preview": (text or "")[:4000]}
 
 
 @app.get("/api/ml/market-learning/status", include_in_schema=False)
@@ -106,6 +125,8 @@ async def api_brain_analyze(payload: dict[str, Any] = Body(default_factory=dict)
     """Run the brain for one symbol and return the paper trade plan."""
     symbol = str(payload.get("symbol") or "RELIANCE.NS").strip()
     period = str(payload.get("period") or "1y")
+    interval = str(payload.get("interval") or "1d")
+    market_focus = str(payload.get("market_focus") or os.environ.get("TRADING_AI_MARKET_FOCUS") or "balanced")
     return analyze.run_analyze(
         symbol,
         period,
@@ -115,6 +136,11 @@ async def api_brain_analyze(payload: dict[str, Any] = Body(default_factory=dict)
         include_heatmap=bool(payload.get("include_heatmap", False)),
         heatmap_underlying=str(payload.get("heatmap_underlying") or "nifty"),
         heatmap_source=str(payload.get("heatmap_source") or "auto"),
+        interval=interval,
+        market_focus=market_focus,
+        include_global_context=bool(payload.get("include_global_context", True)),
+        include_hf_online_digest=bool(payload.get("include_hf_online_digest", True)),
+        include_strategy_features=bool(payload.get("include_strategy_features", True)),
     )
 
 
@@ -155,11 +181,34 @@ async def api_learning_loops() -> dict:
 async def api_research_backtest(
     symbol: str = "RELIANCE.NS",
     period: str = "5y",
+    interval: str = "1d",
     horizon: int = 5,
     cost_bps: float = 8.0,
+    signal_mode: str = "structural",
+    fast_ma: int = 20,
+    slow_ma: int = 50,
+    z_lookback: int = 20,
+    z_entry: float = 1.0,
 ) -> dict:
-    """Research-only walk-forward backtest of the current structural signal logic (costs in bps per round trip)."""
-    return run_symbol_backtest(symbol, period=period, horizon_bars=horizon, cost_bps=cost_bps)
+    """Research-only walk-forward backtest: structural brain score, trend MA crossover, or mean-reversion z."""
+    return run_symbol_backtest(
+        symbol,
+        period=period,
+        interval=interval,
+        horizon_bars=horizon,
+        cost_bps=cost_bps,
+        signal_mode=signal_mode,
+        fast_ma=fast_ma,
+        slow_ma=slow_ma,
+        z_lookback=z_lookback,
+        z_entry=z_entry,
+    )
+
+
+@app.get("/api/quant/strategy-taxonomy", include_in_schema=False)
+async def api_quant_strategy_taxonomy() -> dict:
+    """Groww-style strategy classes mapped to this workstation (educational; see reference_url)."""
+    return GROWW_STRATEGY_TAXONOMY
 
 
 @app.get("/api/quant/parameter-catalog", include_in_schema=False)

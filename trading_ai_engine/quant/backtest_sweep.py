@@ -4,6 +4,8 @@ from typing import Any
 
 from trading_ai_engine.server.research import run_symbol_backtest
 
+SignalModeStr = str
+
 
 def sweep_backtest_grid(
     symbol: str,
@@ -11,6 +13,7 @@ def sweep_backtest_grid(
     period: str = "5y",
     horizons: tuple[int, ...] = (3, 5, 8),
     cost_bps_list: tuple[float, ...] = (4.0, 8.0, 12.0),
+    signal_modes: tuple[SignalModeStr, ...] = ("structural", "trend_ma", "mean_reversion_z"),
 ) -> dict[str, Any]:
     """
     Small coarse grid over backtest hyperparameters (research only).
@@ -19,22 +22,33 @@ def sweep_backtest_grid(
     """
     sym = symbol.strip()
     rows: list[dict[str, Any]] = []
-    for h in horizons:
-        for c in cost_bps_list:
-            out = run_symbol_backtest(sym, period=period, horizon_bars=h, cost_bps=c)
-            s = out.get("summary") or {}
-            rows.append(
-                {
-                    "horizon_bars": h,
-                    "cost_bps": c,
-                    "trades": s.get("trades"),
-                    "ending_equity": s.get("ending_equity"),
-                    "max_drawdown": s.get("max_drawdown"),
-                    "profit_factor": s.get("profit_factor"),
-                    "win_rate": s.get("win_rate"),
-                    "status": s.get("status"),
-                }
-            )
+    for mode in signal_modes:
+        for h in horizons:
+            for c in cost_bps_list:
+                try:
+                    out = run_symbol_backtest(
+                        sym,
+                        period=period,
+                        horizon_bars=h,
+                        cost_bps=c,
+                        signal_mode=str(mode),
+                    )
+                except ValueError:
+                    continue
+                s = out.get("summary") or {}
+                rows.append(
+                    {
+                        "signal_mode": str(mode),
+                        "horizon_bars": h,
+                        "cost_bps": c,
+                        "trades": s.get("trades"),
+                        "ending_equity": s.get("ending_equity"),
+                        "max_drawdown": s.get("max_drawdown"),
+                        "profit_factor": s.get("profit_factor"),
+                        "win_rate": s.get("win_rate"),
+                        "status": s.get("status"),
+                    }
+                )
 
     def sort_key(r: dict[str, Any]) -> tuple[float, float, float]:
         ee = float(r.get("ending_equity") or 0.0)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -62,9 +63,11 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
     if ptype == "analyze":
         symbol = str(payload.get("symbol") or "").strip()
         period = str(payload.get("period") or "1y")
+        interval = str(payload.get("interval") or "1d")
+        market_focus = str(payload.get("market_focus") or os.environ.get("TRADING_AI_MARKET_FOCUS") or "balanced")
         use_llm = bool(payload.get("use_llm", True))
         include_yahoo_deep = bool(payload.get("include_yahoo_deep", True))
-        include_ml_digest = bool(payload.get("include_ml_digest", True))
+        include_ml_digest = bool(payload.get("include_ml_digest", False))
         include_heatmap = bool(payload.get("include_heatmap", False))
         heatmap_underlying = str(payload.get("heatmap_underlying") or "nifty")
         heatmap_source = str(payload.get("heatmap_source") or "auto")
@@ -83,6 +86,11 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
                     include_heatmap=include_heatmap,
                     heatmap_underlying=heatmap_underlying,
                     heatmap_source=heatmap_source,
+                    interval=interval,
+                    market_focus=market_focus,
+                    include_global_context=bool(payload.get("include_global_context", True)),
+                    include_hf_online_digest=bool(payload.get("include_hf_online_digest", True)),
+                    include_strategy_features=bool(payload.get("include_strategy_features", True)),
                 )
             )
         except Exception as e:
@@ -261,14 +269,32 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
     if ptype == "research_backtest":
         symbol = str(payload.get("symbol") or "").strip()
         period = str(payload.get("period") or "5y")
+        interval = str(payload.get("interval") or "1d")
         horizon = int(payload.get("horizon_bars") or 5)
+        cost_bps = float(payload.get("cost_bps") or 8.0)
+        signal_mode = str(payload.get("signal_mode") or "structural")
+        fast_ma = int(payload.get("fast_ma") or 20)
+        slow_ma = int(payload.get("slow_ma") or 50)
+        z_lookback = int(payload.get("z_lookback") or 20)
+        z_entry = float(payload.get("z_entry") or 1.0)
         if not symbol:
             await ws.send_json({"type": "error", "message": "symbol is required"})
             return
         await ws.send_json({"type": "status", "message": f"Backtesting {symbol} over {period}..."})
         try:
             result = await asyncio.to_thread(
-                lambda: run_symbol_backtest(symbol, period=period, horizon_bars=horizon)
+                lambda: run_symbol_backtest(
+                    symbol,
+                    period=period,
+                    interval=interval,
+                    horizon_bars=horizon,
+                    cost_bps=cost_bps,
+                    signal_mode=signal_mode,
+                    fast_ma=fast_ma,
+                    slow_ma=slow_ma,
+                    z_lookback=z_lookback,
+                    z_entry=z_entry,
+                )
             )
         except Exception as e:
             await ws.send_json({"type": "error", "message": str(e)})
@@ -295,7 +321,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         period = str(payload.get("period") or "3mo")
         use_llm = bool(payload.get("use_llm", True))
         include_yahoo_deep = bool(payload.get("include_yahoo_deep", True))
-        include_ml_digest = bool(payload.get("include_ml_digest", True))
+        include_ml_digest = bool(payload.get("include_ml_digest", False))
         force = bool(payload.get("force", False))
         snap = await asyncio.to_thread(market_snapshot)
         if snap.get("phase") != "regular" and not force:
@@ -335,6 +361,9 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
                         use_llm=use_llm,
                         include_yahoo_deep=include_yahoo_deep,
                         include_ml_digest=include_ml_digest,
+                        include_global_context=bool(payload.get("include_global_context", True)),
+                        include_hf_online_digest=bool(payload.get("include_hf_online_digest", True)),
+                        include_strategy_features=bool(payload.get("include_strategy_features", True)),
                     )
                 )
             except Exception as e:

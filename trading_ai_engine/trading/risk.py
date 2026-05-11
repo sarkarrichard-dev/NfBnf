@@ -121,6 +121,10 @@ def build_trade_plan(
 
     if cfg.live_trading_enabled:
         warnings.append("live_trading_flag_seen_but_order_router_is_blocked")
+    if str(metrics.get("market_focus") or "") == "derivatives_intraday":
+        warnings.append(
+            "fno_qty_proxy: plan uses spot-style units; options/futures need lot size and margin model."
+        )
 
     return {
         "symbol": symbol,

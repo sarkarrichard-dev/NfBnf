@@ -14,6 +14,8 @@ dependencies = [
   "yfinance>=0.2.40",
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
+  "datasets>=2.18",
+  "huggingface_hub>=0.24",
 ]
 
 [project.scripts]
@@ -25,7 +27,7 @@ trading-ai-learn-market = "trading_ai_engine.ml.market_learn_cli:main"
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 data = ["openpyxl>=3.1", "pyarrow>=15.0"]
-hf = ["datasets>=3.0", "huggingface_hub>=0.24"]
+hf = ["datasets>=2.18", "huggingface_hub>=0.24"]
 
 [tool.setuptools.packages.find]
 where = ["."]

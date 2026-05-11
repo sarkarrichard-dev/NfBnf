@@ -5,6 +5,7 @@ from typing import Any
 from trading_ai_engine.ml.market_learn import data_quality_report, learning_status
 from trading_ai_engine.research.readiness import REQUIRED_FOR_LIVE, bot_readiness_snapshot
 from trading_ai_engine.server import db
+from trading_ai_engine.trading.derivatives_focus import readiness_market_focus_block
 from trading_ai_engine.trading.paper_gates import kill_switch_active, paper_sessions_ist
 from trading_ai_engine.trading.risk import load_risk_config
 
@@ -32,6 +33,7 @@ def workstation_readiness() -> dict[str, Any]:
     }
 
     snap["workstation_gates"] = {
+        "market_focus": readiness_market_focus_block(),
         "kill_switch_active": kill_switch_active(),
         "paper_sessions_ist": sessions,
         "paper_today_ist": db.paper_stats_current_ist_day(),

@@ -11,7 +11,10 @@
     <header class="topbar">
       <div>
         <h1>Trading AI Workstation</h1>
-        <div class="subtitle">Indian market learning, brain analysis, and paper trading</div>
+        <div class="subtitle">
+          Indian F&amp;O + intraday-oriented research (options heatmap, sub-daily charts); paper still
+          spot-style until lot sizing ships
+        </div>
       </div>
       <div class="status-row">
         <span id="server-pill" class="pill waiting">Checking</span>
@@ -44,8 +47,18 @@
         <article class="panel">
           <header class="panel-head">
             <h2>Learn From Market Data</h2>
-            <button id="refresh-learning" class="secondary" type="button">Refresh</button>
+            <div class="button-row">
+              <button id="refresh-learning" class="secondary" type="button">Model status</button>
+              <button id="refresh-online-learning" type="button">HF online status</button>
+              <button id="preview-hf-digest" class="secondary" type="button">Preview Hub sample</button>
+            </div>
           </header>
+          <p class="subtitle tight">
+            AIML context for the brain is <strong>online-first</strong>: Hugging Face Hub streaming samples
+            (<code>TRADING_AI_HF_LEARNING_DATASETS</code>), Yahoo <strong>global</strong> cross-asset pack, and
+            <code>strat_*</code> strategy proxies on your chart. Local CSV ingest is optional catalog only (off by
+            default for the LLM).
+          </p>
           <div class="form-grid">
             <label>
               Years
@@ -60,8 +73,8 @@
             </label>
           </div>
           <div class="button-row">
-            <button id="download-data" type="button">Download Data</button>
-            <button id="train-model" class="secondary" type="button">Train Model</button>
+            <button id="download-data" type="button">Download Indian daily (Yahoo)</button>
+            <button id="train-model" class="secondary" type="button">Train local market model</button>
           </div>
           <pre id="learning-output" class="readout">No model status loaded yet.</pre>
         </article>
@@ -73,20 +86,34 @@
           </header>
             <div class="form-grid">
             <label>
-              Symbol
-              <input id="brain-symbol" type="text" value="RELIANCE.NS" autocomplete="off" />
+              Market focus
+              <select id="brain-market-focus">
+                <option value="balanced">Equity / daily chart</option>
+                <option value="derivatives_intraday" selected>F&amp;O — intraday chart</option>
+              </select>
             </label>
             <label>
-              Period
-              <select id="brain-period">
-                <option value="6mo">6 months</option>
-                <option value="1y" selected>1 year</option>
-                <option value="2y">2 years</option>
-                <option value="5y">5 years</option>
+              Symbol
+              <input id="brain-symbol" type="text" value="^NSEI" autocomplete="off" title="Nifty 50 index on Yahoo; use RELIANCE.NS for single-name equity" />
+            </label>
+            <label>
+              <span id="brain-period-label">Data window</span>
+              <select id="brain-period"></select>
+            </label>
+            <label id="brain-interval-wrap">
+              Bar size
+              <select id="brain-interval">
+                <option value="5m" selected>5m</option>
+                <option value="15m">15m</option>
+                <option value="1h">1h</option>
               </select>
             </label>
             <label class="inline">
-              <input id="include-heatmap" type="checkbox" />
+              <input id="include-yahoo-deep" type="checkbox" checked />
+              Yahoo deep (daily + intraday + options text)
+            </label>
+            <label class="inline">
+              <input id="include-heatmap" type="checkbox" checked />
               Include option heatmap (AIML)
             </label>
             <label>
@@ -158,6 +185,14 @@
           </header>
           <div class="form-grid">
             <label>
+              Signal mode
+              <select id="bt-signal-mode">
+                <option value="structural" selected>Structural (brain score)</option>
+                <option value="trend_ma">Trend proxy (MA crossover)</option>
+                <option value="mean_reversion_z">Mean reversion (z-score)</option>
+              </select>
+            </label>
+            <label>
               Horizon bars
               <input id="bt-horizon" type="number" min="1" max="60" value="5" />
             </label>
@@ -166,7 +201,11 @@
               <input id="bt-cost" type="number" min="0" max="200" value="8" step="0.5" />
             </label>
           </div>
-          <p class="subtitle tight">Uses the same symbol as Run The Brain. Walk-forward signal test only.</p>
+          <p class="subtitle tight">
+            Uses the same symbol as Run The Brain. Walk-forward test only; trend/MR modes are simplified
+            research proxies (see
+            <a href="https://groww.in/blog/algorithmic-trading-strategies" target="_blank" rel="noopener">Groww overview</a>).
+          </p>
           <pre id="backtest-output" class="readout">Not run yet.</pre>
         </article>
 

@@ -27,6 +27,17 @@ LEARNABLE_PARAMETER_CATALOG: dict[str, Any] = {
                     "api": "GET /api/research/backtest?horizon=N",
                 },
                 {
+                    "name": "research_backtest.signal_mode",
+                    "type": "enum",
+                    "range_hint": "structural | trend_ma | mean_reversion_z",
+                    "api": "GET /api/research/backtest?signal_mode=trend_ma&fast_ma=20&slow_ma=50",
+                },
+                {
+                    "name": "research_backtest.mean_reversion_z",
+                    "type": "float+int",
+                    "api": "GET /api/research/backtest?signal_mode=mean_reversion_z&z_lookback=20&z_entry=1.0",
+                },
+                {
                     "name": "brain.ml_core + fusion thresholds",
                     "type": "implicit",
                     "note": "Long/short thresholds live in research/backtest BacktestConfig; "
@@ -57,10 +68,16 @@ LEARNABLE_PARAMETER_CATALOG: dict[str, Any] = {
             "id": "timing_parameters",
             "label": "Timing parameters",
             "description": (
-                "Holding horizon in bars, session-aware gates (IST), and ingest cadence for "
-                "local datasets."
+                "Holding horizon in bars, session-aware gates (IST), ingest cadence for "
+                "local datasets, and **intraday bar size** when ``market_focus=derivatives_intraday``."
             ),
             "workstation_mapping": [
+                {
+                    "name": "TRADING_AI_MARKET_FOCUS",
+                    "type": "enum",
+                    "env": True,
+                    "range_hint": "balanced | derivatives_intraday (default brain chart + readiness blurb)",
+                },
                 {"name": "paper_stats_current_ist_day", "type": "db", "module": "server.db"},
                 {"name": "india.market_clock", "type": "code", "module": "trading_ai_engine.india.market_clock"},
             ],
@@ -80,12 +97,55 @@ LEARNABLE_PARAMETER_CATALOG: dict[str, Any] = {
             "id": "alternative_data_features",
             "label": "Alternative data features",
             "description": (
-                "Numerical summaries from non-OHLC sources: profiled CSV/Excel catalog digest, "
-                "future news/sentiment scores when wired."
+                "Non-OHLC text: option-chain heatmap digest; optional local SQLite catalog "
+                "(off by default). Primary online path is Hugging Face Hub streaming + Yahoo global pack."
             ),
             "workstation_mapping": [
-                {"name": "ml_digest / text_digest", "type": "text", "module": "trading_ai_engine.ml.ingest"},
                 {"name": "heatmap_text_digest", "type": "text", "module": "trading_ai_engine.market_vision.features"},
+                {
+                    "name": "TRADING_AI_ALLOW_LOCAL_FILE_DIGEST_FOR_BRAIN",
+                    "type": "bool",
+                    "env": True,
+                    "note": "Must be true for include_ml_digest to surface SQLite file-catalog text in the LLM.",
+                },
+            ],
+        },
+        {
+            "id": "online_hub_learning",
+            "label": "Online Hub learning (Hugging Face)",
+            "description": (
+                "Streaming row samples from configured Hub datasets feed the remote LLM as "
+                "``online_hf_hub_digest`` — online only, no local upload required for this path."
+            ),
+            "workstation_mapping": [
+                {"name": "TRADING_AI_HF_LEARNING_DATASETS", "type": "string", "env": True},
+                {"name": "HF_TOKEN / HUGGING_FACE_HUB_TOKEN", "type": "secret", "env": True},
+                {"name": "ml.hf_online_digest.build_hf_online_learning_digest", "type": "code", "module": "trading_ai_engine.ml.hf_online_digest"},
+                {"name": "GET /api/ml/online-learning/status", "type": "api"},
+                {"name": "GET /api/ml/online-learning/preview", "type": "api"},
+            ],
+        },
+        {
+            "id": "global_cross_asset_context",
+            "label": "Global cross-asset context (Yahoo)",
+            "description": (
+                "Parallel Yahoo pulls for indices/FX/commodities; numeric ``global_*`` metrics + digest for LLM."
+            ),
+            "workstation_mapping": [
+                {"name": "TRADING_AI_GLOBAL_CONTEXT_SYMBOLS", "type": "string", "env": True},
+                {"name": "TRADING_AI_GLOBAL_CONTEXT_PERIOD", "type": "string", "env": True},
+                {"name": "TRADING_AI_GLOBAL_CONTEXT_INTERVAL", "type": "string", "env": True},
+                {"name": "market_context.global_pack.fetch_global_context_snapshot", "type": "code", "module": "trading_ai_engine.market_context.global_pack"},
+            ],
+        },
+        {
+            "id": "multi_strategy_features",
+            "label": "Multi-strategy feature proxies",
+            "description": (
+                "``strat_*`` columns derived on the primary symbol OHLC (trend ratio, MR z, vol) merged before ml_core."
+            ),
+            "workstation_mapping": [
+                {"name": "market_context.strategy_features.extra_strategy_metrics", "type": "code", "module": "trading_ai_engine.market_context.strategy_features"},
             ],
         },
         {
@@ -102,7 +162,17 @@ LEARNABLE_PARAMETER_CATALOG: dict[str, Any] = {
                     "range_hint": "0-50 bps typical sensitivity",
                     "api": "GET /api/research/backtest?cost_bps=X",
                 },
-                {"name": "quant.backtest_sweep.sweep_backtest_grid", "type": "code", "module": "trading_ai_engine.quant.backtest_sweep"},
+                {
+                    "name": "quant.backtest_sweep",
+                    "type": "code",
+                    "module": "trading_ai_engine.quant.backtest_sweep",
+                    "note": "Grid over signal_mode × horizon × cost_bps (default three strategy proxies).",
+                },
+                {
+                    "name": "quant.strategy_taxonomy",
+                    "type": "json",
+                    "api": "GET /api/quant/strategy-taxonomy",
+                },
             ],
         },
     ],

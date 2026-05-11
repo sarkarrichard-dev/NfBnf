@@ -49,6 +49,8 @@ function renderLearning(data) {
       `Trained at: ${model.trained_at || "-"}`,
       `Directional accuracy: ${metrics.directional_accuracy ?? "-"}`,
       `Active accuracy: ${metrics.active_accuracy ?? "-"}`,
+      "",
+      "(Use “HF online status” / “Preview Hub sample” for Hugging Face learning config.)",
     ].join("\n"),
   );
 }
@@ -75,8 +77,50 @@ function renderRisk(data) {
   setPill("paper-pill", data.paper_trading_enabled ? "Paper on" : "Paper off", data.paper_trading_enabled);
 }
 
+const PERIODS_EQUITY = [
+  ["6mo", "6 months"],
+  ["1y", "1 year", true],
+  ["2y", "2 years"],
+  ["5y", "5 years"],
+];
+const PERIODS_FNO = [
+  ["5d", "5 days"],
+  ["30d", "30 days"],
+  ["60d", "60 days", true],
+  ["120d", "120 days"],
+];
+
+function syncBrainPeriodOptions() {
+  const focusEl = $("brain-market-focus");
+  const sel = $("brain-period");
+  const wrap = $("brain-interval-wrap");
+  const label = $("brain-period-label");
+  if (!focusEl || !sel) return;
+  const focus = focusEl.value;
+  const list = focus === "derivatives_intraday" ? PERIODS_FNO : PERIODS_EQUITY;
+  sel.innerHTML = "";
+  list.forEach((row) => {
+    const [val, text] = row;
+    const selected = row[2] === true;
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = text;
+    if (selected) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (wrap) wrap.style.display = focus === "derivatives_intraday" ? "" : "none";
+  if (label) label.textContent = focus === "derivatives_intraday" ? "Intraday lookback" : "Period (daily)";
+  const sym = $("brain-symbol");
+  if (sym && focus === "derivatives_intraday") {
+    if (!sym.value.trim() || sym.value === "RELIANCE.NS" || sym.value === "NIFTY.NS") sym.value = "^NSEI";
+  } else if (sym && focus === "balanced" && (sym.value === "^NSEI" || sym.value === "NIFTY.NS")) {
+    sym.value = "RELIANCE.NS";
+  }
+}
+
 function renderReadiness(data) {
   const g = data.workstation_gates || {};
+  const mf = g.market_focus || {};
   const kill = g.kill_switch_active ? "ON (paper blocked)" : "off";
   const ps = g.paper_sessions_ist || {};
   const today = g.paper_today_ist || {};
@@ -84,6 +128,9 @@ function renderReadiness(data) {
   const cat = g.ml_profile_catalog || {};
   const chk = g.checklist_preview || {};
   write("readiness-output", [
+    `Market focus (env default): ${mf.default_from_env || "-"}`,
+    mf.blurb || "",
+    "",
     `Kill switch: ${kill}`,
     `Paper IST sessions (days with orders): ${ps.sessions_with_orders ?? "-"} / target ${ps.roadmap_target_sessions ?? 20}`,
     `Today IST (${today.ist_date || "-"}): orders ${today.orders_today ?? 0}, risk sum ${today.risk_amount_today ?? 0}`,
@@ -120,8 +167,11 @@ function renderAnalysis(data) {
   const brain = data.brain || {};
   const ml = data.ml || {};
   const plan = data.trade_plan || {};
+  const ol = data.online_learning || {};
+  const mx = data.metrics || {};
+  const bar = mx.ohlc_interval ? `${mx.ohlc_interval}/${mx.ohlc_period || "?"}` : "";
   $("brain-summary").textContent =
-    `${data.symbol} | ${brain.action || "-"} | score ${Number(brain.score || 0).toFixed(3)} | ` +
+    `${data.symbol} ${bar ? `(${bar}) ` : ""}| ${brain.action || "-"} | score ${Number(brain.score || 0).toFixed(3)} | ` +
     `plan ${plan.eligible ? "eligible" : "blocked"}`;
   $("place-paper-order").disabled = !plan.eligible;
   const hm = data.heatmap_context || {};
@@ -138,6 +188,9 @@ function renderAnalysis(data) {
       `Paper side: ${plan.side || "flat"} | quantity ${fmt(plan.quantity)}`,
       `Entry: ${plan.entry_price ?? "-"} | Stop: ${plan.stop_loss ?? "-"} | Target: ${plan.target ?? "-"}`,
       `Vetoes: ${(plan.vetoes || []).join(", ") || "none"}`,
+      `Warnings: ${(plan.warnings || []).join(", ") || "none"}`,
+      `Bars: ${mx.ohlc_bars ?? "-"} | focus: ${mx.market_focus || "-"}`,
+      `Online learning: HF status=${(ol.hf_hub || {}).status || "-"} global symbols=${(ol.global_context || {}).symbols_ok || "-"} local_file_digest=${ol.local_file_digest_included || false}`,
       hmLine,
       "",
       ml.rationale || "",
@@ -169,6 +222,28 @@ async function refreshAll() {
 }
 
 $("refresh-learning").addEventListener("click", refreshAll);
+
+$("refresh-online-learning").addEventListener("click", async () => {
+  try {
+    const st = await api("/api/ml/online-learning/status");
+    write("learning-output", JSON.stringify(st, null, 2));
+  } catch (e) {
+    write("learning-output", String(e.message || e));
+  }
+});
+
+$("preview-hf-digest").addEventListener("click", async () => {
+  write("learning-output", "Fetching Hub streaming preview...");
+  try {
+    const pv = await api("/api/ml/online-learning/preview?max_rows=8");
+    write(
+      "learning-output",
+      [JSON.stringify(pv.meta || {}, null, 2), "", pv.digest_preview || "(empty)"].join("\n")
+    );
+  } catch (e) {
+    write("learning-output", String(e.message || e));
+  }
+});
 $("refresh-orders").addEventListener("click", async () => renderOrders(await api("/api/trading/paper/orders")));
 $("refresh-readiness").addEventListener("click", async () => renderReadiness(await api("/api/trading/readiness")));
 
@@ -190,13 +265,17 @@ $("train-model").addEventListener("click", async () => {
 
 $("analyze-symbol").addEventListener("click", async () => {
   write("brain-output", "Running brain.");
+  const focus = ($("brain-market-focus") && $("brain-market-focus").value) || "derivatives_intraday";
+  const intraday = focus === "derivatives_intraday";
   const data = await api("/api/brain/analyze", {
     method: "POST",
     body: JSON.stringify({
-      symbol: $("brain-symbol").value.trim() || "RELIANCE.NS",
+      symbol: $("brain-symbol").value.trim() || "^NSEI",
       period: $("brain-period").value,
+      interval: intraday ? $("brain-interval").value : "1d",
+      market_focus: focus,
       use_llm: false,
-      include_yahoo_deep: false,
+      include_yahoo_deep: $("include-yahoo-deep").checked,
       include_ml_digest: false,
       include_heatmap: $("include-heatmap").checked,
       heatmap_underlying: $("heatmap-underlying").value,
@@ -251,16 +330,18 @@ $("run-backtest").addEventListener("click", async () => {
   const sym = $("brain-symbol").value.trim() || "RELIANCE.NS";
   const h = Number($("bt-horizon").value || 5);
   const cost = Number($("bt-cost").value || 8);
+  const mode = ($("bt-signal-mode") && $("bt-signal-mode").value) || "structural";
   write("backtest-output", "Running backtest...");
   try {
     const data = await api(
-      `/api/research/backtest?symbol=${encodeURIComponent(sym)}&period=5y&horizon=${h}&cost_bps=${cost}`
+      `/api/research/backtest?symbol=${encodeURIComponent(sym)}&period=5y&horizon=${h}&cost_bps=${cost}&signal_mode=${encodeURIComponent(mode)}`
     );
     const s = data.summary || {};
+    const cfg = data.config || {};
     write(
       "backtest-output",
       [
-        `${data.symbol} | trades ${s.trades ?? "-"} | win rate ${s.win_rate ?? "-"}`,
+        `mode ${cfg.signal_mode || mode} | ${data.symbol} | trades ${s.trades ?? "-"} | win rate ${s.win_rate ?? "-"}`,
         `avg return/trade ${s.avg_return_per_trade ?? "-"} | max DD ${s.max_drawdown ?? "-"}`,
         `ending equity ${s.ending_equity ?? "-"} | ${s.warning || ""}`,
         "",
@@ -286,5 +367,10 @@ $("place-paper-order").addEventListener("click", async () => {
   write("brain-output", result);
   renderOrders(await api("/api/trading/paper/orders"));
 });
+
+if ($("brain-market-focus")) {
+  $("brain-market-focus").addEventListener("change", syncBrainPeriodOptions);
+  syncBrainPeriodOptions();
+}
 
 refreshAll();

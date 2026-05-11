@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -9,14 +9,63 @@ from trading_ai_engine.brain import ml_core
 from trading_ai_engine.ml.features import build_features
 from trading_ai_engine.ml.training_set import LabelConfig, describe_training_frame, make_supervised_frame
 
+SignalMode = Literal["structural", "trend_ma", "mean_reversion_z"]
+
 
 @dataclass(frozen=True)
 class BacktestConfig:
+    """Walk-forward research config. ``signal_mode`` selects how each bar's side is chosen."""
+
     horizon_bars: int = 5
     long_threshold: float = 0.25
     short_threshold: float = -0.25
     cost_bps: float = 8.0
     min_history_bars: int = 60
+    signal_mode: SignalMode = "structural"
+    fast_ma: int = 20
+    slow_ma: int = 50
+    z_lookback: int = 20
+    z_entry: float = 1.0
+
+
+def _effective_min_bars(cfg: BacktestConfig) -> int:
+    m = cfg.min_history_bars
+    if cfg.signal_mode == "trend_ma":
+        m = max(m, cfg.slow_ma + 2)
+    elif cfg.signal_mode == "mean_reversion_z":
+        m = max(m, cfg.z_lookback + 2)
+    return m
+
+
+def _signal_trend_ma(closes: pd.Series, fast: int, slow: int) -> tuple[int, float]:
+    if fast >= slow or fast < 2:
+        return 0, 0.0
+    f = closes.rolling(fast, min_periods=fast).mean().iloc[-1]
+    s = closes.rolling(slow, min_periods=slow).mean().iloc[-1]
+    if pd.isna(f) or pd.isna(s):
+        return 0, 0.0
+    fv, sv = float(f), float(s)
+    eps = max(abs(sv) * 1e-6, 1e-9)
+    if fv > sv + eps:
+        return 1, (fv - sv) / max(abs(sv), eps)
+    if fv < sv - eps:
+        return -1, (fv - sv) / max(abs(sv), eps)
+    return 0, (fv - sv) / max(abs(sv), eps)
+
+
+def _signal_mean_reversion_z(closes: pd.Series, lookback: int, z_entry: float) -> tuple[int, float]:
+    if lookback < 3 or len(closes) < lookback + 1:
+        return 0, 0.0
+    past = closes.iloc[-(lookback + 1) : -1]
+    cur = float(closes.iloc[-1])
+    st = float(past.std(ddof=0)) or 1e-12
+    m = float(past.mean())
+    z = (cur - m) / st
+    if z < -z_entry:
+        return 1, z
+    if z > z_entry:
+        return -1, z
+    return 0, z
 
 
 def _max_drawdown(equity: list[float]) -> float:
@@ -46,7 +95,8 @@ def run_research_backtest(
         df,
         LabelConfig(horizon_bars=cfg.horizon_bars),
     )
-    if len(df) < cfg.min_history_bars + cfg.horizon_bars + 1:
+    min_start = _effective_min_bars(cfg)
+    if len(df) < min_start + cfg.horizon_bars + 1:
         return {
             "symbol": symbol,
             "config": asdict(cfg),
@@ -60,15 +110,32 @@ def run_research_backtest(
 
     trades: list[dict[str, Any]] = []
     cost = cfg.cost_bps / 10_000.0
-    for i in range(cfg.min_history_bars, len(df) - cfg.horizon_bars):
+    for i in range(min_start, len(df) - cfg.horizon_bars):
         hist = df.iloc[: i + 1].copy()
-        metrics, tags = build_features(hist)
-        signal = ml_core.infer(metrics, tags, hist)
+        closes = hist["close"]
+        tags: dict[str, Any] = {}
         side = 0
-        if signal.score >= cfg.long_threshold:
-            side = 1
-        elif signal.score <= cfg.short_threshold:
-            side = -1
+        score = 0.0
+
+        if cfg.signal_mode == "structural":
+            metrics, tags = build_features(hist)
+            signal = ml_core.infer(metrics, tags, hist)
+            score = float(signal.score)
+            if score >= cfg.long_threshold:
+                side = 1
+            elif score <= cfg.short_threshold:
+                side = -1
+        elif cfg.signal_mode == "trend_ma":
+            side, score = _signal_trend_ma(closes, cfg.fast_ma, cfg.slow_ma)
+            tags = {"signal_mode": "trend_ma", "fast_ma": cfg.fast_ma, "slow_ma": cfg.slow_ma}
+        else:
+            side, score = _signal_mean_reversion_z(closes, cfg.z_lookback, cfg.z_entry)
+            tags = {
+                "signal_mode": "mean_reversion_z",
+                "z_lookback": cfg.z_lookback,
+                "z_entry": cfg.z_entry,
+            }
+
         if side == 0:
             continue
 
@@ -80,7 +147,7 @@ def run_research_backtest(
             {
                 "date": str(df.loc[i, "date"]),
                 "side": "long" if side > 0 else "short",
-                "score": round(float(signal.score), 4),
+                "score": round(float(score), 4),
                 "entry": round(entry, 4),
                 "exit": round(exit_, 4),
                 "gross_return": round(gross, 6),
@@ -114,7 +181,10 @@ def run_research_backtest(
         "ending_equity": round(equity[-1], 4),
         "max_drawdown": round(_max_drawdown(equity), 4),
         "return_std": round(std, 6),
-        "warning": "Research only. Results exclude intraday fills, option liquidity, broker limits, and taxes.",
+        "warning": (
+            "Research only. Results exclude intraday fills, option liquidity, broker limits, and taxes. "
+            "Proxy modes (trend_ma, mean_reversion_z) are simplified teaching baselines, not venue-specific strategies."
+        ),
     }
     return {
         "symbol": symbol,

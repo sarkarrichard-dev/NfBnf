@@ -19,6 +19,9 @@ def run_brain(
     ml_digest: str | None = None,
     learning_context: dict[str, Any] | None = None,
     heatmap_context: dict[str, Any] | None = None,
+    extra_metrics: dict[str, Any] | None = None,
+    online_hf_digest: str | None = None,
+    global_context_digest: str | None = None,
 ) -> dict[str, Any]:
     """
     One pass: features → ML signals → AI voice → fused decision.
@@ -28,6 +31,9 @@ def run_brain(
     metrics["tags"] = tags
     if heatmap_context and heatmap_context.get("features"):
         for k, v in heatmap_context["features"].items():
+            metrics[k] = v
+    if extra_metrics:
+        for k, v in extra_metrics.items():
             metrics[k] = v
     learned_bias = blend_bias(metrics, tag_emas, learning_context)
 
@@ -41,6 +47,8 @@ def run_brain(
         ml_digest=ml_digest,
         learning_context=learning_context,
         heatmap_digest=(heatmap_context or {}).get("digest") if heatmap_context else None,
+        online_hf_digest=online_hf_digest,
+        global_context_digest=global_context_digest,
     )
     fused = fusion.fuse(ml, ai, learned_bias, learning_context)
 
@@ -71,8 +79,14 @@ def run_brain(
         f"[Learned bias from feedback EMAs] {learned_bias:+.3f}",
         *memory_lines,
     ]
+    if online_hf_digest:
+        summary_lines.append("[Hugging Face Hub — streaming row samples, online only]")
+        summary_lines.append(online_hf_digest[:5000] + ("..." if len(online_hf_digest) > 5000 else ""))
+    if global_context_digest:
+        summary_lines.append("[Global cross-asset Yahoo snapshot]")
+        summary_lines.append(global_context_digest[:4000] + ("..." if len(global_context_digest) > 4000 else ""))
     if ml_digest:
-        summary_lines.append("[Local data catalog digest - profiled files, not trained weights]")
+        summary_lines.append("[Optional local file catalog digest — SQLite ingest, not Hub]")
         summary_lines.append(ml_digest[:6000] + ("..." if len(ml_digest) > 6000 else ""))
     if heatmap_context and heatmap_context.get("digest"):
         summary_lines.append("[Option-chain heatmap digest]")
