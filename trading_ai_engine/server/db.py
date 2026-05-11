@@ -6,12 +6,21 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo
 
 from trading_ai_engine.server.paths import DB_PATH, DATA_DIR
+
+_IST = ZoneInfo("Asia/Kolkata")
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _migrate_schema(cx: sqlite3.Connection) -> None:
+    cols = {str(r[1]) for r in cx.execute("PRAGMA table_info(paper_orders)").fetchall()}
+    if "model_version" not in cols:
+        cx.execute("ALTER TABLE paper_orders ADD COLUMN model_version TEXT")
 
 
 def init_db() -> None:
@@ -100,6 +109,7 @@ def init_db() -> None:
             );
             """
         )
+        _migrate_schema(cx)
         cx.commit()
 
 
@@ -445,8 +455,9 @@ def insert_paper_order(order: dict[str, Any]) -> str:
             """
             INSERT INTO paper_orders (
                 id, finding_id, symbol, side, quantity, entry_price, stop_loss, target,
-                notional, risk_amount, status, reason, plan_json, brain_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                notional, risk_amount, status, reason, plan_json, brain_json, created_at,
+                model_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 oid,
@@ -464,6 +475,7 @@ def insert_paper_order(order: dict[str, Any]) -> str:
                 json.dumps(order.get("plan") or {}, default=str),
                 json.dumps(order.get("brain") or {}, default=str),
                 _utc_now(),
+                order.get("model_version"),
             ),
         )
     return oid
@@ -486,6 +498,46 @@ def fetch_paper_orders(*, limit: int = 50) -> list[dict[str, Any]]:
                 d[key.removesuffix("_json")] = {}
         out.append(d)
     return out
+
+
+def _parse_created_utc(iso: str) -> datetime:
+    s = str(iso).replace("Z", "+00:00")
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def paper_stats_current_ist_day() -> dict[str, Any]:
+    """Orders placed since midnight IST today (UTC timestamps in DB)."""
+    now_ist = datetime.now(_IST)
+    start_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_utc = start_ist.astimezone(timezone.utc).isoformat()
+    with connect() as cx:
+        rows = cx.execute(
+            """
+            SELECT risk_amount, created_at FROM paper_orders
+            WHERE created_at >= ?
+            """,
+            (start_utc,),
+        ).fetchall()
+    risk = sum(float(r["risk_amount"] or 0) for r in rows)
+    return {
+        "ist_date": now_ist.date().isoformat(),
+        "orders_today": len(rows),
+        "risk_amount_today": round(risk, 2),
+    }
+
+
+def paper_distinct_ist_session_days() -> int:
+    """Count of IST calendar days with at least one paper order."""
+    with connect() as cx:
+        rows = cx.execute("SELECT created_at FROM paper_orders").fetchall()
+    days: set[str] = set()
+    for r in rows:
+        dt = _parse_created_utc(str(r["created_at"]))
+        days.add(dt.astimezone(_IST).date().isoformat())
+    return len(days)
 
 
 def paper_trading_summary() -> dict[str, Any]:

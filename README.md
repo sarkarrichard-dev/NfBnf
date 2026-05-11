@@ -34,4 +34,6 @@ python -m trading_ai_engine.ml.hf_cli --market-training --preview-rows 5
 python -m ruff check .
 ```
 
+HTTP (with the server running): `GET /api/trading/readiness` (roadmap gates), `GET /api/ml/market-learning/quality` (download/frame checks), and `GET /api/research/backtest?...&cost_bps=12` (costed walk-forward test).
+
 Live broker orders stay blocked unless the safety gates are deliberately changed.

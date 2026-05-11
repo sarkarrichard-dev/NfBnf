@@ -275,3 +275,72 @@ def learning_status() -> dict[str, Any]:
         },
         "model": model,
     }
+
+
+def data_quality_report(*, frame_sample_rows: int = 80_000) -> dict[str, Any]:
+    """
+    Lightweight checks before trusting downloaded market data for training (roadmap:
+    prove the data is clean). Does not replace a full data-audit pipeline.
+    """
+    from trading_ai_engine.ml.training_set import FEATURE_COLUMNS
+
+    issues: list[str] = []
+    warnings: list[str] = []
+    manifest_path = MARKET_DATA_DIR / "manifest.json"
+    manifest: dict[str, Any] | None = None
+    if not manifest_path.is_file():
+        issues.append("no_download_manifest_run_download_first")
+    else:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            issues.append("manifest_json_corrupt")
+        else:
+            files = manifest.get("files") or []
+            err_n = sum(1 for f in files if f.get("error"))
+            if err_n:
+                warnings.append(f"manifest_symbol_errors:{err_n}")
+            rows = int(manifest.get("rows") or 0)
+            if rows < 1_000:
+                warnings.append("manifest_combined_rows_very_low")
+
+    frame_info: dict[str, Any] = {"path": str(TRAINING_FRAME_PATH), "sampled_rows": 0}
+    if TRAINING_FRAME_PATH.is_file():
+        try:
+            df = pd.read_csv(TRAINING_FRAME_PATH, nrows=frame_sample_rows, low_memory=False)
+        except Exception as exc:
+            issues.append(f"training_frame_unreadable:{exc}")
+        else:
+            frame_info["sampled_rows"] = int(len(df))
+            need = ["date", *FEATURE_COLUMNS, "future_return", "label"]
+            for col in need:
+                if col not in df.columns:
+                    issues.append(f"training_frame_missing_column:{col}")
+            if not issues:
+                null_pct = df[[c for c in FEATURE_COLUMNS if c in df.columns]].isna().mean()
+                worst = float(null_pct.max()) if len(null_pct) else 0.0
+                frame_info["worst_feature_null_pct"] = round(worst, 4)
+                if worst > 0.08:
+                    warnings.append("high_null_rate_in_feature_columns")
+                if "label" in df.columns:
+                    vc = df["label"].value_counts()
+                    frame_info["label_counts"] = {str(k): int(v) for k, v in vc.items()}
+                    if len(vc) < 2:
+                        warnings.append("label_almost_constant")
+    else:
+        warnings.append("training_frame_missing_build_after_download")
+
+    status = "fail" if issues else ("warn" if warnings else "ok")
+    return {
+        "status": status,
+        "issues": issues,
+        "warnings": warnings,
+        "manifest_path": str(manifest_path),
+        "manifest_summary": {
+            "rows": int((manifest or {}).get("rows") or 0),
+            "symbols_ok": int((manifest or {}).get("symbols_ok") or 0),
+        }
+        if manifest
+        else None,
+        "training_frame": frame_info,
+    }

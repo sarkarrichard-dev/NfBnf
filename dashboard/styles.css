@@ -57,6 +57,11 @@ label,
   font-size: 0.82rem;
 }
 
+.subtitle.tight {
+  margin: 0 0 0.65rem;
+  line-height: 1.35;
+}
+
 .status-row,
 .button-row,
 .panel-head {

@@ -11,6 +11,7 @@ def run_symbol_backtest(
     *,
     period: str = "5y",
     horizon_bars: int = 5,
+    cost_bps: float = 8.0,
 ) -> dict[str, Any]:
     sym = symbol.strip()
     if not sym:
@@ -19,5 +20,8 @@ def run_symbol_backtest(
     return run_research_backtest(
         sym,
         ohlc,
-        BacktestConfig(horizon_bars=max(1, int(horizon_bars))),
+        BacktestConfig(
+            horizon_bars=max(1, int(horizon_bars)),
+            cost_bps=float(cost_bps),
+        ),
     )

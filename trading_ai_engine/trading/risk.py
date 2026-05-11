@@ -68,6 +68,8 @@ def build_trade_plan(
     metrics: dict[str, Any],
     risk: RiskConfig | None = None,
 ) -> dict[str, Any]:
+    from trading_ai_engine.trading.paper_gates import kill_switch_active
+
     cfg = risk or load_risk_config()
     action = str(brain.get("action") or "neutral")
     score = float(brain.get("score") or 0.0)
@@ -89,6 +91,8 @@ def build_trade_plan(
         vetoes.append("confidence_below_threshold")
     if not cfg.paper_trading_enabled:
         vetoes.append("paper_trading_disabled")
+    if kill_switch_active():
+        vetoes.append("kill_switch_active")
 
     side = "flat"
     if action == "bullish":

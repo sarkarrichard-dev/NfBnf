@@ -5,8 +5,10 @@ from typing import Any
 from trading_ai_engine.brain.engine import run_brain
 from trading_ai_engine.market_yfinance import history
 from trading_ai_engine.ml.ingest import text_digest
+from trading_ai_engine.ml.market_learn import load_market_model
 from trading_ai_engine.server import db
 from trading_ai_engine.trading.paper import plan_from_analysis
+from trading_ai_engine.trading.paper_gates import paper_placement_allowed
 from trading_ai_engine.yahoo_study.study import yahoo_deep_study
 
 
@@ -67,6 +69,18 @@ def run_analyze(
         "learning": snap,
     }
     out["trade_plan"] = plan_from_analysis(out)
+    if out["trade_plan"].get("eligible"):
+        ok, gate_reason, gate_meta = paper_placement_allowed(plan=out["trade_plan"])
+        if not ok:
+            tp = dict(out["trade_plan"])
+            tp["eligible"] = False
+            tp["vetoes"] = list(tp.get("vetoes") or []) + [gate_reason]
+            tp["gate_meta"] = gate_meta
+            out["trade_plan"] = tp
+    mm = load_market_model()
+    if mm:
+        out["model_version"] = mm.get("version")
+        out["model_trained_at"] = mm.get("trained_at")
     if yahoo_study is not None:
         out["yahoo_study"] = yahoo_study
     if ml_digest:

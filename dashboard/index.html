@@ -104,6 +104,37 @@
 
         <article class="panel">
           <header class="panel-head">
+            <h2>Road To Live (Plan Gates)</h2>
+            <button id="refresh-readiness" class="secondary" type="button">Refresh</button>
+          </header>
+          <p class="subtitle tight">
+            Kill switch, IST paper sessions, daily trade limits, and data-quality snapshot. Live broker
+            orders stay off until the full checklist in the API is satisfied.
+          </p>
+          <pre id="readiness-output" class="readout">Load status with Refresh.</pre>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <h2>Research Backtest (Costs)</h2>
+            <button id="run-backtest" class="secondary" type="button">Run</button>
+          </header>
+          <div class="form-grid">
+            <label>
+              Horizon bars
+              <input id="bt-horizon" type="number" min="1" max="60" value="5" />
+            </label>
+            <label>
+              Cost (bps / trade)
+              <input id="bt-cost" type="number" min="0" max="200" value="8" step="0.5" />
+            </label>
+          </div>
+          <p class="subtitle tight">Uses the same symbol as Run The Brain. Walk-forward signal test only.</p>
+          <pre id="backtest-output" class="readout">Not run yet.</pre>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
             <h2>Where Things Are</h2>
           </header>
           <div class="folder-list">

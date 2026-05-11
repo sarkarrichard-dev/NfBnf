@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from trading_ai_engine.ml.market_learn import load_market_model
 from trading_ai_engine.server import db
-from trading_ai_engine.trading.risk import build_trade_plan
+from trading_ai_engine.trading.paper_gates import paper_placement_allowed
+from trading_ai_engine.trading.risk import build_trade_plan, load_risk_config
 
 
 def plan_from_analysis(result: dict[str, Any]) -> dict[str, Any]:
@@ -29,6 +31,19 @@ def place_paper_order(
             "plan": plan,
         }
 
+    cfg = load_risk_config()
+    ok, gate_reason, gate_meta = paper_placement_allowed(plan=plan, cfg=cfg)
+    if not ok:
+        return {
+            "status": "rejected",
+            "reason": gate_reason,
+            "gate_meta": gate_meta,
+            "plan": plan,
+        }
+
+    model = load_market_model()
+    model_version = (model or {}).get("version")
+
     order = {
         "finding_id": finding_id,
         "symbol": symbol,
@@ -43,13 +58,19 @@ def place_paper_order(
         "reason": plan.get("reason") or "",
         "plan": plan,
         "brain": brain,
+        "model_version": model_version,
     }
     order_id = db.insert_paper_order(order)
     db.insert_evolution_event(
         symbol=symbol,
         event_type="paper_order",
         score_delta=float(brain.get("feedback_effect") or 0.0),
-        payload={"order_id": order_id, "plan": plan, "brain": brain},
+        payload={
+            "order_id": order_id,
+            "plan": plan,
+            "brain": brain,
+            "model_version": model_version,
+        },
     )
     return {"status": "filled_paper", "order_id": order_id, "plan": plan}
 

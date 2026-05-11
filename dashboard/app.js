@@ -74,6 +74,27 @@ function renderRisk(data) {
   setPill("paper-pill", data.paper_trading_enabled ? "Paper on" : "Paper off", data.paper_trading_enabled);
 }
 
+function renderReadiness(data) {
+  const g = data.workstation_gates || {};
+  const kill = g.kill_switch_active ? "ON (paper blocked)" : "off";
+  const ps = g.paper_sessions_ist || {};
+  const today = g.paper_today_ist || {};
+  const dq = g.data_quality || {};
+  const cat = g.ml_profile_catalog || {};
+  const chk = g.checklist_preview || {};
+  write("readiness-output", [
+    `Kill switch: ${kill}`,
+    `Paper IST sessions (days with orders): ${ps.sessions_with_orders ?? "-"} / target ${ps.roadmap_target_sessions ?? 20}`,
+    `Today IST (${today.ist_date || "-"}): orders ${today.orders_today ?? 0}, risk sum ${today.risk_amount_today ?? 0}`,
+    `ML profile catalog: files ${cat.files ?? "-"}, ingest errors ${cat.errors ?? "-"}`,
+    `Data quality: ${dq.status || "-"} | issues: ${(dq.issues || []).join("; ") || "none"}`,
+    `    warnings: ${(dq.warnings || []).join("; ") || "none"}`,
+    "",
+    "Checklist preview:",
+    ...Object.entries(chk).map(([k, v]) => `  ${k}: ${v}`),
+  ].join("\n"));
+}
+
 function renderAnalysis(data) {
   state.lastAnalysis = data;
   const brain = data.brain || {};
@@ -100,14 +121,16 @@ function renderAnalysis(data) {
 async function refreshAll() {
   try {
     setPill("server-pill", "Online", true);
-    const [learning, orders, risk] = await Promise.all([
+    const [learning, orders, risk, readiness] = await Promise.all([
       api("/api/ml/market-learning/status"),
       api("/api/trading/paper/orders"),
       api("/api/trading/risk"),
+      api("/api/trading/readiness"),
     ]);
     renderLearning(learning);
     renderOrders(orders);
     renderRisk(risk);
+    renderReadiness(readiness);
   } catch (err) {
     setPill("server-pill", "Offline", false);
     write("learning-output", `Could not load status: ${err.message}`);
@@ -116,6 +139,7 @@ async function refreshAll() {
 
 $("refresh-learning").addEventListener("click", refreshAll);
 $("refresh-orders").addEventListener("click", async () => renderOrders(await api("/api/trading/paper/orders")));
+$("refresh-readiness").addEventListener("click", async () => renderReadiness(await api("/api/trading/readiness")));
 
 $("download-data").addEventListener("click", async () => {
   write("learning-output", "Downloading market data. This can take a minute.");
@@ -146,6 +170,31 @@ $("analyze-symbol").addEventListener("click", async () => {
     }),
   });
   renderAnalysis(data);
+});
+
+$("run-backtest").addEventListener("click", async () => {
+  const sym = $("brain-symbol").value.trim() || "RELIANCE.NS";
+  const h = Number($("bt-horizon").value || 5);
+  const cost = Number($("bt-cost").value || 8);
+  write("backtest-output", "Running backtest...");
+  try {
+    const data = await api(
+      `/api/research/backtest?symbol=${encodeURIComponent(sym)}&period=5y&horizon=${h}&cost_bps=${cost}`
+    );
+    const s = data.summary || {};
+    write(
+      "backtest-output",
+      [
+        `${data.symbol} | trades ${s.trades ?? "-"} | win rate ${s.win_rate ?? "-"}`,
+        `avg return/trade ${s.avg_return_per_trade ?? "-"} | max DD ${s.max_drawdown ?? "-"}`,
+        `ending equity ${s.ending_equity ?? "-"} | ${s.warning || ""}`,
+        "",
+        JSON.stringify(s, null, 2),
+      ].join("\n")
+    );
+  } catch (e) {
+    write("backtest-output", String(e.message || e));
+  }
 });
 
 $("place-paper-order").addEventListener("click", async () => {

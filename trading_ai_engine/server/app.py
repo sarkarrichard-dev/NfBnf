@@ -15,6 +15,7 @@ from trading_ai_engine.ml.ingest import scan_and_ingest
 from trading_ai_engine.ml.market_learn import (
     InternetDatasetConfig,
     build_market_training_frame,
+    data_quality_report,
     download_indian_market_history,
     learning_status,
     train_market_model,
@@ -27,6 +28,7 @@ from trading_ai_engine.server.research import run_symbol_backtest
 from trading_ai_engine.server.ws import router as ws_router
 from trading_ai_engine.trading.evolution import evolution_snapshot
 from trading_ai_engine.trading.paper import place_paper_order, recent_paper_orders
+from trading_ai_engine.trading.readiness import workstation_readiness
 from trading_ai_engine.trading.risk import load_risk_config
 from trading_ai_engine.server import analyze
 
@@ -73,6 +75,12 @@ async def api_market_learning_status() -> dict:
     return learning_status()
 
 
+@app.get("/api/ml/market-learning/quality", include_in_schema=False)
+async def api_market_learning_quality() -> dict:
+    """Pre-training data sanity checks on manifest and supervised training frame."""
+    return data_quality_report()
+
+
 @app.post("/api/ml/market-learning/train", include_in_schema=False)
 async def api_market_learning_train() -> dict:
     """Train the local market model from the downloaded supervised frame."""
@@ -103,9 +111,14 @@ async def api_brain_analyze(payload: dict[str, Any] = Body(default_factory=dict)
 
 
 @app.get("/api/research/backtest", include_in_schema=False)
-async def api_research_backtest(symbol: str = "RELIANCE.NS", period: str = "5y", horizon: int = 5) -> dict:
-    """Research-only walk-forward backtest of the current structural signal logic."""
-    return run_symbol_backtest(symbol, period=period, horizon_bars=horizon)
+async def api_research_backtest(
+    symbol: str = "RELIANCE.NS",
+    period: str = "5y",
+    horizon: int = 5,
+    cost_bps: float = 8.0,
+) -> dict:
+    """Research-only walk-forward backtest of the current structural signal logic (costs in bps per round trip)."""
+    return run_symbol_backtest(symbol, period=period, horizon_bars=horizon, cost_bps=cost_bps)
 
 
 @app.get("/api/bot/readiness", include_in_schema=False)
@@ -118,6 +131,12 @@ async def api_bot_readiness() -> dict:
 async def api_trading_risk() -> dict:
     """Risk configuration used by the paper-trading router."""
     return load_risk_config().to_dict()
+
+
+@app.get("/api/trading/readiness", include_in_schema=False)
+async def api_trading_readiness() -> dict:
+    """Roadmap-aligned gates: kill switch, paper sessions, data-quality snapshot, catalog health."""
+    return workstation_readiness()
 
 
 @app.get("/api/trading/paper/orders", include_in_schema=False)
