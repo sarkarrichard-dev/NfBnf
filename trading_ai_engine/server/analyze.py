@@ -39,6 +39,7 @@ def run_analyze(
     period: str,
     *,
     use_llm: bool = True,
+    use_brain_council: bool = False,
     include_yahoo_deep: bool = True,
     include_ml_digest: bool = False,
     include_heatmap: bool = False,
@@ -123,6 +124,7 @@ def run_analyze(
         ohlc,
         tag_emas,
         use_llm=use_llm,
+        use_brain_council=use_brain_council,
         ml_digest=ml_digest or None,
         learning_context=learning_context,
         heatmap_context=heatmap_context,
@@ -188,6 +190,7 @@ def run_analyze(
         "heatmap_context": pack.get("heatmap_context") or {},
         "dhan_context": pack.get("dhan_context") or {},
         "learning": snap,
+        "brain_council": pack.get("brain_council"),
     }
     out["trade_plan"] = plan_from_analysis(out)
     ps = out["metrics"].get("pattern_snapshot") or {}

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from trading_ai_engine.ml.cpr_ema import add_cpr_ema_columns, cpr_structure_bias, last_row_cpr_ema_metrics
+
+pytestmark = [pytest.mark.unit]
 
 
 def test_cpr_prev_day_shift() -> None:

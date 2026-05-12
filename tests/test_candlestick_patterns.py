@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from trading_ai_engine.ml.candlestick_patterns import (
     PATTERN_FEATURE_COLUMNS,
@@ -9,6 +10,8 @@ from trading_ai_engine.ml.candlestick_patterns import (
 )
 from trading_ai_engine.ml.cpr_ema import CPR_EMA_FEATURE_COLUMNS
 from trading_ai_engine.ml.training_set import LabelConfig, make_supervised_frame
+
+pytestmark = [pytest.mark.unit]
 
 
 def test_hammer_detected_last_bar() -> None:

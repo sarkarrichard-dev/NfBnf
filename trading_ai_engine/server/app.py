@@ -70,6 +70,15 @@ async def lifespan(app: FastAPI):
     yield
 
 
+def _bool_from_body_or_env(payload: dict[str, Any], key: str, env_var: str) -> bool:
+    if key in payload:
+        v = payload.get(key)
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in ("1", "true", "yes", "on")
+    return (os.environ.get(env_var) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 app = FastAPI(title="Trading AI Workstation", version="0.1.0", lifespan=lifespan)
 
 app.include_router(ws_router)
@@ -208,6 +217,7 @@ async def api_brain_analyze(payload: dict[str, Any] = Body(default_factory=dict)
             symbol,
             period,
             use_llm=bool(payload.get("use_llm", False)),
+            use_brain_council=_bool_from_body_or_env(payload, "use_brain_council", "TRADING_AI_BRAIN_COUNCIL"),
             include_yahoo_deep=bool(payload.get("include_yahoo_deep", False)),
             include_ml_digest=bool(payload.get("include_ml_digest", False)),
             include_heatmap=bool(payload.get("include_heatmap", False)),
@@ -376,6 +386,13 @@ async def api_ml_findings_recent(limit: int = 40) -> dict:
     return {"findings": db.fetch_findings_recent(limit=lim)}
 
 
+def _paper_ist_bounds(date_from: str | None, date_to: str | None) -> tuple[str | None, str | None]:
+    try:
+        return ist_date_window_to_utc_bounds(date_from, date_to)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @app.get("/api/trading/paper/history", include_in_schema=False)
 async def api_trading_paper_history(
     date_from: str | None = None,
@@ -383,7 +400,7 @@ async def api_trading_paper_history(
     limit: int = 500,
 ) -> dict:
     """Paper orders in a window; ``YYYY-MM-DD`` bounds are **IST calendar days** (mapped to UTC for ``created_at``)."""
-    af, bt = ist_date_window_to_utc_bounds(date_from, date_to)
+    af, bt = _paper_ist_bounds(date_from, date_to)
     lim = max(1, min(int(limit or 500), 5000))
     orders = db.fetch_paper_orders_in_range(created_after=af, created_before=bt, limit=lim)
     summary = db.paper_trading_summary_in_range(created_after=af, created_before=bt)
@@ -402,7 +419,7 @@ async def api_trading_paper_history(
 @app.get("/api/trading/paper/pnl-summary", include_in_schema=False)
 async def api_trading_paper_pnl_summary(date_from: str | None = None, date_to: str | None = None) -> dict:
     """Window summary: exposure plus realized PnL from paper rows closed via ``POST /api/trading/paper/close``."""
-    af, bt = ist_date_window_to_utc_bounds(date_from, date_to)
+    af, bt = _paper_ist_bounds(date_from, date_to)
     exposure = db.paper_trading_summary_in_range(created_after=af, created_before=bt)
     return {
         "window": {
@@ -425,7 +442,7 @@ async def api_trading_paper_pnl_summary(date_from: str | None = None, date_to: s
 @app.get("/api/trading/paper/export.csv", include_in_schema=False)
 async def api_trading_paper_export_csv(date_from: str | None = None, date_to: str | None = None) -> Response:
     """Download paper orders as CSV for the selected window (IST day bounds when ``YYYY-MM-DD``)."""
-    af, bt = ist_date_window_to_utc_bounds(date_from, date_to)
+    af, bt = _paper_ist_bounds(date_from, date_to)
     orders = db.fetch_paper_orders_in_range(created_after=af, created_before=bt, limit=8000)
     buf = io.StringIO()
     w = csv.writer(buf)

@@ -16,6 +16,7 @@ def run_brain(
     tag_emas: dict[str, float],
     *,
     use_llm: bool = True,
+    use_brain_council: bool = False,
     ml_digest: str | None = None,
     learning_context: dict[str, Any] | None = None,
     heatmap_context: dict[str, Any] | None = None,
@@ -39,19 +40,33 @@ def run_brain(
     learned_bias = blend_bias(metrics, tag_emas, learning_context)
 
     ml = ml_core.infer(metrics, tags, ohlc)
-    ai = ai_core.infer(
-        symbol,
-        metrics,
-        ml,
-        learned_bias,
-        use_llm=use_llm,
-        ml_digest=ml_digest,
-        learning_context=learning_context,
-        heatmap_digest=(heatmap_context or {}).get("digest") if heatmap_context else None,
-        online_hf_digest=online_hf_digest,
-        global_context_digest=global_context_digest,
-        dhan_quote_digest=(dhan_context or {}).get("digest") if dhan_context else None,
-    )
+    council_report: dict[str, Any] | None = None
+    if use_brain_council:
+        from trading_ai_engine.brain import council as brain_council
+
+        ai, council_report = brain_council.infer_council(
+            symbol,
+            metrics,
+            ml,
+            learned_bias,
+            use_llm=use_llm,
+        )
+        metrics["brain_council"] = brain_council.slim_council_for_metrics(council_report)
+    else:
+        ai = ai_core.infer(
+            symbol,
+            metrics,
+            ml,
+            learned_bias,
+            use_llm=use_llm,
+            ml_digest=ml_digest,
+            learning_context=learning_context,
+            heatmap_digest=(heatmap_context or {}).get("digest") if heatmap_context else None,
+            online_hf_digest=online_hf_digest,
+            global_context_digest=global_context_digest,
+            dhan_quote_digest=(dhan_context or {}).get("digest") if dhan_context else None,
+        )
+        council_report = None
     fused = fusion.fuse(ml, ai, learned_bias, learning_context)
 
     loop_state = fused.loop_state
@@ -73,6 +88,21 @@ def run_brain(
         f"=== {TAGLINE} // Brain // {symbol} ===",
         f"[ML {ml.version}] regime={ml.regime} score={ml.score:+.3f} conf={ml.confidence:.2f}",
         f"  {ml.rationale}",
+    ]
+    if council_report:
+        summary_lines.append(
+            f"[Brain council] mode={council_report.get('mode')} disagreement={council_report.get('disagreement')}"
+        )
+        for ag in council_report.get("agents") or []:
+            if not isinstance(ag, dict):
+                continue
+            bid = ag.get("id", "?")
+            summary_lines.append(
+                f"  • {bid}: {ag.get('stance')} conf={float(ag.get('confidence') or 0):.2f} — "
+                + "; ".join(str(x) for x in (ag.get("bullets") or [])[:3])
+            )
+    summary_lines.extend(
+        [
         f"[AI {ai.version}] stance={ai.stance} conf={ai.confidence:.2f} focus={ai.focus}",
         f"  narrative: {ai.narrative}",
         f"[Fused] action={fused.action} score={fused.score:+.3f} conf={fused.confidence:.2f} "
@@ -80,7 +110,8 @@ def run_brain(
         f"  {fused.rationale}",
         f"[Learned bias from feedback EMAs] {learned_bias:+.3f}",
         *memory_lines,
-    ]
+        ]
+    )
     if online_hf_digest:
         summary_lines.append("[Hugging Face Hub — streaming row samples, online only]")
         summary_lines.append(online_hf_digest[:5000] + ("..." if len(online_hf_digest) > 5000 else ""))
@@ -112,4 +143,5 @@ def run_brain(
         "heatmap_context": heatmap_context or {},
         "dhan_context": dhan_context or {},
         "summary": summary,
+        "brain_council": council_report,
     }

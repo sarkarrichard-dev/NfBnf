@@ -2,16 +2,34 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from itertools import islice
 from typing import Any
+
+from trading_ai_engine.secrets_bridge import env_or_local
+
+_MAX_HF_SPEC_LEN = 256
+_HF_SPEC_SAFE = re.compile(r"^[A-Za-z0-9_./:\-]+$")
+
+
+def _sanitize_hf_learning_dataset_spec(spec: str) -> str | None:
+    """
+    Reject path traversal, control chars, and oversized env values before ``load_dataset``.
+    """
+    s = spec.strip()
+    if not s or len(s) > _MAX_HF_SPEC_LEN:
+        return None
+    if ".." in s or "\n" in s or "\r" in s or "\x00" in s:
+        return None
+    if not _HF_SPEC_SAFE.match(s):
+        return None
+    return s
 
 
 def online_learning_status() -> dict[str, Any]:
     """Operator snapshot for Hugging Face Hub streaming (no local uploads)."""
     spec = (os.environ.get("TRADING_AI_HF_LEARNING_DATASETS") or "").strip()
-    token = bool(
-        (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
-    )
+    token = bool((env_or_local("HF_TOKEN") or env_or_local("HUGGING_FACE_HUB_TOKEN") or "").strip())
     deps = False
     try:
         import datasets  # noqa: F401
@@ -72,7 +90,14 @@ def build_hf_online_learning_digest(
         return None, meta
 
     chunks: list[str] = []
-    for spec in [s.strip() for s in raw.split(",") if s.strip()][:4]:
+    specs_in: list[str] = []
+    for part in raw.split(","):
+        cleaned = _sanitize_hf_learning_dataset_spec(part)
+        if cleaned:
+            specs_in.append(cleaned)
+        elif part.strip():
+            meta.setdefault("skipped_invalid_specs", []).append(part.strip()[:80])
+    for spec in specs_in[:4]:
         repo, config, split = parse_hub_dataset_spec(spec)
         entry: dict[str, Any] = {"spec": spec, "repo": repo, "config": config, "split": split}
         try:

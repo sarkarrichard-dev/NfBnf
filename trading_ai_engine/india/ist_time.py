@@ -5,19 +5,28 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
+from trading_ai_engine.security_http import is_plain_yyyy_mm_dd
+
 IST = ZoneInfo("Asia/Kolkata")
+
+
+def _parse_plain_ist_date(day_yyyy_mm_dd: str) -> date:
+    s = day_yyyy_mm_dd.strip()[:10]
+    if not is_plain_yyyy_mm_dd(s):
+        raise ValueError("expected YYYY-MM-DD for IST calendar day")
+    return date.fromisoformat(s)
 
 
 def ist_calendar_day_start_utc_iso(day_yyyy_mm_dd: str) -> str:
     """First instant of an IST calendar day, as UTC ISO-8601 (for SQL ``created_at`` lower bound)."""
-    d = date.fromisoformat(day_yyyy_mm_dd.strip()[:10])
+    d = _parse_plain_ist_date(day_yyyy_mm_dd)
     start = datetime.combine(d, time(0, 0, 0), tzinfo=IST)
     return start.astimezone(timezone.utc).isoformat()
 
 
 def ist_calendar_day_end_utc_iso(day_yyyy_mm_dd: str) -> str:
     """Last instant of an IST calendar day, as UTC ISO-8601 (for SQL ``created_at`` upper bound)."""
-    d = date.fromisoformat(day_yyyy_mm_dd.strip()[:10])
+    d = _parse_plain_ist_date(day_yyyy_mm_dd)
     end = datetime.combine(d, time(23, 59, 59, 999999), tzinfo=IST)
     return end.astimezone(timezone.utc).isoformat()
 
@@ -34,16 +43,30 @@ def ist_date_window_to_utc_bounds(
     """
     def _is_plain_date(s: str) -> bool:
         t = s.strip()
-        return len(t) >= 10 and "T" not in t[:11] and not t.endswith("Z")
+        if len(t) < 10 or "T" in t[:11] or t.endswith("Z"):
+            return False
+        return is_plain_yyyy_mm_dd(t[:10])
 
     af: str | None = None
     bt: str | None = None
     if date_from:
         s = date_from.strip()
-        af = ist_calendar_day_start_utc_iso(s) if _is_plain_date(s) else s
+        if _is_plain_date(s):
+            try:
+                af = ist_calendar_day_start_utc_iso(s)
+            except ValueError as e:
+                raise ValueError(f"invalid date_from: {e}") from e
+        else:
+            af = s
     if date_to:
         s = date_to.strip()
-        bt = ist_calendar_day_end_utc_iso(s) if _is_plain_date(s) else s
+        if _is_plain_date(s):
+            try:
+                bt = ist_calendar_day_end_utc_iso(s)
+            except ValueError as e:
+                raise ValueError(f"invalid date_to: {e}") from e
+        else:
+            bt = s
     return af, bt
 
 

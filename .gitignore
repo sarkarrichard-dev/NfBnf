@@ -10,6 +10,9 @@ env/
 .env.*
 !.env.example
 
+# Local-only secrets module (copy from trading_ai_engine/local_secrets.example.py)
+trading_ai_engine/local_secrets.py
+
 # Jupyter
 .ipynb_checkpoints/
 

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
-
-load_dotenv()
+from trading_ai_engine.secrets_bridge import env_or_local
 
 
 @dataclass(frozen=True)
@@ -16,8 +13,9 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    base = env_or_local("OPENAI_BASE_URL", "https://api.openai.com/v1") or "https://api.openai.com/v1"
     return Settings(
-        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
-        openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
-        openai_chat_model=os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
+        openai_api_key=env_or_local("OPENAI_API_KEY"),
+        openai_base_url=base.rstrip("/"),
+        openai_chat_model=env_or_local("OPENAI_CHAT_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
     )

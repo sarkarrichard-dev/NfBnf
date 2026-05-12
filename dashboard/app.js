@@ -36,6 +36,125 @@ function logUiError(message) {
   else el.textContent = `${line}\n${el.textContent}`;
 }
 
+function isPuterAvailable() {
+  try {
+    const p = globalThis.puter;
+    return p != null && typeof p === "object" && p.ai != null && typeof p.ai.chat === "function";
+  } catch {
+    return false;
+  }
+}
+
+function refreshPuterStatusPill() {
+  const el = $("puter-status");
+  if (!el) return;
+  if (isPuterAvailable()) {
+    el.textContent = "Puter ready";
+    el.classList.add("ok");
+    el.classList.remove("waiting");
+  } else {
+    el.textContent = "Not loaded";
+    el.classList.remove("ok");
+    el.classList.add("waiting");
+  }
+}
+
+function normalizePuterChatResponse(r) {
+  if (r == null) return "";
+  if (typeof r === "string") return r;
+  if (typeof r === "object") {
+    if (typeof r.message === "string") return r.message;
+    if (typeof r.text === "string") return r.text;
+    const msg = r.message;
+    if (msg && typeof msg === "object") {
+      const c = msg.content;
+      if (typeof c === "string") return c;
+      if (Array.isArray(c)) return c.map((part) => (part && (part.text || part.content)) || "").join("");
+    }
+  }
+  try {
+    return JSON.stringify(r, null, 2);
+  } catch {
+    return String(r);
+  }
+}
+
+function buildPuterAnalysisContext() {
+  const data = state.lastAnalysis;
+  if (!data) return "";
+  const slim = {
+    symbol: data.symbol,
+    finding_id: data.finding_id,
+    brain: data.brain,
+    ml: data.ml,
+    trade_plan: data.trade_plan,
+    metrics_subset: {
+      ohlc_bars: data.metrics && data.metrics.ohlc_bars,
+      ohlc_interval: data.metrics && data.metrics.ohlc_interval,
+      market_focus: data.metrics && data.metrics.market_focus,
+    },
+  };
+  return `CONTEXT_JSON (machine snapshot, not advice):\n${JSON.stringify(slim, null, 2)}\n\n`;
+}
+
+async function runPuterUserChat() {
+  const out = $("puter-output");
+  const rawPrompt = (($("puter-prompt") && $("puter-prompt").value) || "").trim();
+  if (!rawPrompt) {
+    if (out) out.textContent = "Enter a question first.";
+    return;
+  }
+  if (!isPuterAvailable()) {
+    if (out) out.textContent = "Puter.js did not load. Check network / blockers and reload.";
+    logUiError("Puter.js not available");
+    return;
+  }
+  const attach = $("puter-attach-analysis") && $("puter-attach-analysis").checked;
+  const prefix = attach ? buildPuterAnalysisContext() : "";
+  const model = ($("puter-model") && $("puter-model").value) || "gpt-4o-mini";
+  if (out) out.textContent = "Waiting for Puter…";
+  try {
+    const resp = await globalThis.puter.ai.chat(prefix + rawPrompt, {
+      model,
+      temperature: 0.25,
+    });
+    if (out) out.textContent = normalizePuterChatResponse(resp) || "(empty response)";
+  } catch (e) {
+    const msg = e && (e.message || String(e));
+    if (out) out.textContent = `Puter error: ${msg}`;
+    logUiError(`Puter: ${msg}`);
+  }
+}
+
+async function runPuterExplainAnalysis() {
+  const out = $("puter-output");
+  if (!state.lastAnalysis) {
+    if (out) out.textContent = "Run Analyze in the Trading portal first.";
+    return;
+  }
+  if (!isPuterAvailable()) {
+    if (out) out.textContent = "Puter.js did not load.";
+    logUiError("Puter.js not available");
+    return;
+  }
+  const model = ($("puter-model") && $("puter-model").value) || "gpt-4o-mini";
+  const prompt = [
+    buildPuterAnalysisContext(),
+    "Task: In 2 short paragraphs, explain what this snapshot suggests about structure vs risk,",
+    "and list concrete caveats (data gaps, overfitting risk, no trade recommendation).",
+    "Plain English; not financial advice.",
+  ].join(" ");
+  if (out) out.textContent = "Waiting for Puter…";
+  try {
+    const resp = await globalThis.puter.ai.chat(prompt, { model, temperature: 0.2 });
+    if (out) out.textContent = normalizePuterChatResponse(resp) || "(empty response)";
+  } catch (e) {
+    const msg = e && (e.message || String(e));
+    if (out) out.textContent = `Puter error: ${msg}`;
+    logUiError(`Puter: ${msg}`);
+  }
+}
+
 function writeHub(text) {
   const el = $("ml-online-readout");
   if (el) el.textContent = typeof text === "string" ? text : String(text);
@@ -410,6 +529,18 @@ function renderLoops(data) {
   );
 }
 
+function formatBrainCouncil(bc) {
+  if (!bc || typeof bc !== "object") return "off";
+  const mode = bc.mode || "?";
+  const d = bc.disagreement != null ? Number(bc.disagreement).toFixed(2) : "?";
+  const agents = Array.isArray(bc.agents) ? bc.agents : [];
+  if (!agents.length) return `${mode} | disagreement=${d}`;
+  const line = agents
+    .map((a) => `${a.id || "?"}:${a.stance || "?"}@${(a.confidence != null ? Number(a.confidence).toFixed(2) : "?")}`)
+    .join(" | ");
+  return `${mode} | disagreement=${d} | ${line}`;
+}
+
 function renderAnalysis(data) {
   state.lastAnalysis = data;
   state.lastFindingId = data.finding_id || "";
@@ -441,6 +572,7 @@ function renderAnalysis(data) {
       `Vetoes: ${(plan.vetoes || []).join(", ") || "none"}`,
       `Warnings: ${(plan.warnings || []).join(", ") || "none"}`,
       `Bars: ${mx.ohlc_bars ?? "-"} | focus: ${mx.market_focus || "-"}`,
+      `Brain council: ${formatBrainCouncil(data.brain_council)}`,
       `Online learning: Hugging Face ${(ol.hf_hub || {}).status || "—"} | Global context symbols OK: ${(ol.global_context || {}).symbols_ok ?? "—"} | Extra local file digest sent to brain: ${ol.local_file_digest_included ? "yes" : "no"}`,
       hmLine,
       "",
@@ -890,7 +1022,8 @@ $("analyze-symbol")?.addEventListener("click", async () => {
         period: $("brain-period").value,
         interval: intraday ? $("brain-interval").value : "1d",
         market_focus: focus,
-        use_llm: false,
+        use_llm: Boolean($("brain-use-llm") && $("brain-use-llm").checked),
+        use_brain_council: Boolean($("brain-use-council") && $("brain-use-council").checked),
         include_yahoo_deep: $("include-yahoo-deep").checked,
         include_ml_digest: false,
         include_heatmap: $("include-heatmap").checked,
@@ -899,9 +1032,18 @@ $("analyze-symbol")?.addEventListener("click", async () => {
       }),
     });
     renderAnalysis(data);
+    refreshPuterStatusPill();
   } catch (e) {
     write("brain-output", String(e.message || e));
   }
+});
+
+$("puter-ask")?.addEventListener("click", () => {
+  runPuterUserChat().catch((e) => logUiError(String((e && e.message) || e)));
+});
+
+$("puter-explain-analysis")?.addEventListener("click", () => {
+  runPuterExplainAnalysis().catch((e) => logUiError(String((e && e.message) || e)));
 });
 
 $("run-post-mortem")?.addEventListener("click", async () => {
@@ -1017,5 +1159,8 @@ if ($("brain-market-focus")) {
 wirePortalTabs();
 defaultPaperDates();
 verifyServerThenRefresh().then((ok) => {
+  refreshPuterStatusPill();
+  setTimeout(refreshPuterStatusPill, 600);
+  setTimeout(refreshPuterStatusPill, 2500);
   if (ok) loadFindingsTable();
 });

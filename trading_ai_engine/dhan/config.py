@@ -4,6 +4,8 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from trading_ai_engine.secrets_bridge import env_or_local
+
 
 @dataclass(frozen=True)
 class DhanConfig:
@@ -20,10 +22,10 @@ class DhanConfig:
 
 def load_dhan_config() -> DhanConfig:
     return DhanConfig(
-        client_id=os.environ.get("DHAN_CLIENT_ID") or None,
-        access_token=os.environ.get("DHAN_ACCESS_TOKEN") or None,
-        feed_url=os.environ.get("DHAN_FEED_URL", "wss://api-feed.dhan.co"),
-        api_base_url=os.environ.get("DHAN_API_BASE_URL", "https://api.dhan.co/v2"),
+        client_id=env_or_local("DHAN_CLIENT_ID"),
+        access_token=env_or_local("DHAN_ACCESS_TOKEN"),
+        feed_url=env_or_local("DHAN_FEED_URL", "wss://api-feed.dhan.co") or "wss://api-feed.dhan.co",
+        api_base_url=env_or_local("DHAN_API_BASE_URL", "https://api.dhan.co/v2") or "https://api.dhan.co/v2",
         live_trading_enabled=os.environ.get("TRADING_AI_ENABLE_LIVE_TRADING", "").lower() == "true",
     )
 

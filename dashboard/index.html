@@ -4,15 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
     <title>Trading AI Workstation</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=9" />
   </head>
-  <body>
+  <body class="ts-app">
     <header class="topbar">
-      <div>
-        <h1>Trading AI Workstation</h1>
-        <div class="subtitle">
-          NSE Yahoo tickers (e.g. RELIANCE.NS, ^NSEI), IST session context, and NIFTY-only option heatmaps.
+      <div class="topbar-brand">
+        <span class="brand-glyph" aria-hidden="true">◆</span>
+        <div>
+          <span class="hud-label">Neural desk // v0.1</span>
+          <h1><span class="gradient-text">Trading AI</span> Workstation</h1>
+          <div class="subtitle">
+            NSE Yahoo tickers (e.g. RELIANCE.NS, ^NSEI), IST session context, and NIFTY-only option heatmaps.
+          </div>
         </div>
       </div>
       <div class="status-row">
@@ -48,6 +58,112 @@
 
     <div id="portal-ml" class="portal-view shell">
       <div class="grid">
+        <article class="panel span-2">
+          <header class="panel-head">
+            <h2>Browser AI (Puter.js)</h2>
+            <span id="puter-status" class="pill waiting">Puter</span>
+          </header>
+          <p class="subtitle tight">
+            In-browser models via
+            <a href="https://developer.puter.com/tutorials/free-unlimited-openai-api/" target="_blank" rel="noopener noreferrer">Puter.js</a>
+            (no OpenAI key on this server). Output is for learning only — not financial advice.
+          </p>
+          <div class="form-grid">
+            <label>
+              Model
+              <select id="puter-model">
+                <option value="gpt-4o-mini" selected>gpt-4o-mini</option>
+                <option value="gpt-4o">gpt-4o</option>
+                <option value="gpt-5-nano">gpt-5-nano</option>
+                <option value="gpt-5-mini">gpt-5-mini</option>
+                <option value="gpt-5.4-nano">gpt-5.4-nano</option>
+              </select>
+            </label>
+            <label class="inline">
+              <input id="puter-attach-analysis" type="checkbox" />
+              Prepend last Trading-portal analysis (JSON summary)
+            </label>
+          </div>
+          <label class="subtitle tight" for="puter-prompt" style="display: block; margin-top: 0.5rem">Your question</label>
+          <textarea id="puter-prompt" class="puter-prompt" rows="4" placeholder="e.g. Summarize regime risk and caveats in plain English."></textarea>
+          <div class="button-row" style="margin-top: 0.5rem">
+            <button id="puter-ask" type="button">Ask Puter AI</button>
+            <button id="puter-explain-analysis" class="secondary" type="button">Explain last analysis</button>
+          </div>
+          <pre id="puter-output" class="readout readout-short">Puter responses appear here.</pre>
+        </article>
+
+        <article class="panel span-2" id="no-cost-ai-panel">
+          <header class="panel-head">
+            <h2>Free AI catalog (no-cost-ai)</h2>
+            <div class="button-row">
+              <a
+                class="link-as-btn secondary"
+                href="https://github.com/zebbern/no-cost-ai"
+                target="_blank"
+                rel="noopener noreferrer"
+                >GitHub README</a>
+              <a
+                class="link-as-btn secondary"
+                href="https://nocostai.vercel.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                >nocostai web app</a>
+            </div>
+          </header>
+          <p class="subtitle tight">
+            Living index of free chat, media, voice, and API options (MIT). Curated links below mirror common
+            &ldquo;Developer APIs&rdquo; / chat entries from the list — always verify limits and terms on the provider
+            site. Puter.js (above) appears in the same ecosystem.
+          </p>
+          <div class="nc-catalog">
+            <div class="nc-col">
+              <h3 class="nc-col-title">Browser chat &amp; playgrounds</h3>
+              <ul class="nc-list">
+                <li><a href="https://lmarena.ai/" target="_blank" rel="noopener noreferrer">lmarena.ai</a> — model arena</li>
+                <li><a href="https://deepinfra.com/chat" target="_blank" rel="noopener noreferrer">deepinfra.com/chat</a></li>
+                <li><a href="https://groq.com" target="_blank" rel="noopener noreferrer">groq.com</a> — fast inference</li>
+                <li><a href="https://www.meta.ai" target="_blank" rel="noopener noreferrer">meta.ai</a> — Llama</li>
+                <li><a href="https://huggingface.co/spaces" target="_blank" rel="noopener noreferrer">HF Spaces</a> — demos</li>
+              </ul>
+            </div>
+            <div class="nc-col">
+              <h3 class="nc-col-title">APIs, SDKs &amp; local</h3>
+              <ul class="nc-list">
+                <li><a href="https://developer.puter.com/tutorials/free-unlimited-ai-api/" target="_blank" rel="noopener noreferrer">Puter AI API docs</a></li>
+                <li><a href="https://console.groq.com/" target="_blank" rel="noopener noreferrer">Groq console</a></li>
+                <li><a href="https://openrouter.ai/docs" target="_blank" rel="noopener noreferrer">OpenRouter docs</a></li>
+                <li><a href="https://ollama.com" target="_blank" rel="noopener noreferrer">ollama.com</a> — local models</li>
+                <li><a href="https://uncloseai.com/" target="_blank" rel="noopener noreferrer">uncloseai.com</a> — OpenAI-compatible (per list)</li>
+                <li><a href="https://g4f.dev/docs/ready_to_use.html" target="_blank" rel="noopener noreferrer">g4f.dev</a> — aggregated providers</li>
+                <li><a href="https://pollinations.ai/" target="_blank" rel="noopener noreferrer">pollinations.ai</a> — text / image / video APIs</li>
+                <li><a href="https://llm7.io/" target="_blank" rel="noopener noreferrer">llm7.io</a> — hosted models (rate limits)</li>
+              </ul>
+            </div>
+            <div class="nc-col">
+              <h3 class="nc-col-title">Leaderboards &amp; full list</h3>
+              <ul class="nc-list">
+                <li><a href="https://openrouter.ai/rankings" target="_blank" rel="noopener noreferrer">OpenRouter rankings</a></li>
+                <li><a href="https://lmarena.ai/leaderboard" target="_blank" rel="noopener noreferrer">LMSYS leaderboard</a></li>
+                <li><a href="https://artificialanalysis.ai/" target="_blank" rel="noopener noreferrer">Artificial Analysis</a></li>
+                <li>
+                  <a href="https://github.com/zebbern/no-cost-ai#readme" target="_blank" rel="noopener noreferrer"
+                    >Full tables (80+ links)</a>
+                  on GitHub
+                </li>
+              </ul>
+            </div>
+          </div>
+          <p class="subtitle nc-warn" role="note">
+            <strong>Use at your own risk.</strong> Prompts and files may be logged by third parties. Free tiers change,
+            rate-limit, or disappear. Do not use for production trading, secrets, or confidential data. This workstation is
+            not affiliated with the listed sites — see the
+            <a href="https://github.com/zebbern/no-cost-ai/blob/main/README.md" target="_blank" rel="noopener noreferrer"
+              >no-cost-ai README</a>
+            disclaimer.
+          </p>
+        </article>
+
         <article class="panel">
           <header class="panel-head">
             <h2>Online sources</h2>
@@ -239,6 +355,14 @@
                 <input id="include-heatmap" type="checkbox" checked />
                 Include NIFTY option heatmap (AIML, NSE)
               </label>
+              <label class="inline">
+                <input id="brain-use-council" type="checkbox" />
+                Multi-agent brain council (momentum / risk / contrarian → one AI voice for fusion)
+              </label>
+              <label class="inline">
+                <input id="brain-use-llm" type="checkbox" />
+                Server OpenAI for council or single AI (requires key; 4 extra LLM calls if council + this)
+              </label>
               <input type="hidden" id="heatmap-underlying" value="nifty" />
               <p class="subtitle tight">
                 Option chain data path is fixed to <strong>NIFTY</strong> (NSE) in this build.
@@ -354,6 +478,7 @@
       <pre id="ui-error-log" class="readout readout-errors">No errors yet.</pre>
     </section>
 
-    <script src="/app.js?v=5" defer></script>
+    <script src="https://js.puter.com/v2/" defer></script>
+    <script src="/app.js?v=9" defer></script>
   </body>
 </html>

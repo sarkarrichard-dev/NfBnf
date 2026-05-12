@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from trading_ai_engine.security_http import validate_https_public_url
 from trading_ai_engine.settings import get_settings
 
 
@@ -21,7 +22,8 @@ def chat(
     if not s.openai_api_key:
         raise RuntimeError("OPENAI_API_KEY is not set; remote LLM calls are disabled.")
 
-    url = f"{s.openai_base_url}/chat/completions"
+    base = validate_https_public_url(s.openai_base_url, purpose="OPENAI_BASE_URL")
+    url = f"{base}/chat/completions"
     headers = {
         "Authorization": f"Bearer {s.openai_api_key}",
         "Content-Type": "application/json",

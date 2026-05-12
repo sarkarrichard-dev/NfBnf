@@ -30,7 +30,13 @@ def fuse(
     # Let feedback earn more influence as rated decisions accumulate, while keeping
     # deterministic price structure as the anchor.
     w_bias = min(0.42, 0.16 + feedback_count * 0.025)
-    w_ai = 0.24 if ai.version == "ai_heuristic_v1" else 0.28
+    ai_ver = str(getattr(ai, "version", "") or "")
+    if ai_ver.startswith("ai_council"):
+        w_ai = 0.26
+    elif ai.version == "ai_heuristic_v1":
+        w_ai = 0.24
+    else:
+        w_ai = 0.28
     w_ml = max(0.30, 1.0 - w_bias - w_ai)
     total = w_ml + w_bias + w_ai
     w_ml, w_bias, w_ai = w_ml / total, w_bias / total, w_ai / total

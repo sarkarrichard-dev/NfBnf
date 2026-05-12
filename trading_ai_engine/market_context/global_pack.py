@@ -4,8 +4,6 @@ import os
 import re
 from typing import Any
 
-import pandas as pd
-
 from trading_ai_engine.market_yfinance import history
 
 _DEFAULT_GLOBAL = "^GSPC,SPY,EURUSD=X,USDINR=X,CL=F"

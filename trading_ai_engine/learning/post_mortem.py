@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -30,7 +31,13 @@ def run_post_mortem(
     Records an ``evolution`` event and appends to the self-learning state file for
     ``refinement_score_nudge`` on subsequent runs.
     """
-    row = db.get_finding(finding_id)
+    fid = str(finding_id or "").strip()
+    try:
+        uuid.UUID(fid)
+    except ValueError:
+        return {"status": "error", "message": "finding_id must be a UUID"}
+
+    row = db.get_finding(fid)
     if not row:
         return {"status": "error", "message": "unknown finding_id"}
 
@@ -41,7 +48,7 @@ def run_post_mortem(
             WHERE finding_id = ?
             ORDER BY created_at DESC LIMIT 1
             """,
-            (finding_id,),
+            (fid,),
         ).fetchone()
     if not bd:
         return {"status": "error", "message": "no brain_decision for finding"}
@@ -85,7 +92,7 @@ def run_post_mortem(
         verdict = "correct" if correct else "wrong"
 
     payload = {
-        "finding_id": finding_id,
+        "finding_id": fid,
         "symbol": symbol,
         "brain_action": action,
         "forward_return": round(fwd_ret, 6),
@@ -101,7 +108,7 @@ def run_post_mortem(
     )
     append_outcome(
         {
-            "finding_id": finding_id,
+            "finding_id": fid,
             "symbol": symbol,
             "action": action,
             "forward_return": fwd_ret,

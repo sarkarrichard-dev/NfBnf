@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -87,6 +88,10 @@ def close_paper_order(*, order_id: str, exit_price: Any = None) -> dict[str, Any
     oid = str(order_id or "").strip()
     if not oid:
         return {"status": "error", "reason": "missing_order_id"}
+    try:
+        uuid.UUID(oid)
+    except ValueError:
+        return {"status": "error", "reason": "invalid_order_id"}
     row = db.fetch_paper_order_by_id(oid)
     if not row:
         return {"status": "error", "reason": "order_not_found"}

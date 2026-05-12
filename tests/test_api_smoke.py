@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+pytestmark = [pytest.mark.integration, pytest.mark.smoke]
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
@@ -93,3 +95,15 @@ def test_paper_close_idempotent_reject(client: TestClient, monkeypatch) -> None:
     assert client.post("/api/trading/paper/close", json={"order_id": oid}).status_code == 200
     r2 = client.post("/api/trading/paper/close", json={"order_id": oid})
     assert r2.status_code == 400
+
+
+def test_paper_close_rejects_non_uuid_order_id(client: TestClient) -> None:
+    r = client.post("/api/trading/paper/close", json={"order_id": "not-a-uuid"})
+    assert r.status_code == 400
+    assert r.json().get("detail") == "invalid_order_id"
+
+
+def test_paper_history_rejects_invalid_ist_plain_date(client: TestClient) -> None:
+    r = client.get("/api/trading/paper/history", params={"date_from": "2025-02-31"})
+    assert r.status_code == 400
+    assert "invalid date_from" in (r.json().get("detail") or "")

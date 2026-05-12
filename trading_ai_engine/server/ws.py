@@ -30,6 +30,23 @@ from trading_ai_engine.trading.paper import place_paper_order, recent_paper_orde
 router = APIRouter()
 
 
+def _truthy_env(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _payload_bool(payload: dict[str, Any], key: str, default: bool = False) -> bool:
+    if key not in payload:
+        return default
+    v = payload.get(key)
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _council_from_ws_payload(payload: dict[str, Any]) -> bool:
+    return _payload_bool(payload, "use_brain_council", False) or _truthy_env("TRADING_AI_BRAIN_COUNCIL")
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self.active: set[WebSocket] = set()
@@ -67,6 +84,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         interval = str(payload.get("interval") or "1d")
         market_focus = str(payload.get("market_focus") or os.environ.get("TRADING_AI_MARKET_FOCUS") or "balanced")
         use_llm = bool(payload.get("use_llm", True))
+        use_brain_council = _council_from_ws_payload(payload)
         include_yahoo_deep = bool(payload.get("include_yahoo_deep", True))
         include_ml_digest = bool(payload.get("include_ml_digest", False))
         include_heatmap = bool(payload.get("include_heatmap", False))
@@ -74,11 +92,17 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
         heatmap_source = str(payload.get("heatmap_source") or "auto")
         await ws.send_json({"type": "status", "message": f"Fetching and scoring {symbol}..."})
         try:
+            symbol = normalize_nse_yahoo_symbol(symbol)
+        except ValueError as e:
+            await ws.send_json({"type": "error", "message": str(e)})
+            return
+        try:
             result = await asyncio.to_thread(
                 lambda: analyze.run_analyze(
                     symbol,
                     period,
                     use_llm=use_llm,
+                    use_brain_council=use_brain_council,
                     include_yahoo_deep=include_yahoo_deep,
                     include_ml_digest=include_ml_digest,
                     include_heatmap=include_heatmap,
@@ -332,6 +356,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
     if ptype == "sweep":
         period = str(payload.get("period") or "3mo")
         use_llm = bool(payload.get("use_llm", True))
+        use_brain_council = _council_from_ws_payload(payload)
         include_yahoo_deep = bool(payload.get("include_yahoo_deep", True))
         include_ml_digest = bool(payload.get("include_ml_digest", False))
         force = bool(payload.get("force", False))
@@ -376,6 +401,7 @@ async def _handle_payload(ws: WebSocket, payload: dict[str, Any]) -> None:
                         s,
                         period,
                         use_llm=use_llm,
+                        use_brain_council=use_brain_council,
                         include_yahoo_deep=include_yahoo_deep,
                         include_ml_digest=include_ml_digest,
                         include_global_context=bool(payload.get("include_global_context", True)),
