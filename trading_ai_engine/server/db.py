@@ -27,6 +27,10 @@ def _migrate_schema(cx: sqlite3.Connection) -> None:
         cx.execute("ALTER TABLE paper_orders ADD COLUMN exit_at TEXT")
     if "realized_pnl" not in cols:
         cx.execute("ALTER TABLE paper_orders ADD COLUMN realized_pnl REAL")
+    if "execution_channel" not in cols:
+        cx.execute("ALTER TABLE paper_orders ADD COLUMN execution_channel TEXT")
+    if "external_order_id" not in cols:
+        cx.execute("ALTER TABLE paper_orders ADD COLUMN external_order_id TEXT")
 
 
 def init_db() -> None:
@@ -112,6 +116,11 @@ def init_db() -> None:
                 score_delta REAL NOT NULL,
                 payload_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS operator_prefs (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
             """
         )
@@ -462,8 +471,8 @@ def insert_paper_order(order: dict[str, Any]) -> str:
             INSERT INTO paper_orders (
                 id, finding_id, symbol, side, quantity, entry_price, stop_loss, target,
                 notional, risk_amount, status, reason, plan_json, brain_json, created_at,
-                model_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                model_version, execution_channel, external_order_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 oid,
@@ -482,9 +491,35 @@ def insert_paper_order(order: dict[str, Any]) -> str:
                 json.dumps(order.get("brain") or {}, default=str),
                 _utc_now(),
                 order.get("model_version"),
+                order.get("execution_channel") or "local",
+                order.get("external_order_id"),
             ),
         )
     return oid
+
+
+def get_operator_pref(key: str) -> str | None:
+    with connect() as cx:
+        row = cx.execute("SELECT value FROM operator_prefs WHERE key = ?", (key,)).fetchone()
+    if not row:
+        return None
+    v = row[0]
+    return str(v).strip() if v is not None else None
+
+
+def set_operator_pref(key: str, value: str) -> None:
+    k = (key or "").strip()
+    if not k:
+        raise ValueError("operator pref key is required")
+    with connect() as cx:
+        cx.execute(
+            """
+            INSERT INTO operator_prefs (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (k, str(value), _utc_now()),
+        )
 
 
 def fetch_closed_paper_for_pattern_feedback(*, limit: int = 400) -> list[dict[str, Any]]:

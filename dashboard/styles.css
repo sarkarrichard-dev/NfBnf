@@ -591,6 +591,85 @@ button:disabled {
   border-bottom: 0;
 }
 
+/* --- Chart dashboard (Lightweight Charts) --- */
+.chart-dashboard {
+  margin-top: 1rem;
+  padding: 1rem 1.1rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--line-bright);
+  background: linear-gradient(165deg, rgba(15, 20, 28, 0.95), rgba(11, 16, 24, 0.88));
+  box-shadow: 0 0 0 1px rgba(0, 245, 212, 0.06), 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.chart-dashboard-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.65rem;
+}
+
+.chart-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+.chart-toolbar {
+  display: inline-flex;
+  gap: 0.35rem;
+  padding: 0.2rem;
+  border-radius: 10px;
+  background: rgba(6, 8, 13, 0.65);
+  border: 1px solid var(--line);
+}
+
+.chart-toggle {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.45rem 0.75rem;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.chart-toggle:hover {
+  color: var(--text);
+  background: rgba(42, 63, 92, 0.35);
+}
+
+.chart-toggle.active {
+  color: #031210;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+  box-shadow: 0 0 18px var(--glow);
+}
+
+.chart-mount {
+  width: 100%;
+  min-height: 380px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #06080d;
+  border: 1px solid var(--line);
+}
+
+.chart-hint {
+  margin: 0.55rem 0 0;
+  opacity: 0.92;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

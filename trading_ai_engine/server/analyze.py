@@ -4,6 +4,7 @@ import os
 from typing import Any, cast
 
 from trading_ai_engine.brain.engine import run_brain
+from trading_ai_engine.chart.ohlc_lightweight import ohlc_to_lightweight_chart
 from trading_ai_engine.india.nse_yahoo import normalize_nse_yahoo_symbol, require_nifty_option_underlying
 from trading_ai_engine.market_context import extra_strategy_metrics, fetch_global_context_snapshot
 from trading_ai_engine.market_yfinance import history
@@ -230,4 +231,5 @@ def run_analyze(
         out["hf_digest_preview"] = hf_digest[:2000] + ("..." if len(hf_digest) > 2000 else "")
     if global_digest:
         out["global_digest_preview"] = global_digest[:2000] + ("..." if len(global_digest) > 2000 else "")
+    out["chart"] = ohlc_to_lightweight_chart(ohlc)
     return out

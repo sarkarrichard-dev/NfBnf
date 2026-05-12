@@ -11,7 +11,7 @@
       rel="stylesheet"
     />
     <title>Trading AI Workstation</title>
-    <link rel="stylesheet" href="/styles.css?v=9" />
+    <link rel="stylesheet" href="/styles.css?v=12" />
   </head>
   <body class="ts-app">
     <header class="topbar">
@@ -48,6 +48,10 @@
       <div class="metric">
         <span>Live trading</span>
         <strong id="metric-live">Blocked</strong>
+      </div>
+      <div class="metric">
+        <span>Execution</span>
+        <strong id="metric-execution" title="Order routing (OpenAlgo vs local vs live Dhan)">-</strong>
       </div>
     </section>
 
@@ -314,6 +318,34 @@
         <div class="grid">
           <article class="panel span-2">
             <header class="panel-head">
+              <h2>Order routing</h2>
+              <button id="refresh-execution" class="secondary" type="button">Refresh</button>
+            </header>
+            <p class="subtitle tight">
+              Choose where risk-approved orders go. <strong>OpenAlgo</strong> paper mode hits your self-hosted
+              <a href="https://github.com/marketcalls/openalgo" target="_blank" rel="noopener noreferrer">OpenAlgo</a>
+              <code>/api/v1/placesmartorder</code> (use Analyzer/sandbox there). <strong>Local</strong> keeps simulated
+              SQLite fills only. <strong>Live Dhan</strong> is stored for when native routing exists. Brain / HF / model
+              learning does not depend on this toggle.
+            </p>
+            <div class="form-grid">
+              <label>
+                Execution mode (saved on server)
+                <select id="execution-mode-select">
+                  <option value="paper_openalgo">Paper — OpenAlgo (placesmartorder)</option>
+                  <option value="paper_local">Paper — local SQLite only</option>
+                  <option value="live_dhan">Live — Dhan (blocked until wired)</option>
+                </select>
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="save-execution-mode" type="button">Save mode</button>
+            </div>
+            <pre id="execution-readout" class="readout readout-short">Load status…</pre>
+          </article>
+
+          <article class="panel span-2">
+            <header class="panel-head">
               <h2>Run the brain &amp; place paper</h2>
               <button id="analyze-symbol" class="secondary" type="button">Analyze</button>
             </header>
@@ -376,9 +408,58 @@
                 </select>
               </label>
             </div>
+
+            <div class="chart-dashboard" id="chart-dashboard">
+              <div class="chart-dashboard-head">
+                <h3 class="chart-title">Price chart</h3>
+                <div class="chart-toolbar" role="toolbar" aria-label="Chart display mode">
+                  <button type="button" class="chart-toggle active" data-chart-mode="candles">Candles</button>
+                  <button type="button" class="chart-toggle" data-chart-mode="line">Line</button>
+                  <button type="button" class="chart-toggle" data-chart-mode="volume">Volume</button>
+                </div>
+              </div>
+              <div id="chart-mount" class="chart-mount"></div>
+              <p id="chart-hint" class="subtitle tight chart-hint">
+                Run <strong>Analyze</strong> to load OHLC. Candles + volume histogram; Line = close; Volume = bar histogram.
+              </p>
+            </div>
+
             <div id="brain-summary" class="decision">No analysis yet.</div>
             <button id="place-paper-order" class="trade-action" type="button" disabled>Place paper order</button>
             <pre id="brain-output" class="readout">Waiting for analysis.</pre>
+          </article>
+
+          <article class="panel span-2" id="tradingagents-panel">
+            <header class="panel-head">
+              <h2>TradingAgents</h2>
+              <button id="tradingagents-status" class="secondary" type="button">Check install</button>
+            </header>
+            <p class="subtitle tight">
+              Optional
+              <a href="https://github.com/TauricResearch/TradingAgents" target="_blank" rel="noopener noreferrer"
+                >TauricResearch/TradingAgents</a
+              >
+              multi-agent LLM graph. Install: <code>pip install -e &quot;.[tradingagents]&quot;</code> and configure
+              upstream <code>TRADINGAGENTS_*</code> API keys. Runs are slow and billed to your provider.
+            </p>
+            <div class="form-grid">
+              <label>
+                Symbol (NSE Yahoo)
+                <input id="ta-symbol" type="text" value="TCS.NS" autocomplete="off" />
+              </label>
+              <label>
+                Trade date
+                <input id="ta-date" type="date" />
+              </label>
+              <label class="inline">
+                <input id="ta-debug" type="checkbox" />
+                Debug log
+              </label>
+            </div>
+            <div class="button-row">
+              <button id="ta-run" type="button">Run propagate</button>
+            </div>
+            <pre id="ta-output" class="readout readout-tall">Idle — press Check install.</pre>
           </article>
 
           <article class="panel">
@@ -479,6 +560,8 @@
     </section>
 
     <script src="https://js.puter.com/v2/" defer></script>
-    <script src="/app.js?v=9" defer></script>
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js" defer></script>
+    <script src="/chart_panel.js?v=12" defer></script>
+    <script src="/app.js?v=12" defer></script>
   </body>
 </html>

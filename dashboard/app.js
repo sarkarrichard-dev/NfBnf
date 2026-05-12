@@ -467,7 +467,9 @@ function renderOrders(data) {
           .map((o) => {
             const st = o.status === "closed_paper" ? "closed" : o.status;
             const pnl = o.realized_pnl != null ? ` pnl=${o.realized_pnl}` : "";
-            return `${formatIst(o.created_at)} | ${o.symbol} | ${o.side} x${o.quantity} @ ${o.entry_price} | ${st}${pnl}`;
+            const ext = o.external_order_id ? ` ext=${o.external_order_id}` : "";
+            const ch = o.execution_channel && o.execution_channel !== "local" ? ` via=${o.execution_channel}` : "";
+            return `${formatIst(o.created_at)} | ${o.symbol} | ${o.side} x${o.quantity} @ ${o.entry_price} | ${st}${pnl}${ext}${ch}`;
           })
           .join("\n")
       : "No paper orders yet.",
@@ -479,6 +481,34 @@ function renderRisk(data) {
   setPill("paper-pill", data.paper_trading_enabled ? "Paper on" : "Paper off", data.paper_trading_enabled);
 }
 
+function renderExecution(data) {
+  const m = $("metric-execution");
+  if (m) m.textContent = data.execution_mode || "?";
+  const sel = $("execution-mode-select");
+  if (sel && data.execution_mode) {
+    const opt = sel.querySelector(`option[value="${data.execution_mode}"]`);
+    if (opt) sel.value = data.execution_mode;
+  }
+  const oa = data.openalgo || {};
+  const r = oa.reachability || {};
+  const reach =
+    r.configured === false
+      ? r.detail || "not configured"
+      : r.reachable
+        ? "reachable"
+        : "not reachable";
+  const hostPart = r.host != null ? ` ${r.scheme || ""}://${r.host}:${r.port || ""}` : "";
+  write(
+    "execution-readout",
+    [
+      `Mode: ${data.execution_mode || "?"}`,
+      `OpenAlgo: configured=${oa.configured ? "yes" : "no"} base=${oa.base_url_display || "—"}`,
+      `OpenAlgo host: ${reach}${hostPart}`,
+      `Live Dhan credentials (feed): ${data.live_dhan && data.live_dhan.credentials_ready ? "present" : "missing"}`,
+    ].join("\n"),
+  );
+}
+
 function renderReadiness(data) {
   const g = data.workstation_gates || {};
   const mf = g.market_focus || {};
@@ -488,9 +518,13 @@ function renderReadiness(data) {
   const dq = g.data_quality || {};
   const cat = g.ml_profile_catalog || {};
   const chk = g.checklist_preview || {};
+  const ex = g.execution || {};
   write("readiness-output", [
     `Market focus (env default): ${mf.default_from_env || "-"}`,
     mf.blurb || "",
+    "",
+    `Execution mode: ${ex.execution_mode || "-"}`,
+    `OpenAlgo configured: ${ex.openalgo && ex.openalgo.configured ? "yes" : "no"}`,
     "",
     `Kill switch: ${kill}`,
     `Paper IST sessions (days with orders): ${ps.sessions_with_orders ?? "-"} / target ${ps.roadmap_target_sessions ?? 20}`,
@@ -581,6 +615,13 @@ function renderAnalysis(data) {
       .filter(Boolean)
       .join("\n"),
   );
+  if (globalThis.TAWSChart && typeof globalThis.TAWSChart.renderFromAnalysis === "function") {
+    try {
+      globalThis.TAWSChart.renderFromAnalysis(data);
+    } catch (e) {
+      logUiError(`Chart render: ${e && e.message ? e.message : e}`);
+    }
+  }
 }
 
 const PERIODS_EQUITY = [
@@ -697,6 +738,7 @@ async function refreshAll() {
     { path: "/api/ml/market-learning/status", render: renderLearning },
     { path: "/api/trading/paper/orders", render: renderOrders },
     { path: "/api/trading/risk", render: renderRisk },
+    { path: "/api/trading/execution", render: renderExecution },
     { path: "/api/trading/readiness", render: renderReadiness },
     { path: "/api/learning/loops", render: renderLoops },
   ];
@@ -760,6 +802,12 @@ function defaultPaperDates() {
   const fromEl = $("paper-from-date");
   if (toEl && !toEl.value) toEl.value = to.toISOString().slice(0, 10);
   if (fromEl && !fromEl.value) fromEl.value = from.toISOString().slice(0, 10);
+}
+
+function defaultTaDate() {
+  const el = $("ta-date");
+  if (!el || el.value) return;
+  el.value = new Date().toISOString().slice(0, 10);
 }
 
 function paperRangeQuery() {
@@ -1127,8 +1175,36 @@ $("place-paper-order")?.addEventListener("click", async () => {
     });
     write("brain-output", JSON.stringify(result, null, 2));
     renderOrders(await api("/api/trading/paper/orders"));
+    try {
+      renderExecution(await api("/api/trading/execution"));
+    } catch (_) {
+      /* non-fatal */
+    }
   } catch (e) {
     write("brain-output", String(e.message || e));
+  }
+});
+
+$("refresh-execution")?.addEventListener("click", async () => {
+  try {
+    renderExecution(await api("/api/trading/execution"));
+  } catch (e) {
+    write("execution-readout", String(e.message || e));
+  }
+});
+
+$("save-execution-mode")?.addEventListener("click", async () => {
+  const sel = $("execution-mode-select");
+  const mode = sel && sel.value ? sel.value : "paper_local";
+  try {
+    renderExecution(
+      await api("/api/trading/execution/mode", {
+        method: "POST",
+        body: JSON.stringify({ mode }),
+      }),
+    );
+  } catch (e) {
+    write("execution-readout", String(e.message || e));
   }
 });
 
@@ -1156,8 +1232,37 @@ if ($("brain-market-focus")) {
   syncBrainPeriodOptions();
 }
 
+$("tradingagents-status")?.addEventListener("click", async () => {
+  const out = $("ta-output");
+  if (out) out.textContent = "Checking…";
+  try {
+    const j = await api("/api/research/trading-agents");
+    if (out) out.textContent = JSON.stringify(j, null, 2);
+  } catch (e) {
+    if (out) out.textContent = String(e.message || e);
+  }
+});
+
+$("ta-run")?.addEventListener("click", async () => {
+  const out = $("ta-output");
+  if (out) out.textContent = "Running TradingAgents… (may take minutes)";
+  try {
+    const sym = ($("ta-symbol") && $("ta-symbol").value.trim()) || "TCS.NS";
+    const dt = ($("ta-date") && $("ta-date").value.trim()) || "";
+    const deb = Boolean($("ta-debug") && $("ta-debug").checked);
+    const j = await api("/api/research/trading-agents", {
+      method: "POST",
+      body: JSON.stringify({ symbol: sym, trade_date: dt, debug: deb }),
+    });
+    if (out) out.textContent = JSON.stringify(j, null, 2);
+  } catch (e) {
+    if (out) out.textContent = String(e.message || e);
+  }
+});
+
 wirePortalTabs();
 defaultPaperDates();
+defaultTaDate();
 verifyServerThenRefresh().then((ok) => {
   refreshPuterStatusPill();
   setTimeout(refreshPuterStatusPill, 600);

@@ -25,6 +25,11 @@ DHAN_API_BASE_URL: str | None = None  # default https://api.dhan.co/v2
 # Optional JSON string (same as env TRADING_AI_DHAN_LTP_MAP)
 TRADING_AI_DHAN_LTP_MAP: str | None = None
 
+# --- OpenAlgo (self-hosted; paper routing) ---
+OPENALGO_BASE_URL: str | None = None  # e.g. "http://127.0.0.1:5000"
+OPENALGO_API_KEY: str | None = None
+OPENALGO_STRATEGY: str | None = None  # default TradingAIML
+
 # --- Hugging Face Hub ---
 HF_TOKEN: str | None = None
 HUGGING_FACE_HUB_TOKEN: str | None = None

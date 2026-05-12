@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse, Response
@@ -32,6 +35,7 @@ from trading_ai_engine.ml.market_learn import (
     train_market_model,
 )
 from trading_ai_engine.ml.pattern_feedback import refresh_pattern_live_overlay
+from trading_ai_engine.openalgo.client import openalgo_reachable_snapshot
 from trading_ai_engine.options.local_chain import available_trade_dates, local_option_chain_heatmap
 from trading_ai_engine.research.readiness import bot_readiness_snapshot
 from trading_ai_engine.server import db
@@ -39,6 +43,7 @@ from trading_ai_engine.server.paths import DASHBOARD_DIR
 from trading_ai_engine.server.research import run_symbol_backtest
 from trading_ai_engine.server.ws import router as ws_router
 from trading_ai_engine.trading.evolution import evolution_snapshot
+from trading_ai_engine.trading.execution_mode import execution_snapshot, set_execution_mode
 from trading_ai_engine.trading.paper import close_paper_order, place_paper_order, recent_paper_orders
 from trading_ai_engine.trading.readiness import workstation_readiness
 from trading_ai_engine.trading.risk import load_risk_config
@@ -234,6 +239,55 @@ async def api_brain_analyze(payload: dict[str, Any] = Body(default_factory=dict)
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+@app.get("/api/research/trading-agents", include_in_schema=False)
+async def api_research_trading_agents_status() -> dict:
+    """Whether the optional TradingAgents package is importable + timeout hint."""
+    from trading_ai_engine.integrations.trading_agents_runner import trading_agents_env_hint
+
+    return trading_agents_env_hint()
+
+
+@app.post("/api/research/trading-agents", include_in_schema=False)
+async def api_research_trading_agents_run(payload: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    """
+    Run `TradingAgentsGraph.propagate` in a worker thread (can be slow; uses your LLM keys).
+    See https://github.com/TauricResearch/TradingAgents — install with ``pip install -e ".[tradingagents]"``.
+    """
+    from trading_ai_engine.integrations.trading_agents_runner import (
+        run_trading_agents_propagate,
+        trading_agents_env_hint,
+    )
+
+    symbol = str(payload.get("symbol") or "").strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="symbol is required")
+    trade_date = str(payload.get("trade_date") or "").strip()
+    if not trade_date:
+        trade_date = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    debug = bool(payload.get("debug"))
+    tout = int(os.environ.get("TRADING_AI_TRADINGAGENTS_TIMEOUT_S", "120") or 120)
+    tout = max(30, min(tout, 600))
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                run_trading_agents_propagate,
+                symbol=symbol,
+                trade_date=trade_date,
+                debug=debug,
+            ),
+            timeout=float(tout),
+        )
+    except asyncio.TimeoutError:
+        result = {
+            "status": "error",
+            "detail": (
+                f"TradingAgents propagate exceeded {tout}s. "
+                "Increase TRADING_AI_TRADINGAGENTS_TIMEOUT_S or run from their CLI."
+            ),
+        }
+    return {**result, "meta": trading_agents_env_hint()}
+
+
 @app.get("/api/market/heatmap", include_in_schema=False)
 async def api_market_heatmap(
     underlying: str = "nifty",
@@ -371,6 +425,26 @@ async def api_trading_risk() -> dict:
 async def api_trading_readiness() -> dict:
     """Roadmap-aligned gates: kill switch, paper sessions, data-quality snapshot, catalog health."""
     return workstation_readiness()
+
+
+@app.get("/api/trading/execution", include_in_schema=False)
+async def api_trading_execution() -> dict:
+    """Persisted order-routing mode (paper OpenAlgo vs local vs live Dhan stub) + OpenAlgo reachability."""
+    snap = execution_snapshot()
+    snap["openalgo"]["reachability"] = openalgo_reachable_snapshot()
+    return snap
+
+
+@app.post("/api/trading/execution/mode", include_in_schema=False)
+async def api_trading_execution_mode(payload: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    """Set execution mode in SQLite (survives restarts)."""
+    out = set_execution_mode(str(payload.get("mode") or ""))
+    if not out.get("ok"):
+        raise HTTPException(status_code=400, detail=out)
+    snap = execution_snapshot()
+    snap["openalgo"]["reachability"] = openalgo_reachable_snapshot()
+    snap["saved"] = True
+    return snap
 
 
 @app.get("/api/trading/paper/orders", include_in_schema=False)
@@ -617,6 +691,14 @@ if dashboard_path.is_dir():
     async def dashboard_app_js() -> FileResponse:
         return FileResponse(
             dashboard_path / "app.js",
+            media_type="application/javascript",
+            headers=dict(_DASH_NO_CACHE),
+        )
+
+    @app.get("/chart_panel.js", include_in_schema=False)
+    async def dashboard_chart_panel_js() -> FileResponse:
+        return FileResponse(
+            dashboard_path / "chart_panel.js",
             media_type="application/javascript",
             headers=dict(_DASH_NO_CACHE),
         )

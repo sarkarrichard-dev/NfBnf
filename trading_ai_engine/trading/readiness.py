@@ -6,6 +6,7 @@ from trading_ai_engine.ml.market_learn import data_quality_report, learning_stat
 from trading_ai_engine.research.readiness import REQUIRED_FOR_LIVE, bot_readiness_snapshot
 from trading_ai_engine.server import db
 from trading_ai_engine.trading.derivatives_focus import readiness_market_focus_block
+from trading_ai_engine.trading.execution_mode import execution_snapshot
 from trading_ai_engine.trading.paper_gates import kill_switch_active, paper_sessions_ist
 from trading_ai_engine.trading.risk import load_risk_config
 
@@ -52,6 +53,7 @@ def workstation_readiness() -> dict[str, Any]:
             "rows_profiled": catalog.get("rows_profiled"),
         },
         "checklist_preview": checklist,
+        "execution": execution_snapshot(),
     }
     snap["required_for_live"] = REQUIRED_FOR_LIVE
     return snap

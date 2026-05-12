@@ -107,3 +107,18 @@ def test_paper_history_rejects_invalid_ist_plain_date(client: TestClient) -> Non
     r = client.get("/api/trading/paper/history", params={"date_from": "2025-02-31"})
     assert r.status_code == 400
     assert "invalid date_from" in (r.json().get("detail") or "")
+
+
+def test_trading_execution_snapshot(client: TestClient) -> None:
+    r = client.get("/api/trading/execution")
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("execution_mode") in ("paper_local", "paper_openalgo", "live_dhan")
+    assert "openalgo" in body
+
+
+def test_trading_agents_status_endpoint(client: TestClient) -> None:
+    r = client.get("/api/research/trading-agents")
+    assert r.status_code == 200
+    body = r.json()
+    assert "installed" in body

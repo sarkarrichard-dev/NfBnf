@@ -27,6 +27,9 @@ _LOCAL_ENV_KEYS: tuple[str, ...] = (
     "HF_TOKEN",
     "HUGGING_FACE_HUB_TOKEN",
     "TRADING_AI_DHAN_LTP_MAP",
+    "OPENALGO_BASE_URL",
+    "OPENALGO_API_KEY",
+    "OPENALGO_STRATEGY",
 )
 
 
