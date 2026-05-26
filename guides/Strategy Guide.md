@@ -8,6 +8,30 @@ NIFTY and BANKNIFTY index options (NSE FNO) using Dhan intraday charts and live 
 - Bullish: price above TC and EMA 9 > EMA 21 → `BUY_CALL`.
 - Bearish: price below BC and EMA 9 < EMA 21 → `BUY_PUT`.
 
+## CPR regime (sideways vs trending)
+
+Before each scan the app measures **CPR width** = (TC − BC) as % of pivot:
+
+| Width | Typical day | `day_bias` | Hedged credit structure (`STRATEGY_STYLE=AUTO`) |
+|-------|-------------|------------|--------------------------------------------------|
+| **Wide** (≥ ~0.75%) | Range / sideways | `SIDEWAYS` | **Iron condor** — sell OTM call + put, buy wings |
+| **Narrow** (≤ ~0.35%) | Breakout / trending | `TRENDING_BULL` / `TRENDING_BEAR` | **Bull put spread** or **bear call spread** |
+| Normal | Mixed | `MIXED` | Falls back to buy premium + Supertrend filters |
+
+Also tracked:
+
+- **Virgin CPR** — today has not traded through yesterday’s BC–TC zone.
+- **CPR type** — prior close above high (bullish), below low (bearish), or inside range.
+- **Price position** — above / below / inside CPR.
+
+Set in `.env`:
+
+- `STRATEGY_STYLE=AUTO` — credit when regime is clear, else directional buys (default).
+- `STRATEGY_STYLE=CREDIT` — only hedged selling.
+- `STRATEGY_STYLE=BUY` — only long premium (calls/puts).
+
+Wing width and short strike distance: `index_ai/strategy_params.py` (`credit_wing_strikes`, `credit_short_strike_steps`).
+
 ## Supertrend + Break Res / Break Sup (AK Roxx / CPR by AAK style)
 
 After CPR+EMA aligns, the scanner applies:

@@ -225,11 +225,14 @@ async def _scan_index(client: DhanClient, cfg: AppSettings, instrument_key: str)
     action = str(signal_data.get("action") or "NO_TRADE")
     plan_data = result.get("plan") or {}
 
+    cpr = result.get("cpr_regime") or {}
     _log(
         "scan",
         instrument=instrument_key,
         action=action,
         confidence=signal_data.get("confidence"),
+        cpr_regime=cpr.get("day_bias"),
+        cpr_width_class=cpr.get("width_class"),
         plan_allowed=plan_data.get("allowed"),
         plan_reason=plan_data.get("reason"),
     )

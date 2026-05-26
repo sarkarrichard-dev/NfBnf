@@ -4,6 +4,7 @@ from typing import Any
 
 from index_ai.config import RiskSettings
 from index_ai.learning import today_losing_trades_count, today_realized_pnl
+from index_ai.option_structures import CREDIT_ACTIONS
 
 
 def risk_settings_dict(risk: RiskSettings) -> dict[str, Any]:
@@ -65,7 +66,12 @@ def check_execution_gates(
             return False, "Kill switch active: " + " ".join(ks["reasons"])
 
     if signal_action == "NO_TRADE":
-        return False, "No aligned CPR/EMA setup."
+        return False, "No trade setup."
+
+    if signal_action in CREDIT_ACTIONS:
+        if not risk.allow_option_selling:
+            return False, "Hedged credit structures require option selling to be enabled."
+        tx = "SELL"
 
     if confidence < min_confidence:
         return False, "Confidence is below risk gate."

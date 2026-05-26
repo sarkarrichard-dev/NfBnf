@@ -15,7 +15,9 @@ from index_ai.options_oi import (
     choose_option_from_chain_with_oi,
 )
 from index_ai.risk_policy import HARDCODED_RISK
-from index_ai.strategy import StrategySignal, copy_signal, intraday_strategy_signal
+from index_ai.option_structures import CREDIT_ACTIONS, build_credit_structure
+from index_ai.strategy import StrategySignal, copy_signal
+from index_ai.strategy_router import route_intraday_signal
 
 INDEX_KEYS = configured_index_keys()
 
@@ -46,7 +48,11 @@ def plan_instrument(
     )
     candles = chart_response_to_frame(data)
     ema_frame, previous = prepare_intraday_signal_frames(candles)
-    signal = intraday_strategy_signal(ema_frame, previous)
+    signal, cpr_regime = route_intraday_signal(
+        ema_frame,
+        previous,
+        allow_option_selling=app_settings.risk.allow_option_selling,
+    )
 
     oi_context: dict[str, Any] | None = None
     option = None
@@ -56,28 +62,41 @@ def plan_instrument(
         expiry = expiries[0] if expiries else None
         if expiry:
             chain = client.option_chain(instrument, expiry)
-            oi = analyze_option_chain(chain, spot=signal.price, instrument=instrument)
-            oi_context = oi.to_dict()
-            signal = apply_oi_to_signal(signal, oi)
-            if signal.confidence < HARDCODED_RISK.min_confidence:
-                signal = copy_signal(
-                    signal,
-                    action="NO_TRADE",
-                    reason=(
-                        f"OI-filtered: confidence {signal.confidence} below gate after OI adjustment."
-                    ),
-                    confidence=0.0,
-                )
+            if signal.action in CREDIT_ACTIONS:
+                try:
+                    option = build_credit_structure(chain, signal, instrument, cpr_regime)
+                    if option:
+                        option = {**option, "expiry": expiry}
+                except Exception as exc:
+                    signal = copy_signal(
+                        signal,
+                        action="NO_TRADE",
+                        reason=f"Credit structure build failed: {exc}",
+                        confidence=0.0,
+                    )
             else:
-                option = choose_option_from_chain_with_oi(
-                    chain,
-                    signal,
-                    instrument,
-                    oi,
-                    transaction_type=HARDCODED_RISK.default_option_transaction,
-                )
-                if option and expiry:
-                    option = {**option, "expiry": expiry}
+                oi = analyze_option_chain(chain, spot=signal.price, instrument=instrument)
+                oi_context = oi.to_dict()
+                signal = apply_oi_to_signal(signal, oi)
+                if signal.confidence < HARDCODED_RISK.min_confidence:
+                    signal = copy_signal(
+                        signal,
+                        action="NO_TRADE",
+                        reason=(
+                            f"OI-filtered: confidence {signal.confidence} below gate after OI adjustment."
+                        ),
+                        confidence=0.0,
+                    )
+                else:
+                    option = choose_option_from_chain_with_oi(
+                        chain,
+                        signal,
+                        instrument,
+                        oi,
+                        transaction_type=HARDCODED_RISK.default_option_transaction,
+                    )
+                    if option and expiry:
+                        option = {**option, "expiry": expiry}
 
     plan = build_execution_plan(
         app_settings=app_settings,
@@ -90,6 +109,7 @@ def plan_instrument(
         "instrument": instrument.__dict__,
         "instrument_key": instrument_key,
         "signal": signal.to_dict(),
+        "cpr_regime": cpr_regime.to_dict(),
         "oi": oi_context,
         "expiry": expiry,
         "option": option,

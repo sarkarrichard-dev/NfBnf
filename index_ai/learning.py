@@ -275,12 +275,18 @@ def option_leg_fields(trade: dict[str, Any]) -> dict[str, Any]:
     strike_display = _format_strike(strike_raw)
     opt_type = "CALL" if option_side == "CE" else "PUT" if option_side == "PE" else ""
 
-    if strike_display and option_side:
+    structure = str(option.get("structure") or "")
+    if structure:
+        n_legs = len(option.get("legs") or [])
+        leg_display = f"Credit {structure.replace('_', ' ')}"
+        if n_legs:
+            leg_display += f" ({n_legs} legs)"
+    elif strike_display and option_side:
         leg_display = f"{side_word} {strike_display} {option_side}"
     elif option_side:
         leg_display = f"{side_word} {option_side}"
     else:
-        leg_display = action or "—"
+        leg_display = action.replace("_", " ") if action else "—"
 
     instrument = str(trade.get("instrument") or option.get("instrument") or "")
     configured_lot, effective_qty = resolve_trade_lot_size(trade)

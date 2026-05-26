@@ -440,7 +440,7 @@ function renderHeatmap(data) {
           return `<article class="heat-cell ${cls} ${allowed}" style="--heat:${heat}%">
             <header>${escapeHtml(c.instrument || "")}</header>
             <strong class="heat-action">${escapeHtml(c.action || "—")}</strong>
-            <span class="heat-meta">${escapeHtml(c.cpr_position || "")} · ${escapeHtml(c.ema_bias || "")}</span>
+            <span class="heat-meta">${escapeHtml(c.cpr_regime || c.cpr_width_class || "")} · ${escapeHtml(c.cpr_position || "")} · ${escapeHtml(c.ema_bias || "")}${c.structure ? ` · ${escapeHtml(c.structure)}` : ""}</span>
             <span class="heat-conf">${c.confidence != null ? `${(c.confidence * 100).toFixed(0)}% conf` : ""}</span>
             <span class="heat-meta">${c.pcr != null ? `PCR ${Number(c.pcr).toFixed(2)} · ${escapeHtml(c.oi_bias || "")}` : ""}</span>
             <span class="heat-plan muted">${c.plan_allowed ? "Plan OK" : escapeHtml(c.plan_reason || c.error || "—")}</span>

@@ -15,6 +15,12 @@ def _direction_for_action(action: str, transaction_type: str) -> int:
         return 1 if tx == "BUY" else -1
     if action == "BUY_PUT":
         return -1 if tx == "BUY" else 1
+    if action == "SELL_BULL_PUT_SPREAD":
+        return 1 if tx == "SELL" else -1
+    if action == "SELL_BEAR_CALL_SPREAD":
+        return -1 if tx == "SELL" else 1
+    if action == "SELL_IRON_CONDOR":
+        return 0
     return 1
 
 
@@ -89,6 +95,21 @@ def check_supertrend_exit(
 
 def update_trail(meta: dict[str, Any], current_index_price: float) -> dict[str, Any]:
     direction = int(meta.get("direction") or 1)
+    entry = float(meta.get("entry_index_price") or current_index_price)
+    initial = float(meta.get("initial_stop_points") or 100.0)
+    if direction == 0:
+        move = abs(current_index_price - entry)
+        hit = move >= initial
+        return {
+            **meta,
+            "trail_armed": False,
+            "anchor_index_price": entry,
+            "stop_index_price": entry,
+            "last_index_price": current_index_price,
+            "favorable_move": round(move, 2),
+            "hit": hit,
+        }
+
     activation = float(meta.get("trail_activation_points") or 25.0)
     distance = float(meta.get("trail_distance_points") or 40.0)
     initial = float(meta.get("initial_stop_points") or 100.0)

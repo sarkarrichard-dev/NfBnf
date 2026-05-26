@@ -25,6 +25,11 @@ class StrategySignal:
     supertrend_direction: int = 0
     supertrend_stop: float = 0.0
     breakout_tag: str = ""
+    cpr_width_pct: float = 0.0
+    cpr_width_class: str = ""
+    cpr_regime: str = ""
+    cpr_virgin: bool = False
+    recommended_structure: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

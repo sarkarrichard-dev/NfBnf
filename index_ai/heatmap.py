@@ -56,6 +56,7 @@ def build_heatmap(client: DhanClient, app_settings: AppSettings) -> dict[str, An
                 )
                 continue
             signal = result.get("signal") or {}
+            regime = result.get("cpr_regime") or {}
             oi = result.get("oi") or {}
             plan = result.get("plan") or {}
             price = float(signal.get("price") or 0)
@@ -73,6 +74,10 @@ def build_heatmap(client: DhanClient, app_settings: AppSettings) -> dict[str, An
                     "bc": bc,
                     "tc": tc,
                     "cpr_position": _cpr_position(price, bc, tc),
+                    "cpr_regime": regime.get("day_bias"),
+                    "cpr_width_class": regime.get("width_class"),
+                    "cpr_width_pct": regime.get("width_pct"),
+                    "structure": signal.get("recommended_structure"),
                     "ema_bias": _ema_bias(
                         float(signal.get("ema_fast") or 0),
                         float(signal.get("ema_slow") or 0),

@@ -145,17 +145,52 @@ def close_open_trade(
             except Exception:
                 resolved_exit_ltp = None
 
+    legs = list(option.get("legs") or [])
     if mode == "LIVE" and app_settings.risk.trading_mode == "LIVE" and client is not None:
-        broker_response = client.place_market_order(
-            security_id=int(option["security_id"]),
-            exchange_segment=str(option["segment"]),
-            transaction_type=exit_side,
-            quantity=qty,
-            correlation_id=f"idxai-x-{uuid.uuid4().hex[:12]}",
-        )
+        if legs:
+            responses: list[dict[str, Any]] = []
+            base_id = uuid.uuid4().hex[:10]
+            for idx, leg in enumerate(legs):
+                leg_tx = str(leg.get("transaction_type") or "SELL").upper()
+                leg_exit = "BUY" if leg_tx == "SELL" else "SELL"
+                responses.append(
+                    client.place_market_order(
+                        security_id=int(leg["security_id"]),
+                        exchange_segment=str(leg["segment"]),
+                        transaction_type=leg_exit,
+                        quantity=int(leg.get("quantity") or qty),
+                        correlation_id=f"idxai-x-{base_id}-{idx}"[:30],
+                    )
+                )
+            broker_response = {"legs": responses}
+        else:
+            broker_response = client.place_market_order(
+                security_id=int(option["security_id"]),
+                exchange_segment=str(option["segment"]),
+                transaction_type=exit_side,
+                quantity=qty,
+                correlation_id=f"idxai-x-{uuid.uuid4().hex[:12]}",
+            )
 
     pnl: float
-    if resolved_exit_ltp is not None and resolved_exit_ltp > 0:
+    if legs and client is not None and app_settings.dhan.ready and resolved_exit_ltp is None:
+        leg_pnls: list[float] = []
+        for leg in legs:
+            try:
+                exit_leg_ltp = option_ltp_with_retry(client, leg)
+            except Exception:
+                exit_leg_ltp = float(leg.get("ltp") or 0)
+            leg_pnls.append(
+                estimate_pnl_rupees(
+                    entry_ltp=float(leg.get("ltp") or 0),
+                    exit_ltp=float(exit_leg_ltp),
+                    quantity=int(leg.get("quantity") or qty),
+                    transaction_type=str(leg.get("transaction_type") or "SELL"),
+                )
+            )
+        pnl = round(sum(leg_pnls), 2)
+        resolved_exit_ltp = entry_ltp
+    elif resolved_exit_ltp is not None and resolved_exit_ltp > 0:
         pnl = estimate_pnl_rupees(
             entry_ltp=entry_ltp,
             exit_ltp=float(resolved_exit_ltp),

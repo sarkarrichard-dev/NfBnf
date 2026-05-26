@@ -97,14 +97,31 @@ def execute_plan(
     status = "PAPER_RECORDED"
     broker_response: dict[str, Any] | None = None
     if plan.mode == "LIVE":
-        broker_response = client.place_market_order(
-            security_id=int(plan.option["security_id"]),
-            exchange_segment=str(plan.option["segment"]),
-            transaction_type=str(plan.option["transaction_type"]),
-            quantity=int(plan.option["quantity"]),
-            correlation_id=f"idxai-{uuid.uuid4().hex[:12]}",
-        )
-        status = str(broker_response.get("orderStatus") or "LIVE_SENT")
+        legs = list(plan.option.get("legs") or [])
+        if legs:
+            broker_responses: list[dict[str, Any]] = []
+            base_id = uuid.uuid4().hex[:10]
+            for idx, leg in enumerate(legs):
+                broker_responses.append(
+                    client.place_market_order(
+                        security_id=int(leg["security_id"]),
+                        exchange_segment=str(leg["segment"]),
+                        transaction_type=str(leg["transaction_type"]),
+                        quantity=int(leg.get("quantity") or plan.option["quantity"]),
+                        correlation_id=f"idxai-{base_id}-{idx}"[:30],
+                    )
+                )
+            broker_response = {"legs": broker_responses}
+            status = "LIVE_SENT"
+        else:
+            broker_response = client.place_market_order(
+                security_id=int(plan.option["security_id"]),
+                exchange_segment=str(plan.option["segment"]),
+                transaction_type=str(plan.option["transaction_type"]),
+                quantity=int(plan.option["quantity"]),
+                correlation_id=f"idxai-{uuid.uuid4().hex[:12]}",
+            )
+            status = str(broker_response.get("orderStatus") or "LIVE_SENT")
     inst = instrument or get_instrument(str(plan.option.get("instrument") or "NIFTY"))
     option_payload = dict(plan.option)
     option_payload["ml_features"] = extract_features(
