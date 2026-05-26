@@ -14,12 +14,11 @@ from fastapi.responses import RedirectResponse
 from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
 
-from index_ai.backtest import run_backtest
 from index_ai.analytics import build_analytics
 from index_ai.config import DASHBOARD_DIR, MEMORY_DIR, set_trading_mode, settings
 from index_ai.risk import kill_switch_state
 from index_ai.risk_policy import HARDCODED_RISK, policy_summary
-from index_ai.data_ingest import download_daily_dataset, download_intraday_dataset
+from index_ai.strategy_params import strategy_tuning_summary
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.dhan_auth import (
     auth_setup_checklist,
@@ -59,8 +58,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from index_ai.learning import reconcile_all_trade_lots
 
     init_db()
-    (MEMORY_DIR / "backtests").mkdir(parents=True, exist_ok=True)
-    (MEMORY_DIR / "datasets").mkdir(parents=True, exist_ok=True)
     reconcile_all_trade_lots()
     yield
 
@@ -219,6 +216,7 @@ async def status() -> dict[str, Any]:
         "dhan_auth": auth_setup_checklist(settings().dhan),
         "trade_summary": trades_summary(),
         "policy": policy_summary(),
+        "strategy": strategy_tuning_summary(),
         "kill_switch": kill_switch_state(cfg.risk),
         "market": market_status(),
         "timezone": "Asia/Kolkata",
@@ -560,40 +558,6 @@ async def outcome(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
         note=payload.get("note"),
     )
     return {"learned": learned}
-
-
-@app.post("/api/backtest", include_in_schema=False)
-async def backtest(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    file_name = str(payload.get("file") or "")
-    for root in (MEMORY_DIR / "backtests", MEMORY_DIR / "datasets"):
-        safe_root = root.resolve()
-        path = (root / file_name).resolve()
-        if str(path).startswith(str(safe_root)) and path.is_file():
-            return run_backtest(path)
-    raise RuntimeError("Backtest file not found in memory/backtests or memory/datasets.")
-
-
-@app.post("/api/download-history", include_in_schema=False)
-async def download_history(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    cfg = settings()
-    instrument = get_instrument(str(payload.get("instrument") or "NIFTY"))
-    if not cfg.dhan.ready:
-        return {
-            "instrument": instrument.__dict__,
-            "error": _dhan_setup_message(),
-        }
-
-    client = DhanClient(cfg.dhan)
-    kind = str(payload.get("kind") or "daily").lower()
-    years = int(payload.get("years") or (7 if kind == "daily" else 5))
-    if kind == "intraday":
-        return download_intraday_dataset(
-            client,
-            instrument,
-            years=years,
-            interval=str(payload.get("interval") or "5"),
-        )
-    return download_daily_dataset(client, instrument, years=years)
 
 
 @app.get("/favicon.ico", include_in_schema=False)

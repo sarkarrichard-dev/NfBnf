@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 
 from index_ai.strategy import previous_day_cpr
-from index_ai.strategy_params import STRATEGY_PARAMS
+from index_ai.strategy_params import get_strategy_params
 
 
 @dataclass(frozen=True)
@@ -30,9 +30,10 @@ class CprRegime:
 
 
 def _width_class(width_pct: float) -> str:
-    if width_pct <= STRATEGY_PARAMS.cpr_narrow_width_pct:
+    params = get_strategy_params()
+    if width_pct <= params.cpr_narrow_width_pct:
         return "NARROW"
-    if width_pct >= STRATEGY_PARAMS.cpr_wide_width_pct:
+    if width_pct >= params.cpr_wide_width_pct:
         return "WIDE"
     return "NORMAL"
 

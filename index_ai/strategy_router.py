@@ -7,7 +7,7 @@ import os
 from index_ai.cpr_regime import CprRegime, analyze_cpr_regime
 from index_ai.option_structures import CREDIT_ACTIONS
 from index_ai.strategy import StrategySignal, add_indicators, copy_signal, intraday_strategy_signal
-from index_ai.strategy_params import STRATEGY_PARAMS
+from index_ai.strategy_params import get_strategy_params
 import pandas as pd
 
 
@@ -51,7 +51,7 @@ def _credit_action_for_regime(regime: CprRegime) -> str | None:
 
 
 def _credit_confidence(regime: CprRegime) -> float:
-    base = 0.58
+    base = get_strategy_params().credit_min_confidence
     if regime.width_class == "WIDE" and regime.day_bias == "SIDEWAYS":
         base = 0.64
     if regime.width_class == "NARROW" and regime.day_bias.startswith("TRENDING"):
@@ -78,7 +78,8 @@ def route_intraday_signal(
     )
     style = strategy_style()
 
-    if style == "CREDIT" or (style == "AUTO" and allow_option_selling and STRATEGY_PARAMS.enable_credit_strategies):
+    params = get_strategy_params()
+    if style == "CREDIT" or (style == "AUTO" and allow_option_selling and params.enable_credit_strategies):
         credit_action = _credit_action_for_regime(regime)
         if credit_action and regime.day_bias != "MIXED":
             signal = StrategySignal(

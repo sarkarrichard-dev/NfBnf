@@ -10,8 +10,10 @@ from index_ai.instruments import IndexInstrument, get_instrument
 from index_ai.learning import learned_settings, record_trade
 from index_ai.hf_learning import build_setup_narrative, score_setup_hf
 from index_ai.ml_outcomes import extract_features, score_trade_setup
+from index_ai.option_structures import CREDIT_ACTIONS
 from index_ai.risk import check_execution_gates
 from index_ai.strategy import StrategySignal
+from index_ai.strategy_params import get_strategy_params
 from index_ai.trailing import init_trail_meta
 
 
@@ -24,6 +26,19 @@ class ExecutionPlan:
     signal: dict[str, Any]
 
 
+def _min_confidence_gate(signal_action: str, app_settings: AppSettings, learned: dict[str, Any]) -> float:
+    """Buy setups use learned gate; credit spreads use CPR credit floor (not buy-tuned learning)."""
+    if signal_action in CREDIT_ACTIONS:
+        return get_strategy_params().credit_min_confidence
+    return float(
+        learned.get("effective_min_confidence")
+        or (
+            app_settings.risk.min_confidence
+            + float(learned.get("min_confidence_adjustment") or 0)
+        )
+    )
+
+
 def build_execution_plan(
     *,
     app_settings: AppSettings,
@@ -32,16 +47,14 @@ def build_execution_plan(
     option: dict[str, Any] | None,
 ) -> ExecutionPlan:
     learned = learned_settings()
-    min_conf = float(
-        learned.get("effective_min_confidence")
-        or (app_settings.risk.min_confidence + float(learned.get("min_confidence_adjustment") or 0))
-    )
+    signal_action = str(signal.action)
+    min_conf = _min_confidence_gate(signal_action, app_settings, learned)
     if option is None:
         return ExecutionPlan(False, app_settings.risk.trading_mode, "No option selected.", option, signal.to_dict())
     tx = str(option.get("transaction_type") or "BUY").upper()
     ok, reason = check_execution_gates(
         risk=app_settings.risk,
-        signal_action=signal.action,
+        signal_action=signal_action,
         transaction_type=tx,
         confidence=signal.confidence,
         min_confidence=min_conf,
@@ -49,6 +62,15 @@ def build_execution_plan(
     if not ok:
         mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
         return ExecutionPlan(False, mode, reason, option, signal.to_dict())
+
+    if signal_action in CREDIT_ACTIONS:
+        return ExecutionPlan(
+            True,
+            app_settings.risk.trading_mode,
+            f"Credit structure passed gates (min confidence {min_conf:.0%}).",
+            option,
+            signal.to_dict(),
+        )
 
     ml = score_trade_setup(signal.to_dict(), option, instrument.key)
     if ml.get("ready") and ml.get("win_probability") is not None:

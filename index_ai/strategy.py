@@ -7,7 +7,7 @@ import pandas as pd
 
 from index_ai.breakout import detect_breakout
 from index_ai.instruments import IndexInstrument
-from index_ai.strategy_params import STRATEGY_PARAMS, StrategyParams
+from index_ai.strategy_params import StrategyParams, get_strategy_params
 from index_ai.supertrend import supertrend_snapshot
 
 
@@ -142,7 +142,7 @@ def intraday_strategy_signal(
     params: StrategyParams | None = None,
 ) -> StrategySignal:
     """CPR+EMA core, filtered by Supertrend and Break Res / Break Sup (AK Roxx style)."""
-    cfg = params or STRATEGY_PARAMS
+    cfg = params or get_strategy_params()
     base = cpr_ema_signal(today, previous_day)
     st, br = _chart_context(today, cfg)
 

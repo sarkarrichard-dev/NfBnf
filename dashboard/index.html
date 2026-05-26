@@ -154,6 +154,16 @@
           <pre id="auth-output" class="compact-pre">Dhan credentials from .env</pre>
         </article>
 
+        <article class="panel wide strategy-tuning-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Strategy tuning</h2>
+              <p class="muted" id="strategy-tuning-note">CPR width, regime routing, and credit spread wings — from <code>.env</code> (restart server after edits).</p>
+            </div>
+          </div>
+          <dl id="strategy-tuning-grid" class="strategy-tuning-grid"></dl>
+        </article>
+
         <article class="panel wide auto-panel">
           <div class="panel-head">
             <div>
@@ -239,38 +249,9 @@
           <ul id="learning-feedback" class="feedback-list"></ul>
         </article>
 
-        <article class="panel wide">
-          <div class="panel-head">
-            <div>
-              <h2>Data library</h2>
-              <p class="muted"><code>memory/datasets</code></p>
-            </div>
-            <div class="controls">
-              <select id="data-instrument">
-                <option value="NIFTY">NIFTY</option>
-                <option value="BANKNIFTY">BANKNIFTY</option>
-              </select>
-              <select id="data-kind">
-                <option value="daily">Daily 7y</option>
-                <option value="intraday">Intraday 5y</option>
-              </select>
-              <button id="download-history">Download</button>
-            </div>
-          </div>
-          <pre id="history-output" class="compact-pre">—</pre>
-        </article>
-
-        <article class="panel wide">
-          <h2>Backtest</h2>
-          <div class="controls">
-            <input id="backtest-file" placeholder="file.csv in memory/datasets" />
-            <button id="run-backtest">Run</button>
-          </div>
-          <pre id="backtest-output" class="compact-pre">—</pre>
-        </article>
       </section>
     </main>
 
-    <script src="/app.js?v=21" defer></script>
+    <script src="/app.js?v=24" defer></script>
   </body>
 </html>

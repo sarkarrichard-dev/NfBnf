@@ -360,6 +360,37 @@ function renderAnalytics() {
   renderSeriesTable("series-monthly", analyticsData.monthly_series);
 }
 
+function renderStrategyTuning(strategy) {
+  const grid = $("strategy-tuning-grid");
+  const note = $("strategy-tuning-note");
+  if (!grid) return;
+  if (!strategy) {
+    grid.innerHTML = "";
+    return;
+  }
+  if (note && strategy.cpr_width_note) {
+    note.textContent = `${strategy.cpr_width_note} ${strategy.strategy_style_note || ""} Edit .env and restart the server to change.`;
+  }
+  const rows = [
+    ["Style", strategy.strategy_style],
+    ["Credit enabled", strategy.enable_credit_strategies ? "Yes" : "No"],
+    ["CPR narrow %", strategy.cpr_narrow_width_pct],
+    ["CPR wide %", strategy.cpr_wide_width_pct],
+    ["Credit min conf.", strategy.credit_min_confidence],
+    ["Wing strikes", strategy.credit_wing_strikes],
+    ["Short leg steps", strategy.credit_short_strike_steps],
+    ["Supertrend align", strategy.require_supertrend_align ? "Required" : "Off"],
+    ["Break Res/Sup required", strategy.require_breakout_tag ? "Yes" : "No"],
+    ["Supertrend", `${strategy.supertrend_period} / ${strategy.supertrend_multiplier}`],
+  ];
+  grid.innerHTML = rows
+    .map(
+      ([label, val]) =>
+        `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(val ?? "—"))}</dd></div>`,
+    )
+    .join("");
+}
+
 function renderKillSwitch(ks) {
   const banner = $("kill-switch-banner");
   if (!banner || !ks) return;
@@ -430,7 +461,7 @@ function renderHeatmap(data) {
   }
   const summary = data.summary || {};
   grid.innerHTML = `
-    <p class="heatmap-summary muted">${summary.executable ?? 0} executable · ${summary.bullish_signals ?? 0} call · ${summary.bearish_signals ?? 0} put</p>
+    <p class="heatmap-summary muted">${summary.executable ?? 0} executable · ${summary.credit_signals ?? 0} credit · ${summary.bullish_signals ?? 0} buy call · ${summary.bearish_signals ?? 0} buy put</p>
     <div class="heatmap-cells">
       ${cells
         .map((c) => {
@@ -645,6 +676,7 @@ async function loadStatus() {
     pill.classList.remove("error");
   }
   if (status.market) renderMarket(status.market);
+  if (status.strategy) renderStrategyTuning(status.strategy);
   if (status.auto) renderAutoStatus(status.auto);
   if (status.learned) renderLearning({ learned: status.learned, recent_feedback: [] });
   renderDhanHealth(status.dhan_health);
@@ -872,37 +904,6 @@ $("close-trade-form")?.addEventListener("submit", async (e) => {
     await loadLearning();
   } catch (err) {
     $("close-trade-output").textContent = err.message;
-  }
-});
-
-$("download-history")?.addEventListener("click", async () => {
-  const kind = $("data-kind").value;
-  write("history-output", "Downloading…");
-  try {
-    write(
-      "history-output",
-      await api("/api/download-history", {
-        method: "POST",
-        body: JSON.stringify({
-          instrument: $("data-instrument").value,
-          kind,
-          years: kind === "daily" ? 7 : 5,
-          interval: "5",
-        }),
-      }),
-    );
-  } catch (err) {
-    write("history-output", err.message);
-  }
-});
-
-$("run-backtest")?.addEventListener("click", async () => {
-  const file = $("backtest-file").value.trim();
-  if (!file) return;
-  try {
-    write("backtest-output", await api("/api/backtest", { method: "POST", body: JSON.stringify({ file }) }));
-  } catch (err) {
-    write("backtest-output", err.message);
   }
 });
 

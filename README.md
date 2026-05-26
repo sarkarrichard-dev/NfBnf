@@ -5,7 +5,7 @@ Fresh CPR + EMA intraday workstation for only:
 - NIFTY
 - BANKNIFTY
 
-It can read Dhan market data, choose an option strike from the option chain, create one-lot paper/live trade plans, download Dhan history, backtest from CSV candles, and learn from feedback/trade outcomes.
+It reads live Dhan market data, chooses option strikes from the option chain, creates one-lot paper/live trade plans, and learns from feedback and trade outcomes.
 
 Live orders are blocked by default. Put Dhan app credentials and the daily access token in `.env`, then change `TRADING_MODE=LIVE` and `ALLOW_LIVE_TRADING=true` only when you are ready.
 
@@ -39,25 +39,8 @@ The app stores Dhan API key/secret separately from the daily access token. Dhan'
 
 - `index_ai` - strategy brain, Dhan client, learning loop, trade execution gate.
 - `dashboard` - clean browser screen.
-- `memory` - local trade journal, feedback, model settings, datasets, and backtest CSVs.
+- `memory` - local trade journal, feedback, ML models, and Hugging Face export data.
 - `guides` - plain-language notes.
-
-## Data For Backtesting
-
-Use the dashboard Data Library to download:
-
-- Daily history: up to seven years for broader CPR/backtest context.
-- Intraday history: up to five years in 90-day chunks, matching Dhan's documented intraday limit.
-
-The files are saved in `memory/datasets/`. You can also put your own candle CSV files in `memory/backtests/`.
-
-Required columns:
-
-```text
-datetime,open,high,low,close
-```
-
-Then run a backtest from the dashboard.
 
 ## Learning Loop
 

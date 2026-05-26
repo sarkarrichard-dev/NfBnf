@@ -229,6 +229,26 @@ code {
   color: var(--accent);
 }
 
+.strategy-tuning-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.65rem 1.25rem;
+  margin: 0.5rem 0 0;
+}
+
+.strategy-tuning-grid dt {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.strategy-tuning-grid dd {
+  margin: 0.15rem 0 0.5rem;
+  font-weight: 600;
+}
+
 .gate-list {
   margin: 0.75rem 0 0;
   padding: 0;

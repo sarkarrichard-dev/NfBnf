@@ -24,13 +24,25 @@ Also tracked:
 - **CPR type** — prior close above high (bullish), below low (bearish), or inside range.
 - **Price position** — above / below / inside CPR.
 
-Set in `.env`:
+Set in `.env` (see `.env.example`; **restart the server** after edits). The dashboard **Strategy tuning** panel shows active values.
 
-- `STRATEGY_STYLE=AUTO` — credit when regime is clear, else directional buys (default).
-- `STRATEGY_STYLE=CREDIT` — only hedged selling.
-- `STRATEGY_STYLE=BUY` — only long premium (calls/puts).
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `STRATEGY_STYLE` | `AUTO` | `AUTO` / `CREDIT` / `BUY` |
+| `ENABLE_CREDIT_STRATEGIES` | `true` | Allow iron condor / spreads in AUTO |
+| `CPR_NARROW_WIDTH_PCT` | `0.35` | At or below → trending bias |
+| `CPR_WIDE_WIDTH_PCT` | `0.75` | At or above → sideways bias |
+| `CREDIT_SHORT_STRIKE_STEPS` | `2` | Short leg distance from ATM (× strike step) |
+| `CREDIT_WING_STRIKES` | `2` | Hedge wing width (× strike step) |
+| `CPR_CREDIT_MIN_CONFIDENCE` | `0.58` | Base confidence for credit entries |
+| `REQUIRE_SUPERTREND_ALIGN` | `true` | Block buys against Supertrend |
+| `REQUIRE_BREAKOUT_TAG` | `false` | Require Break Res/Sup for buys |
 
-Wing width and short strike distance: `index_ai/strategy_params.py` (`credit_wing_strikes`, `credit_short_strike_steps`).
+**Presets** (copy into `.env`):
+
+- More sideways credit: `CPR_WIDE_WIDTH_PCT=0.65`, `CPR_NARROW_WIDTH_PCT=0.30`
+- Stricter trending buys: `REQUIRE_BREAKOUT_TAG=true`, `CPR_NARROW_WIDTH_PCT=0.40`
+- Buy only: `STRATEGY_STYLE=BUY`
 
 ## Supertrend + Break Res / Break Sup (AK Roxx / CPR by AAK style)
 

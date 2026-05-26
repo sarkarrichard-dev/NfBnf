@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from index_ai.candles import prepare_intraday_signal_frames
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.instruments import get_instrument
-from index_ai.strategy_params import STRATEGY_PARAMS
+from index_ai.strategy_params import get_strategy_params
 from index_ai.supertrend import supertrend_snapshot
 
 
@@ -26,8 +26,9 @@ def fetch_supertrend_snapshot(client: DhanClient, instrument_key: str) -> dict:
     )
     candles = chart_response_to_frame(data)
     ema_frame, _ = prepare_intraday_signal_frames(candles)
+    params = get_strategy_params()
     return supertrend_snapshot(
         ema_frame,
-        period=STRATEGY_PARAMS.supertrend_period,
-        multiplier=STRATEGY_PARAMS.supertrend_multiplier,
+        period=params.supertrend_period,
+        multiplier=params.supertrend_multiplier,
     )

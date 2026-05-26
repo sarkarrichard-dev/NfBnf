@@ -4,7 +4,7 @@ from typing import Any
 
 from index_ai.config import RiskSettings
 from index_ai.instruments import IndexInstrument, get_instrument
-from index_ai.strategy_params import STRATEGY_PARAMS, StrategyParams
+from index_ai.strategy_params import StrategyParams, get_strategy_params
 
 
 def _direction_for_action(action: str, transaction_type: str) -> int:
@@ -69,7 +69,7 @@ def check_supertrend_exit(
     fresh: dict[str, Any] | None,
     params: StrategyParams | None = None,
 ) -> tuple[bool, str | None]:
-    cfg = params or STRATEGY_PARAMS
+    cfg = params or get_strategy_params()
     if not cfg.exit_on_supertrend_flip:
         return False, None
     entry_dir = int(meta.get("supertrend_direction") or 0)

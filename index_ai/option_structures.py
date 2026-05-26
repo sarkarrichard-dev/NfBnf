@@ -7,7 +7,7 @@ from typing import Any
 from index_ai.cpr_regime import CprRegime
 from index_ai.instruments import IndexInstrument
 from index_ai.strategy import StrategySignal, nearest_strike
-from index_ai.strategy_params import STRATEGY_PARAMS
+from index_ai.strategy_params import get_strategy_params
 
 CREDIT_ACTIONS = frozenset(
     {
@@ -79,11 +79,12 @@ def build_iron_condor(
     if not rows:
         raise RuntimeError("Empty option chain for iron condor.")
     step = instrument.strike_step
-    wings = STRATEGY_PARAMS.credit_wing_strikes
+    params = get_strategy_params()
+    wings = params.credit_wing_strikes
     atm = nearest_strike(signal.price, instrument)
-    sell_call = atm + step * STRATEGY_PARAMS.credit_short_strike_steps
+    sell_call = atm + step * params.credit_short_strike_steps
     buy_call = sell_call + step * wings
-    sell_put = atm - step * STRATEGY_PARAMS.credit_short_strike_steps
+    sell_put = atm - step * params.credit_short_strike_steps
     buy_put = sell_put - step * wings
 
     legs = [
@@ -121,9 +122,10 @@ def build_bull_put_spread(
 ) -> dict[str, Any]:
     rows = _chain_rows(chain)
     step = instrument.strike_step
-    wings = STRATEGY_PARAMS.credit_wing_strikes
+    params = get_strategy_params()
+    wings = params.credit_wing_strikes
     atm = nearest_strike(signal.price, instrument)
-    sell_put = atm - step * STRATEGY_PARAMS.credit_short_strike_steps
+    sell_put = atm - step * params.credit_short_strike_steps
     buy_put = sell_put - step * wings
     legs_raw = [
         _leg(rows, sell_put, "pe", "SELL", instrument),
@@ -158,9 +160,10 @@ def build_bear_call_spread(
 ) -> dict[str, Any]:
     rows = _chain_rows(chain)
     step = instrument.strike_step
-    wings = STRATEGY_PARAMS.credit_wing_strikes
+    params = get_strategy_params()
+    wings = params.credit_wing_strikes
     atm = nearest_strike(signal.price, instrument)
-    sell_call = atm + step * STRATEGY_PARAMS.credit_short_strike_steps
+    sell_call = atm + step * params.credit_short_strike_steps
     buy_call = sell_call + step * wings
     legs_raw = [
         _leg(rows, sell_call, "ce", "SELL", instrument),

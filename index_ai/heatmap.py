@@ -104,12 +104,18 @@ def build_heatmap(client: DhanClient, app_settings: AppSettings) -> dict[str, An
             )
     bullish = sum(1 for c in cells if c.get("action") == "BUY_CALL")
     bearish = sum(1 for c in cells if c.get("action") == "BUY_PUT")
+    credit = sum(
+        1
+        for c in cells
+        if str(c.get("action") or "").startswith("SELL_")
+    )
     ready = sum(1 for c in cells if c.get("plan_allowed"))
     return {
         "cells": cells,
         "summary": {
             "bullish_signals": bullish,
             "bearish_signals": bearish,
+            "credit_signals": credit,
             "executable": ready,
             "scanned": len(cells),
         },
