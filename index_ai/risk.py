@@ -21,13 +21,13 @@ def risk_settings_dict(risk: RiskSettings) -> dict[str, Any]:
 
 
 def kill_switch_state(risk: RiskSettings) -> dict[str, Any]:
-    """Daily kill switch: 3 closed losses or daily loss budget (no profit cap)."""
+    """Daily kill switch for LIVE only: 3 closed losses or daily loss budget."""
     realized = today_realized_pnl()
     losses = today_losing_trades_count()
     loss_limit = abs(risk.max_daily_loss_rupees)
     loss_budget_hit = realized <= -loss_limit
     loss_streak_hit = losses >= risk.max_losing_trades_per_day
-    active = loss_budget_hit or loss_streak_hit
+    triggered = loss_budget_hit or loss_streak_hit
     reasons: list[str] = []
     if loss_budget_hit:
         reasons.append(
@@ -37,8 +37,12 @@ def kill_switch_state(risk: RiskSettings) -> dict[str, Any]:
         reasons.append(
             f"{losses} losing trades today (limit {risk.max_losing_trades_per_day})."
         )
+    live_only = risk.trading_mode == "LIVE"
     return {
-        "active": active,
+        "active": triggered and live_only,
+        "triggered": triggered,
+        "live_only": True,
+        "applies_when": "LIVE",
         "reasons": reasons,
         "today_realized_pnl": realized,
         "today_losing_trades": losses,
@@ -55,9 +59,10 @@ def check_execution_gates(
     confidence: float,
     min_confidence: float,
 ) -> tuple[bool, str]:
-    ks = kill_switch_state(risk)
-    if ks["active"]:
-        return False, "Kill switch active: " + " ".join(ks["reasons"])
+    if risk.trading_mode == "LIVE":
+        ks = kill_switch_state(risk)
+        if ks["active"]:
+            return False, "Kill switch active: " + " ".join(ks["reasons"])
 
     if signal_action == "NO_TRADE":
         return False, "No aligned CPR/EMA setup."

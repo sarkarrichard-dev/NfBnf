@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.strategy import cpr_ema_signal
+from index_ai.strategy import intraday_strategy_signal
 
 
 def run_backtest(csv_path: Path) -> dict[str, Any]:
@@ -22,7 +22,7 @@ def run_backtest(csv_path: Path) -> dict[str, Any]:
             continue
         for i in range(21, len(today) - 5):
             window = today.iloc[: i + 1]
-            signal = cpr_ema_signal(window, prev)
+            signal = intraday_strategy_signal(window, prev)
             if signal.action == "NO_TRADE":
                 continue
             entry = float(today.iloc[i]["close"])

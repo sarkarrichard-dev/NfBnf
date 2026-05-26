@@ -5,7 +5,10 @@ from typing import Any
 
 import pandas as pd
 
+from index_ai.breakout import detect_breakout
 from index_ai.instruments import IndexInstrument
+from index_ai.strategy_params import STRATEGY_PARAMS, StrategyParams
+from index_ai.supertrend import supertrend_snapshot
 
 
 @dataclass(frozen=True)
@@ -19,9 +22,18 @@ class StrategySignal:
     tc: float
     ema_fast: float
     ema_slow: float
+    supertrend_direction: int = 0
+    supertrend_stop: float = 0.0
+    breakout_tag: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def copy_signal(signal: StrategySignal, **updates: Any) -> StrategySignal:
+    data = asdict(signal)
+    data.update(updates)
+    return StrategySignal(**data)
 
 
 def add_indicators(candles: pd.DataFrame, fast: int = 9, slow: int = 21) -> pd.DataFrame:
@@ -89,6 +101,149 @@ def cpr_ema_signal(today: pd.DataFrame, previous_day: pd.DataFrame) -> StrategyS
         tc=tc,
         ema_fast=ema_fast,
         ema_slow=ema_slow,
+    )
+
+
+def _chart_context(today: pd.DataFrame, params: StrategyParams) -> tuple[dict, dict]:
+    st = supertrend_snapshot(
+        today,
+        period=params.supertrend_period,
+        multiplier=params.supertrend_multiplier,
+    )
+    br = detect_breakout(today, lookback=params.breakout_lookback)
+    return st, br
+
+
+def _with_chart_fields(
+    signal: StrategySignal,
+    st: dict,
+    br: dict,
+    *,
+    breakout_tag: str | None = None,
+) -> StrategySignal:
+    tag = breakout_tag if breakout_tag is not None else (br.get("breakout_tag") or "")
+    return copy_signal(
+        signal,
+        supertrend_direction=int(st["direction"]) if st.get("ready") else 0,
+        supertrend_stop=float(st["stop"]) if st.get("ready") else 0.0,
+        breakout_tag=tag,
+    )
+
+
+def intraday_strategy_signal(
+    today: pd.DataFrame,
+    previous_day: pd.DataFrame,
+    *,
+    params: StrategyParams | None = None,
+) -> StrategySignal:
+    """CPR+EMA core, filtered by Supertrend and Break Res / Break Sup (AK Roxx style)."""
+    cfg = params or STRATEGY_PARAMS
+    base = cpr_ema_signal(today, previous_day)
+    st, br = _chart_context(today, cfg)
+
+    if base.action == "NO_TRADE":
+        return _with_chart_fields(base, st, br)
+
+    if cfg.require_supertrend_align and st.get("ready"):
+        if base.action == "BUY_CALL" and st["direction"] != 1:
+            return _with_chart_fields(
+                copy_signal(
+                    base,
+                    action="NO_TRADE",
+                    reason="CPR/EMA long but Supertrend is bearish.",
+                    confidence=0.0,
+                ),
+                st,
+                br,
+            )
+        if base.action == "BUY_PUT" and st["direction"] != -1:
+            return _with_chart_fields(
+                copy_signal(
+                    base,
+                    action="NO_TRADE",
+                    reason="CPR/EMA short but Supertrend is bullish.",
+                    confidence=0.0,
+                ),
+                st,
+                br,
+            )
+
+    if cfg.require_breakout_tag:
+        if base.action == "BUY_CALL" and not br.get("break_res"):
+            return _with_chart_fields(
+                copy_signal(
+                    base,
+                    action="NO_TRADE",
+                    reason="Long setup without Break Res confirmation.",
+                    confidence=0.0,
+                ),
+                st,
+                br,
+            )
+        if base.action == "BUY_PUT" and not br.get("break_sup"):
+            return _with_chart_fields(
+                copy_signal(
+                    base,
+                    action="NO_TRADE",
+                    reason="Short setup without Break Sup confirmation.",
+                    confidence=0.0,
+                ),
+                st,
+                br,
+            )
+
+    reason = base.reason
+    confidence = base.confidence
+    tag = ""
+
+    if base.action == "BUY_CALL":
+        if br.get("break_sup"):
+            return _with_chart_fields(
+                copy_signal(
+                    base,
+                    action="NO_TRADE",
+                    reason="Break Sup against long — skipped.",
+                    confidence=0.0,
+                ),
+                st,
+                br,
+                breakout_tag="BREAK_SUP",
+            )
+        if br.get("break_res"):
+            reason = f"{reason} Break Res: close above {br['range_high']:.0f} range high."
+            confidence = min(0.95, confidence + cfg.breakout_confidence_boost)
+            tag = "BREAK_RES"
+    elif base.action == "BUY_PUT":
+        if br.get("break_res"):
+            return _with_chart_fields(
+                copy_signal(
+                    base,
+                    action="NO_TRADE",
+                    reason="Break Res against short — skipped.",
+                    confidence=0.0,
+                ),
+                st,
+                br,
+                breakout_tag="BREAK_RES",
+            )
+        if br.get("break_sup"):
+            reason = f"{reason} Break Sup: close below {br['range_low']:.0f} range low."
+            confidence = min(0.95, confidence + cfg.breakout_confidence_boost)
+            tag = "BREAK_SUP"
+
+    if st.get("ready"):
+        trend = "bullish" if st["direction"] == 1 else "bearish"
+        reason = f"{reason} Supertrend {trend} (stop {st['stop']:.0f})."
+
+    return _with_chart_fields(
+        copy_signal(
+            base,
+            reason=reason,
+            confidence=round(confidence, 3),
+        ),
+        st,
+        br,
+        breakout_tag=tag,
     )
 
 

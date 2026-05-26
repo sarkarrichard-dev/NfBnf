@@ -129,6 +129,8 @@ def execute_plan(
         action=str(plan.signal["action"]),
         transaction_type=str(plan.option.get("transaction_type") or "BUY"),
         instrument=inst,
+        supertrend_direction=int(plan.signal.get("supertrend_direction") or 0),
+        supertrend_stop=float(plan.signal.get("supertrend_stop") or 0),
     )
     trade_id = record_trade(
         mode=plan.mode,

@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from index_ai.instruments import IndexInstrument
-from index_ai.strategy import StrategySignal, nearest_strike
+from index_ai.strategy import StrategySignal, copy_signal, nearest_strike
 
 
 @dataclass(frozen=True)
@@ -150,16 +150,10 @@ def apply_oi_to_signal(signal: StrategySignal, oi: OptionOiContext) -> StrategyS
         reason += " OI does not confirm direction."
     elif adj > 0:
         reason += " OI supports direction."
-    return StrategySignal(
-        action=signal.action,
+    return copy_signal(
+        signal,
         reason=reason,
         confidence=round(conf, 3),
-        price=signal.price,
-        pivot=signal.pivot,
-        bc=signal.bc,
-        tc=signal.tc,
-        ema_fast=signal.ema_fast,
-        ema_slow=signal.ema_slow,
     )
 
 

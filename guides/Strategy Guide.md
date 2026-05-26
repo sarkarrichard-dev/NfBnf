@@ -8,6 +8,22 @@ NIFTY and BANKNIFTY index options (NSE FNO) using Dhan intraday charts and live 
 - Bullish: price above TC and EMA 9 > EMA 21 → `BUY_CALL`.
 - Bearish: price below BC and EMA 9 < EMA 21 → `BUY_PUT`.
 
+## Supertrend + Break Res / Break Sup (AK Roxx / CPR by AAK style)
+
+After CPR+EMA aligns, the scanner applies:
+
+| Filter | Long (`BUY_CALL`) | Short (`BUY_PUT`) |
+|--------|-------------------|-------------------|
+| **Supertrend** (10, 3) | Must be bullish (+1) | Must be bearish (−1) |
+| **Break Res** | Close above prior 20-bar high → +confidence | Blocks short if fired |
+| **Break Sup** | Blocks long if fired | Close below prior 20-bar low → +confidence |
+
+- **Break Res / Break Sup** — rolling range break on 5m closes (tags like your TradingView labels).
+- **Supertrend** — ATR bands; mismatched trend blocks the trade.
+- **Exit** — open trades also exit on Supertrend flip or price through the live Supertrend stop (refreshed each trail cycle).
+
+Tunables in `index_ai/strategy_params.py` (`require_breakout_tag` for stricter Roxx-style entries only on Break Res/Sup).
+
 ## Open interest (Dhan option chain)
 
 On each scan the app loads the nearest expiry chain and reads:
@@ -55,6 +71,6 @@ Square-off still closes open positions in the last minutes of the session (IST).
 ## Risk (hard-coded)
 
 - 1 lot per trade
-- 3 losing trades / day kill switch
+- 3 losing trades / day kill switch (**Live mode only** — paper keeps trading)
 - ₹6,000 daily loss cap
 - Paper or Live via dashboard toggle

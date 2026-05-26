@@ -15,7 +15,7 @@ from index_ai.options_oi import (
     choose_option_from_chain_with_oi,
 )
 from index_ai.risk_policy import HARDCODED_RISK
-from index_ai.strategy import StrategySignal, cpr_ema_signal
+from index_ai.strategy import StrategySignal, copy_signal, intraday_strategy_signal
 
 INDEX_KEYS = configured_index_keys()
 
@@ -46,7 +46,7 @@ def plan_instrument(
     )
     candles = chart_response_to_frame(data)
     ema_frame, previous = prepare_intraday_signal_frames(candles)
-    signal = cpr_ema_signal(ema_frame, previous)
+    signal = intraday_strategy_signal(ema_frame, previous)
 
     oi_context: dict[str, Any] | None = None
     option = None
@@ -60,16 +60,13 @@ def plan_instrument(
             oi_context = oi.to_dict()
             signal = apply_oi_to_signal(signal, oi)
             if signal.confidence < HARDCODED_RISK.min_confidence:
-                signal = StrategySignal(
+                signal = copy_signal(
+                    signal,
                     action="NO_TRADE",
-                    reason=f"OI-filtered: confidence {signal.confidence} below gate after OI adjustment.",
+                    reason=(
+                        f"OI-filtered: confidence {signal.confidence} below gate after OI adjustment."
+                    ),
                     confidence=0.0,
-                    price=signal.price,
-                    pivot=signal.pivot,
-                    bc=signal.bc,
-                    tc=signal.tc,
-                    ema_fast=signal.ema_fast,
-                    ema_slow=signal.ema_slow,
                 )
             else:
                 option = choose_option_from_chain_with_oi(

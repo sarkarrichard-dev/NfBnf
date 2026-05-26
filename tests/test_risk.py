@@ -20,11 +20,34 @@ def _risk(**kwargs: object) -> RiskSettings:
     return RiskSettings(**base)
 
 
-def test_kill_switch_blocks_after_loss_budget(monkeypatch) -> None:
+def test_kill_switch_blocks_after_loss_budget_in_live(monkeypatch) -> None:
     monkeypatch.setattr("index_ai.risk.today_realized_pnl", lambda: -7000.0)
     monkeypatch.setattr("index_ai.risk.today_losing_trades_count", lambda: 0)
-    ks = kill_switch_state(_risk())
+    ks = kill_switch_state(_risk(trading_mode="LIVE"))
+    assert ks["triggered"] is True
     assert ks["active"] is True
+
+
+def test_kill_switch_not_active_in_paper(monkeypatch) -> None:
+    monkeypatch.setattr("index_ai.risk.today_realized_pnl", lambda: -7000.0)
+    monkeypatch.setattr("index_ai.risk.today_losing_trades_count", lambda: 3)
+    ks = kill_switch_state(_risk(trading_mode="PAPER"))
+    assert ks["triggered"] is True
+    assert ks["active"] is False
+
+
+def test_execution_gates_ignore_kill_switch_in_paper(monkeypatch) -> None:
+    monkeypatch.setattr("index_ai.risk.today_realized_pnl", lambda: -7000.0)
+    monkeypatch.setattr("index_ai.risk.today_losing_trades_count", lambda: 5)
+    ok, reason = check_execution_gates(
+        risk=_risk(trading_mode="PAPER"),
+        signal_action="BUY_CALL",
+        transaction_type="BUY",
+        confidence=0.8,
+        min_confidence=0.5,
+    )
+    assert ok is True
+    assert "kill switch" not in reason.lower()
 
 
 def test_buy_and_sell_gates() -> None:

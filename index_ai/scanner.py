@@ -22,6 +22,7 @@ from index_ai.market_clock import (
     now_ist,
     now_ist_iso,
 )
+from index_ai.chart_live import fetch_supertrend_snapshot
 from index_ai.planner import plan_instrument
 from index_ai.risk import kill_switch_state
 from index_ai.trailing import evaluate_open_trade
@@ -158,13 +159,28 @@ async def _fetch_index_prices(client: DhanClient) -> dict[str, float]:
 
 async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
     prices = await _fetch_index_prices(client)
+    keys = {str(t.get("instrument") or "") for t in open_trades() if t.get("instrument")}
+    supertrends: dict[str, dict] = {}
+    for key in sorted(keys):
+        try:
+            supertrends[key] = fetch_supertrend_snapshot(client, key)
+        except Exception as exc:
+            _note_auth_failure(exc)
+            _log("supertrend_refresh_error", instrument=key, error=_friendly_error(exc))
+        await asyncio.sleep(TRAIL_INDEX_GAP_SECONDS)
+
     for trade in open_trades():
         key = str(trade.get("instrument") or "")
         price = prices.get(key)
         if price is None:
             continue
         try:
-            evaluation = evaluate_open_trade(trade, price, cfg.risk)
+            evaluation = evaluate_open_trade(
+                trade,
+                price,
+                cfg.risk,
+                fresh_supertrend=supertrends.get(key),
+            )
             update_trade_trail_meta(str(trade["id"]), evaluation["trail"])
             if evaluation.get("should_exit"):
                 await _close_trade(

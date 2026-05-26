@@ -45,6 +45,7 @@ from index_ai.learning import (
     trades_summary,
     update_trade_trail_meta,
 )
+from index_ai.chart_live import fetch_supertrend_snapshot
 from index_ai.trailing import evaluate_open_trade
 from index_ai.heatmap import build_heatmap
 from index_ai.planner import plan_instrument
@@ -157,11 +158,11 @@ def _trading_gates(cfg: Any) -> dict[str, Any]:
     ks = kill_switch_state(cfg.risk)
     reasons.append(
         {
-            "title": "Kill switch",
+            "title": "Kill switch (Live only)",
             "detail": (
-                f"Stops after {cfg.risk.max_losing_trades_per_day} losing trades or "
+                f"In Live mode, stops after {cfg.risk.max_losing_trades_per_day} losing trades or "
                 f"₹{cfg.risk.max_daily_loss_rupees:,.0f} daily loss. "
-                "No profit cap. Two-phase trail: wide initial stop, then trail after profit (see policy)."
+                "Paper trading is not blocked by the kill switch."
             ),
         }
     )
@@ -169,6 +170,13 @@ def _trading_gates(cfg: Any) -> dict[str, Any]:
         reasons.append(
             {
                 "title": "Kill switch ACTIVE",
+                "detail": " ".join(ks["reasons"]),
+            }
+        )
+    elif ks.get("triggered") and cfg.risk.trading_mode != "LIVE":
+        reasons.append(
+            {
+                "title": "Kill switch (would block Live)",
                 "detail": " ".join(ks["reasons"]),
             }
         )
@@ -436,7 +444,9 @@ async def analyze(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
         raise RuntimeError("Provide candles and previous_day arrays for signal analysis.")
     today = pd.DataFrame(candles)
     prev = pd.DataFrame(previous)
-    signal = cpr_ema_signal(today, prev)
+    from index_ai.strategy import intraday_strategy_signal
+
+    signal = intraday_strategy_signal(today, prev)
 
     option = None
     expiry = None
@@ -498,7 +508,10 @@ async def check_trailing_stops(payload: dict[str, Any] = Body(default_factory=di
         inst = get_instrument(instrument_key)
         quote = client.index_ltp(inst)
         price = float(quote.get("last_price") or quote.get("ltp") or trade["signal"]["price"])
-        evaluation = evaluate_open_trade(trade, price, cfg.risk)
+        fresh_st = fetch_supertrend_snapshot(client, instrument_key)
+        evaluation = evaluate_open_trade(
+            trade, price, cfg.risk, fresh_supertrend=fresh_st
+        )
         update_trade_trail_meta(str(trade["id"]), evaluation["trail"])
         closed = None
         if evaluation.get("should_exit"):

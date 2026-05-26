@@ -4,6 +4,7 @@ from typing import Any
 
 from index_ai.config import RiskSettings
 from index_ai.instruments import IndexInstrument, get_instrument
+from index_ai.strategy_params import STRATEGY_PARAMS, StrategyParams
 
 
 def _direction_for_action(action: str, transaction_type: str) -> int:
@@ -23,6 +24,8 @@ def init_trail_meta(
     action: str,
     transaction_type: str,
     instrument: IndexInstrument,
+    supertrend_direction: int = 0,
+    supertrend_stop: float = 0.0,
 ) -> dict[str, Any]:
     """
     Two-phase trail:
@@ -49,7 +52,39 @@ def init_trail_meta(
         "initial_stop_points": initial,
         "direction": direction,
         "instrument": instrument.key,
+        "supertrend_direction": int(supertrend_direction),
+        "supertrend_stop": float(supertrend_stop or 0),
     }
+
+
+def check_supertrend_exit(
+    meta: dict[str, Any],
+    current_index_price: float,
+    fresh: dict[str, Any] | None,
+    params: StrategyParams | None = None,
+) -> tuple[bool, str | None]:
+    cfg = params or STRATEGY_PARAMS
+    if not cfg.exit_on_supertrend_flip:
+        return False, None
+    entry_dir = int(meta.get("supertrend_direction") or 0)
+    if entry_dir == 0:
+        return False, None
+
+    snap = fresh if fresh and fresh.get("ready") else None
+    if snap:
+        if int(snap["direction"]) != entry_dir:
+            return True, "Supertrend flipped against position."
+        stop = float(snap["stop"])
+    else:
+        stop = float(meta.get("supertrend_stop") or 0)
+        if stop <= 0:
+            return False, None
+
+    if entry_dir == 1 and current_index_price < stop:
+        return True, f"Price {current_index_price:g} below Supertrend stop {stop:g}."
+    if entry_dir == -1 and current_index_price > stop:
+        return True, f"Price {current_index_price:g} above Supertrend stop {stop:g}."
+    return False, None
 
 
 def update_trail(meta: dict[str, Any], current_index_price: float) -> dict[str, Any]:
@@ -110,6 +145,8 @@ def evaluate_open_trade(
     trade: dict[str, Any],
     current_index_price: float,
     risk: RiskSettings,
+    *,
+    fresh_supertrend: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     signal = trade.get("signal") or {}
     option = trade.get("option") or {}
@@ -128,8 +165,21 @@ def evaluate_open_trade(
             instrument=instrument,
         )
     updated = update_trail(meta, current_index_price)
+    if fresh_supertrend and fresh_supertrend.get("ready"):
+        updated = {
+            **updated,
+            "supertrend_stop": float(fresh_supertrend["stop"]),
+            "supertrend_direction": int(fresh_supertrend["direction"]),
+        }
+
+    st_hit, st_reason = check_supertrend_exit(updated, current_index_price, fresh_supertrend)
+    trail_hit = bool(updated.get("hit"))
+    should_exit = trail_hit or st_hit
+
     armed = updated.get("trail_armed")
-    if armed:
+    if st_hit and st_reason:
+        exit_msg = st_reason
+    elif armed:
         dist = instrument.trail_distance_points
         exit_msg = (
             f"Trailing stop armed — {dist:g} index pts behind peak at {current_index_price:g}"
@@ -145,6 +195,7 @@ def evaluate_open_trade(
         "transaction_type": tx,
         "current_index_price": current_index_price,
         "trail": updated,
-        "should_exit": bool(updated.get("hit")),
-        "exit_reason": exit_msg if updated.get("hit") else None,
+        "should_exit": should_exit,
+        "exit_reason": exit_msg if should_exit else None,
+        "supertrend_exit": st_hit,
     }
