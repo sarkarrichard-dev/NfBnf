@@ -1,11 +1,13 @@
 # Start Here
 
-1. Open `.env`.
-2. Add your Dhan `DHAN_CLIENT_ID`.
-3. Double-click `Start Index Options AI.cmd`.
-4. Choose `Start AI server`.
-5. Choose `Open dashboard`.
-6. Use the Dhan Login panel: **Check setup** → **Create Login Link** → complete login in the browser → paste **tokenId** (or the full redirect URL) → **Save Token**.
+1. Copy `.env.example` to `.env` if you do not have one yet.
+2. Add Dhan credentials and `DHAN_CLIENT_ID` (see below).
+3. Add **`HF_TOKEN`** for Hugging Face FinBERT learning (get a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)). Keep it only in `.env` — do not commit it to git.
+4. Double-click `Start Index Options AI.cmd`.
+5. Choose `Start AI server`.
+6. Choose `Open dashboard`.
+7. Use the Dhan Login panel: **Check setup** → **Create Login Link** → complete login in the browser → paste **tokenId** (or the full redirect URL) → **Save Token**.
+8. On **Learning from outcomes**, click **Refresh** — you should see ML model stats and **Hugging Face: Active** if `HF_TOKEN` is set.
 
 ### Dhan login not working?
 
@@ -14,7 +16,7 @@
 - Do **not** paste `consentAppId` — only `tokenId` from step 2.
 - Errors now show in the auth panel (HTTP 400 with Dhan’s message). Use **Check setup** to see missing fields.
 - Optional: generate a 24h token on web.dhan.co and set `DHAN_ACCESS_TOKEN` manually (skip the 3-step flow).
-7. Use `Stop AI server` before closing the controller when you want port 8000 closed.
+9. Use `Stop AI server` before closing the controller when you want port 8000 closed.
 
 The app is paper trading by default. Live trading needs `TRADING_MODE=LIVE` and `ALLOW_LIVE_TRADING=true`.
 

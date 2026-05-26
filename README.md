@@ -61,4 +61,18 @@ Then run a backtest from the dashboard.
 
 ## Learning Loop
 
-Every planned or executed paper/live trade is journaled locally. Feedback and trade outcomes update a learned confidence adjustment, so weak recent results make the system more selective and strong recent results let it become slightly more permissive.
+Every planned or executed paper/live trade is journaled locally in `memory/` (not in git).
+
+1. **Rule-based** — feedback and closed trades adjust the min confidence gate (55% base ± adjustment).
+2. **scikit-learn** — retrains on closed trades after each exit; blocks setups below the learned win-probability gate. Use **Retrain ML** on the dashboard.
+3. **Hugging Face** — set `HF_TOKEN` in your local `.env` only (copy from `.env.example`). Uses [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert) to score each setup; exports `memory/hf/outcomes.jsonl`. Optional: `HF_DATASET_REPO` + **Upload to Hub** on the Learning panel.
+
+```powershell
+python -m pip install scikit-learn joblib huggingface-hub
+```
+
+Restart the server after changing `.env`. Never commit `.env` — it contains Dhan and HF secrets.
+
+## GitHub
+
+Source: [github.com/sarkarrichard-dev/NfBnf](https://github.com/sarkarrichard-dev/NfBnf)
