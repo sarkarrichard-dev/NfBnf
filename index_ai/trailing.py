@@ -169,8 +169,18 @@ def evaluate_open_trade(
     *,
     fresh_supertrend: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    signal = trade.get("signal") or {}
+    from index_ai.credit_spread import evaluate_credit_open_trade, is_credit_option
+
     option = trade.get("option") or {}
+    if is_credit_option(option):
+        return evaluate_credit_open_trade(
+            trade,
+            current_index_price,
+            risk,
+            fresh_supertrend=fresh_supertrend,
+        )
+
+    signal = trade.get("signal") or {}
     action = str(trade.get("action") or signal.get("action") or "")
     tx = str(option.get("transaction_type") or "BUY")
     entry = float(signal.get("price") or current_index_price)

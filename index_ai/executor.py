@@ -14,6 +14,7 @@ from index_ai.option_structures import CREDIT_ACTIONS
 from index_ai.risk import check_execution_gates
 from index_ai.strategy import StrategySignal
 from index_ai.strategy_params import get_strategy_params
+from index_ai.credit_spread import init_credit_trail_meta, is_credit_option
 from index_ai.trailing import init_trail_meta
 
 
@@ -163,14 +164,22 @@ def execute_plan(
     option_payload["setup_narrative"] = build_setup_narrative(
         plan.signal, option_payload, inst.key
     )
-    option_payload["trail_meta"] = init_trail_meta(
-        entry_index_price=float(plan.signal["price"]),
-        action=str(plan.signal["action"]),
-        transaction_type=str(plan.option.get("transaction_type") or "BUY"),
-        instrument=inst,
-        supertrend_direction=int(plan.signal.get("supertrend_direction") or 0),
-        supertrend_stop=float(plan.signal.get("supertrend_stop") or 0),
-    )
+    if is_credit_option(option_payload):
+        option_payload["trail_meta"] = init_credit_trail_meta(
+            option=option_payload,
+            instrument=inst,
+            action=str(plan.signal["action"]),
+            entry_index_price=float(plan.signal["price"]),
+        )
+    else:
+        option_payload["trail_meta"] = init_trail_meta(
+            entry_index_price=float(plan.signal["price"]),
+            action=str(plan.signal["action"]),
+            transaction_type=str(plan.option.get("transaction_type") or "BUY"),
+            instrument=inst,
+            supertrend_direction=int(plan.signal.get("supertrend_direction") or 0),
+            supertrend_stop=float(plan.signal.get("supertrend_stop") or 0),
+        )
     trade_id = record_trade(
         mode=plan.mode,
         instrument=str(plan.option["instrument"]),

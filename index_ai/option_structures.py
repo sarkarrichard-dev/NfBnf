@@ -7,15 +7,8 @@ from typing import Any
 from index_ai.cpr_regime import CprRegime
 from index_ai.instruments import IndexInstrument
 from index_ai.strategy import StrategySignal, nearest_strike
+from index_ai.credit_spread import CREDIT_ACTIONS, attach_credit_risk_metrics
 from index_ai.strategy_params import get_strategy_params
-
-CREDIT_ACTIONS = frozenset(
-    {
-        "SELL_IRON_CONDOR",
-        "SELL_BULL_PUT_SPREAD",
-        "SELL_BEAR_CALL_SPREAD",
-    }
-)
 
 
 def _chain_rows(chain: dict[str, Any]) -> dict[float, dict[str, Any]]:
@@ -97,21 +90,24 @@ def build_iron_condor(
         raise RuntimeError("Could not resolve all iron condor legs on chain.")
     legs_typed: list[dict[str, Any]] = [x for x in legs if x is not None]
     short = legs_typed[0]
-    return {
-        "instrument": instrument.key,
-        "structure": "IRON_CONDOR",
-        "transaction_type": "SELL",
-        "option_type": "SPREAD",
-        "strike": short["strike"],
-        "security_id": short["security_id"],
-        "segment": instrument.option_segment,
-        "quantity": instrument.lot_size,
-        "ltp": _sum_credit(legs_typed),
-        "net_credit_points": _sum_credit(legs_typed),
-        "legs": legs_typed,
-        "cpr_regime": regime.day_bias,
-        "hedge_note": f"Hedged iron condor — wings {wings} strikes each side (defined risk).",
-    }
+    return attach_credit_risk_metrics(
+        {
+            "instrument": instrument.key,
+            "structure": "IRON_CONDOR",
+            "transaction_type": "SELL",
+            "option_type": "SPREAD",
+            "strike": short["strike"],
+            "security_id": short["security_id"],
+            "segment": instrument.option_segment,
+            "quantity": instrument.lot_size,
+            "ltp": _sum_credit(legs_typed),
+            "net_credit_points": _sum_credit(legs_typed),
+            "legs": legs_typed,
+            "cpr_regime": regime.day_bias,
+            "hedge_note": f"Hedged iron condor — wings {wings} strikes each side (defined risk).",
+        },
+        instrument,
+    )
 
 
 def build_bull_put_spread(
@@ -135,21 +131,24 @@ def build_bull_put_spread(
         raise RuntimeError("Could not resolve bull put spread legs.")
     legs = [x for x in legs_raw if x is not None]
     short = legs[0]
-    return {
-        "instrument": instrument.key,
-        "structure": "BULL_PUT_SPREAD",
-        "transaction_type": "SELL",
-        "option_type": "SPREAD",
-        "strike": short["strike"],
-        "security_id": short["security_id"],
-        "segment": instrument.option_segment,
-        "quantity": instrument.lot_size,
-        "ltp": _sum_credit(legs),
-        "net_credit_points": _sum_credit(legs),
-        "legs": legs,
-        "cpr_regime": regime.day_bias,
-        "hedge_note": "Bull put credit spread — long put wing caps downside.",
-    }
+    return attach_credit_risk_metrics(
+        {
+            "instrument": instrument.key,
+            "structure": "BULL_PUT_SPREAD",
+            "transaction_type": "SELL",
+            "option_type": "SPREAD",
+            "strike": short["strike"],
+            "security_id": short["security_id"],
+            "segment": instrument.option_segment,
+            "quantity": instrument.lot_size,
+            "ltp": _sum_credit(legs),
+            "net_credit_points": _sum_credit(legs),
+            "legs": legs,
+            "cpr_regime": regime.day_bias,
+            "hedge_note": "Bull put credit spread — long put wing caps downside.",
+        },
+        instrument,
+    )
 
 
 def build_bear_call_spread(
@@ -173,21 +172,24 @@ def build_bear_call_spread(
         raise RuntimeError("Could not resolve bear call spread legs.")
     legs = [x for x in legs_raw if x is not None]
     short = legs[0]
-    return {
-        "instrument": instrument.key,
-        "structure": "BEAR_CALL_SPREAD",
-        "transaction_type": "SELL",
-        "option_type": "SPREAD",
-        "strike": short["strike"],
-        "security_id": short["security_id"],
-        "segment": instrument.option_segment,
-        "quantity": instrument.lot_size,
-        "ltp": _sum_credit(legs),
-        "net_credit_points": _sum_credit(legs),
-        "legs": legs,
-        "cpr_regime": regime.day_bias,
-        "hedge_note": "Bear call credit spread — long call wing caps upside risk.",
-    }
+    return attach_credit_risk_metrics(
+        {
+            "instrument": instrument.key,
+            "structure": "BEAR_CALL_SPREAD",
+            "transaction_type": "SELL",
+            "option_type": "SPREAD",
+            "strike": short["strike"],
+            "security_id": short["security_id"],
+            "segment": instrument.option_segment,
+            "quantity": instrument.lot_size,
+            "ltp": _sum_credit(legs),
+            "net_credit_points": _sum_credit(legs),
+            "legs": legs,
+            "cpr_regime": regime.day_bias,
+            "hedge_note": "Bear call credit spread — long call wing caps upside risk.",
+        },
+        instrument,
+    )
 
 
 def build_credit_structure(

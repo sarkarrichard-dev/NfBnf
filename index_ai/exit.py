@@ -136,7 +136,12 @@ def close_open_trade(
     pnl_estimated = False
     broker_response: dict[str, Any] | None = None
 
-    if client is not None and app_settings.dhan.ready and resolved_exit_ltp is None:
+    if (
+        client is not None
+        and app_settings.dhan.ready
+        and resolved_exit_ltp is None
+        and not is_credit_option(option)
+    ):
         try:
             resolved_exit_ltp = option_ltp_with_retry(client, option)
         except Exception:
@@ -173,7 +178,20 @@ def close_open_trade(
             )
 
     pnl: float
-    if legs and client is not None and app_settings.dhan.ready and resolved_exit_ltp is None:
+    if (
+        is_credit_option(option)
+        and client is not None
+        and app_settings.dhan.ready
+        and resolved_exit_ltp is None
+    ):
+        try:
+            pnl, close_debit, _ = compute_credit_mtm(option, client)
+            resolved_exit_ltp = close_debit
+        except Exception:
+            pnl = float(option.get("mtm_pnl") or 0)
+            resolved_exit_ltp = float(option.get("last_close_debit") or entry_ltp)
+            pnl_estimated = pnl == 0
+    elif legs and client is not None and app_settings.dhan.ready and resolved_exit_ltp is None:
         leg_pnls: list[float] = []
         for leg in legs:
             try:

@@ -26,6 +26,8 @@ class StrategyParams:
     credit_wing_strikes: int = 2
     credit_short_strike_steps: int = 2
     credit_min_confidence: float = 0.58
+    credit_profit_target_pct: float = 0.50
+    credit_stop_loss_pct: float = 0.60
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -66,6 +68,8 @@ def get_strategy_params() -> StrategyParams:
         credit_wing_strikes=_int("CREDIT_WING_STRIKES", 2),
         credit_short_strike_steps=_int("CREDIT_SHORT_STRIKE_STEPS", 2),
         credit_min_confidence=_float("CPR_CREDIT_MIN_CONFIDENCE", 0.58),
+        credit_profit_target_pct=_float("CREDIT_PROFIT_TARGET_PCT", 0.50),
+        credit_stop_loss_pct=_float("CREDIT_STOP_LOSS_PCT", 0.60),
     )
 
 
@@ -92,6 +96,8 @@ def strategy_tuning_summary() -> dict[str, object]:
         "credit_wing_strikes": p.credit_wing_strikes,
         "credit_short_strike_steps": p.credit_short_strike_steps,
         "credit_min_confidence": p.credit_min_confidence,
+        "credit_profit_target_pct": p.credit_profit_target_pct,
+        "credit_stop_loss_pct": p.credit_stop_loss_pct,
         "require_supertrend_align": p.require_supertrend_align,
         "require_breakout_tag": p.require_breakout_tag,
         "supertrend_period": p.supertrend_period,
@@ -104,6 +110,8 @@ def strategy_tuning_summary() -> dict[str, object]:
             "CPR_CREDIT_MIN_CONFIDENCE",
             "CREDIT_WING_STRIKES",
             "CREDIT_SHORT_STRIKE_STEPS",
+            "CREDIT_PROFIT_TARGET_PCT",
+            "CREDIT_STOP_LOSS_PCT",
             "REQUIRE_SUPERTREND_ALIGN",
             "REQUIRE_BREAKOUT_TAG",
             "SUPERTREND_PERIOD",

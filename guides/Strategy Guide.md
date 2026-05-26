@@ -90,7 +90,21 @@ Set `HF_TOKEN` in `.env` (free token at huggingface.co). The app uses **ProsusAI
 - **Sync HF dataset** / **Upload to Hub** on the Learning panel (`HF_DATASET_REPO=you/index-options-outcomes`).
 - Optional offline mode: `HF_USE_LOCAL=true` and `pip install -e ".[hf-local]"`.
 
-## Trailing stop (two phases)
+## Credit spread exits (hedged selling)
+
+When `STRATEGY_STYLE=AUTO` or `CREDIT` fires an iron condor / bull put / bear call spread:
+
+| Exit | Default | Meaning |
+|------|---------|---------|
+| `CREDIT_PROFIT_TARGET_PCT` | 0.50 | Close when MTM reaches 50% of max profit (net credit × lot). |
+| `CREDIT_STOP_LOSS_PCT` | 0.60 | Close when loss reaches 60% of defined max loss (wing width − credit). |
+| Short-strike breach | — | Bull put: index below short put; bear call: above short call; iron condor: beyond either short. |
+
+MTM marks **all legs** (net debit to close vs entry credit). Dashboard shows each leg, net credit, and max loss.
+
+Directional **index-point trails** apply only to long premium (`BUY_CALL` / `BUY_PUT`), not credit spreads.
+
+## Trailing stop (two phases) — long premium only
 
 Exits were too early with a 1-point index trail. New logic per index:
 

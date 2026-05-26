@@ -25,6 +25,8 @@ from index_ai.market_clock import (
 from index_ai.chart_live import fetch_supertrend_snapshot
 from index_ai.planner import plan_instrument
 from index_ai.risk import kill_switch_state
+from index_ai.credit_spread import is_credit_option
+from index_ai.mtm import enrich_open_trade_mtm
 from index_ai.trailing import evaluate_open_trade
 
 SCAN_INTERVAL_SECONDS = 90
@@ -175,8 +177,11 @@ async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
         if price is None:
             continue
         try:
+            work = trade
+            if is_credit_option((trade.get("option") or {})):
+                work = enrich_open_trade_mtm(dict(trade), client)
             evaluation = evaluate_open_trade(
-                trade,
+                work,
                 price,
                 cfg.risk,
                 fresh_supertrend=supertrends.get(key),

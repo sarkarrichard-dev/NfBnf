@@ -243,10 +243,15 @@ def resolve_current_option_ltp(
     hist = option.get("mtm_history") or []
     if hist and hist[-1].get("option_ltp") is not None:
         return float(hist[-1]["option_ltp"])
+    if option.get("last_close_debit") is not None:
+        return float(option["last_close_debit"])
     if is_open and mtm_pnl is not None and entry_ltp is not None and qty > 0:
         entry = float(entry_ltp)
         mtm = float(mtm_pnl)
         q = max(1, int(qty))
+        legs = option.get("legs") or []
+        if legs:
+            return max(0.0, entry - mtm / q)
         if tx.upper() == "BUY":
             return entry + mtm / q
         if tx.upper() == "SELL":
@@ -276,8 +281,14 @@ def option_leg_fields(trade: dict[str, Any]) -> dict[str, Any]:
     opt_type = "CALL" if option_side == "CE" else "PUT" if option_side == "PE" else ""
 
     structure = str(option.get("structure") or "")
-    if structure:
-        n_legs = len(option.get("legs") or [])
+    legs = list(option.get("legs") or [])
+    if structure and legs:
+        from index_ai.credit_spread import format_legs_summary
+
+        parts = [row["label"] for row in format_legs_summary(legs)]
+        leg_display = f"{structure.replace('_', ' ')}: " + ", ".join(parts)
+    elif structure:
+        n_legs = len(legs)
         leg_display = f"Credit {structure.replace('_', ' ')}"
         if n_legs:
             leg_display += f" ({n_legs} legs)"
@@ -313,6 +324,11 @@ def option_leg_fields(trade: dict[str, Any]) -> dict[str, Any]:
         "configured_lot_size": configured_lot,
         "quantity": effective_qty,
         "lot_label": lot_label,
+        "structure": structure or None,
+        "legs_detail": legs,
+        "net_credit_points": option.get("net_credit_points"),
+        "max_loss_rupees": option.get("max_loss_rupees"),
+        "max_profit_rupees": option.get("max_profit_rupees"),
     }
 
 
@@ -402,7 +418,30 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
         "ema_slow": signal.get("ema_slow"),
         "exit_label": exit_label,
         "is_paper": mode == "PAPER" or status == "PAPER_RECORDED",
+        "structure": option.get("structure"),
+        "legs_detail": option.get("legs") or [],
+        "net_credit_points": option.get("net_credit_points"),
+        "max_loss_rupees": option.get("max_loss_rupees"),
+        "max_profit_rupees": option.get("max_profit_rupees"),
+        "last_close_debit": option.get("last_close_debit"),
+        "credit_risk_label": _credit_risk_label(option),
     }
+
+
+def _credit_risk_label(option: dict[str, Any]) -> str | None:
+    credit = option.get("net_credit_points")
+    max_loss = option.get("max_loss_rupees")
+    max_profit = option.get("max_profit_rupees")
+    if credit is None and max_loss is None:
+        return None
+    parts: list[str] = []
+    if credit is not None:
+        parts.append(f"Credit ₹{float(credit):,.2f}/unit")
+    if max_profit is not None:
+        parts.append(f"max profit ₹{float(max_profit):,.0f}")
+    if max_loss is not None:
+        parts.append(f"max loss ₹{float(max_loss):,.0f}")
+    return " · ".join(parts)
 
 
 def today_trade_count() -> int:

@@ -213,16 +213,42 @@ function legBadges(t) {
   return parts.join(" ");
 }
 
+function formatSpreadLegRows(t) {
+  const legs = t.legs_detail || [];
+  if (!legs.length) return "";
+  return `<div class="spread-legs">${legs
+    .map((leg) => {
+      const tx = (leg.transaction_type || "BUY").toUpperCase();
+      const txCls = tx === "SELL" ? "leg-sell" : "leg-buy";
+      const side = (leg.option_type || "").toUpperCase();
+      const optCls = side === "CALL" ? "leg-ce" : side === "PUT" ? "leg-pe" : "";
+      const strike = leg.strike != null ? String(leg.strike) : "";
+      return `<div class="spread-leg-row">
+        <span class="leg-pill ${txCls}">${tx === "SELL" ? "Sell" : "Buy"}</span>
+        ${strike ? `<span class="leg-pill leg-strike">${escapeHtml(strike)}</span>` : ""}
+        ${side ? `<span class="leg-pill ${optCls}">${side}</span>` : ""}
+      </div>`;
+    })
+    .join("")}</div>`;
+}
+
 function formatPositionCell(t) {
-  const badges = legBadges(t);
-  const line = t.leg_display || t.side_label || t.action || "—";
+  const spreadRows = formatSpreadLegRows(t);
+  const risk = t.credit_risk_label
+    ? `<div class="muted credit-risk">${escapeHtml(t.credit_risk_label)}</div>`
+    : "";
   const expiry = t.expiry ? `<div class="muted leg-expiry">Exp ${escapeHtml(String(t.expiry))}</div>` : "";
   const qty = t.lot_label
     ? `<div class="muted">${escapeHtml(t.lot_label)}</div>`
     : t.quantity
       ? `<div class="muted">${Number(t.quantity)} qty</div>`
       : "";
-  return `<div class="leg-cell">${badges || `<strong>${escapeHtml(line)}</strong>`}${qty}${expiry}</div>`;
+  if (spreadRows) {
+    return `<div class="leg-cell">${spreadRows}${risk}${qty}${expiry}</div>`;
+  }
+  const badges = legBadges(t);
+  const line = t.leg_display || t.side_label || t.action || "—";
+  return `<div class="leg-cell">${badges || `<strong>${escapeHtml(line)}</strong>`}${risk}${qty}${expiry}</div>`;
 }
 
 function formatExitPremium(t) {
@@ -230,7 +256,8 @@ function formatExitPremium(t) {
     t.current_option_ltp ?? t.exit_option_ltp ?? t.last_option_ltp ?? null;
   if (price == null || Number.isNaN(Number(price))) return "—";
   const label = t.is_open ? " live" : "";
-  return `₹${fmtNum(price)}${label}`;
+  const prefix = (t.legs_detail || []).length ? "close " : "";
+  return `${prefix}₹${fmtNum(price)}${label}`;
 }
 
 function renderMtmSparkline(history) {
@@ -259,12 +286,15 @@ function renderAnalyticsTrades() {
   }
   tbody.innerHTML = rows
     .map((t) => {
-      const entry = [
+      const entryParts = [
         t.entry_index_price != null ? `idx ${fmtNum(t.entry_index_price)}` : null,
-        t.entry_option_ltp != null ? `prem ₹${fmtNum(t.entry_option_ltp)}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
+      ];
+      if ((t.legs_detail || []).length && t.net_credit_points != null) {
+        entryParts.push(`credit ₹${fmtNum(t.net_credit_points)}`);
+      } else if (t.entry_option_ltp != null) {
+        entryParts.push(`prem ₹${fmtNum(t.entry_option_ltp)}`);
+      }
+      const entry = entryParts.filter(Boolean).join(" · ");
       const exitOpt = formatExitPremium(t);
       let pnlCell = '<span class="muted">—</span>';
       if (t.pnl != null) {
@@ -377,6 +407,18 @@ function renderStrategyTuning(strategy) {
     ["CPR narrow %", strategy.cpr_narrow_width_pct],
     ["CPR wide %", strategy.cpr_wide_width_pct],
     ["Credit min conf.", strategy.credit_min_confidence],
+    [
+      "Credit profit exit",
+      strategy.credit_profit_target_pct != null
+        ? `${(Number(strategy.credit_profit_target_pct) * 100).toFixed(0)}% of max`
+        : "—",
+    ],
+    [
+      "Credit stop exit",
+      strategy.credit_stop_loss_pct != null
+        ? `${(Number(strategy.credit_stop_loss_pct) * 100).toFixed(0)}% of max loss`
+        : "—",
+    ],
     ["Wing strikes", strategy.credit_wing_strikes],
     ["Short leg steps", strategy.credit_short_strike_steps],
     ["Supertrend align", strategy.require_supertrend_align ? "Required" : "Off"],
