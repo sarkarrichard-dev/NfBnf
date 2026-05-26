@@ -351,6 +351,9 @@ async def start_scanner() -> dict[str, Any]:
 
 def clear_auth_block() -> None:
     """Call after a fresh Dhan token is saved."""
+    from index_ai.dhan_auth import clear_dhan_health_cache
+
+    clear_dhan_health_cache()
     _state.auth_blocked = False
     _state.last_error = None
 

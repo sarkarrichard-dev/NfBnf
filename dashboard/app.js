@@ -648,14 +648,25 @@ function startAutoPolling() {
 async function loadStatus() {
   const status = await api("/api/status");
   const tok = status.dhan_token;
+  const dh = status.dhan_health;
+  const dhanEl = $("dhan-status");
+  dhanEl?.classList.remove("error");
   if (!status.dhan_ready) {
-    $("dhan-status").textContent = "Need token";
+    dhanEl.textContent = "Need token";
+  } else if (dh && !dh.ok) {
+    dhanEl.textContent = "Token rejected";
+    dhanEl.classList.add("error");
+  } else if (dh?.ok && dh?.charts_ok) {
+    dhanEl.textContent = dh.token_validity
+      ? `OK until ${String(dh.token_validity).replace(" IST", "")}`
+      : "Dhan OK";
   } else if (tok?.expired) {
-    $("dhan-status").textContent = "Expired";
+    dhanEl.textContent = "Expired";
+    dhanEl.classList.add("error");
   } else if (tok?.expires_ist) {
-    $("dhan-status").textContent = `OK until ${tok.expires_ist.replace(" IST", "")}`;
+    dhanEl.textContent = `JWT ${tok.expires_ist.replace(" IST", "")} — verify`;
   } else {
-    $("dhan-status").textContent = "Configured";
+    dhanEl.textContent = "Configured";
   }
   const live = status.trading_mode === "LIVE";
   $("toggle-trading-mode").checked = live;
@@ -807,9 +818,15 @@ $("renew-dhan-token")?.addEventListener("click", async () => {
 });
 
 $("auto-start")?.addEventListener("click", async () => {
+  const pasted = $("token-id")?.value?.trim() || "";
   $("auto-status-line").textContent = "Starting scanner…";
   try {
-    renderAutoStatus(await api("/api/auto/start", { method: "POST" }));
+    renderAutoStatus(
+      await api("/api/auto/start", {
+        method: "POST",
+        body: JSON.stringify(pasted ? { token_id: pasted } : {}),
+      }),
+    );
     startAutoPolling();
     await loadHeatmap();
   } catch (err) {

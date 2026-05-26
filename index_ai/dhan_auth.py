@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -180,6 +181,7 @@ def save_access_token_direct(settings: DhanSettings, access_token: str) -> dict[
 
         expiry = datetime.fromtimestamp(int(exp), tz=timezone.utc).isoformat()
 
+    clear_dhan_health_cache()
     update_env_values(
         {
             "DHAN_CLIENT_ID": client_id,
@@ -187,12 +189,23 @@ def save_access_token_direct(settings: DhanSettings, access_token: str) -> dict[
             "DHAN_TOKEN_EXPIRY": expiry,
         }
     )
+    clear_dhan_health_cache()
+    from index_ai.config import settings as load_settings
+
+    fresh = load_settings().dhan
+    try:
+        verify_access_token(fresh)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Token saved to .env but Dhan rejected it: {exc} "
+            "Generate a fresh access token on web.dhan.co (old JWTs are invalidated when you generate a new one)."
+        ) from exc
     return {
         "status": "saved",
         "source": "access_token_jwt",
         "dhanClientId": client_id,
         "expiryTime": expiry or None,
-        "message": "Access token (JWT) saved to .env — skipped consumeApp-consent.",
+        "message": "Access token verified with Dhan /profile and saved to .env.",
     }
 
 
@@ -286,6 +299,9 @@ def jwt_token_status(access_token: str) -> dict[str, Any]:
         "dhan_client_id": client_id or None,
         "expired": expired,
         "expires_ist": expires_ist,
+        "note": (
+            "JWT expiry is decoded locally only. Use Verify data access to confirm Dhan still accepts the token."
+        ),
     }
 
 
@@ -365,35 +381,58 @@ def renew_access_token(settings: DhanSettings) -> dict[str, Any]:
     }
 
 
-def check_dhan_health(settings: DhanSettings) -> dict[str, Any]:
-    """
-    Full connectivity check: profile, data subscription, and a small intraday chart probe.
-    """
+_health_cache: tuple[float, dict[str, Any]] | None = None
+_HEALTH_CACHE_SEC = 45.0
+
+
+def clear_dhan_health_cache() -> None:
+    global _health_cache
+    _health_cache = None
+
+
+def check_dhan_health(settings: DhanSettings, *, use_cache: bool = True) -> dict[str, Any]:
+    """Profile, data subscription, and a small intraday chart probe."""
+    global _health_cache
+    if use_cache and _health_cache is not None:
+        cached_at, cached = _health_cache
+        if time.monotonic() - cached_at < _HEALTH_CACHE_SEC:
+            return cached
+
+    def _done(payload: dict[str, Any]) -> dict[str, Any]:
+        global _health_cache
+        if use_cache:
+            _health_cache = (time.monotonic(), payload)
+        return payload
+
     issues: list[str] = []
     actions: list[str] = []
     profile: dict[str, Any] = {}
 
     if not settings.ready:
-        return {
-            "ok": False,
-            "charts_ok": False,
-            "issues": [_missing_token_message(settings)],
-            "actions": [_web_token_action()],
-        }
+        return _done(
+            {
+                "ok": False,
+                "charts_ok": False,
+                "issues": [_missing_token_message(settings)],
+                "actions": [_web_token_action()],
+            }
+        )
 
     reconcile_env_with_jwt()
     jwt_status = jwt_token_status(settings.access_token)
     if jwt_status.get("is_jwt") and jwt_status.get("expired"):
         issues.append(f"Access token expired at {jwt_status.get('expires_ist')}.")
         actions.append(_web_token_action())
-        return {
-            "ok": False,
-            "charts_ok": False,
-            "issues": issues,
-            "actions": actions,
-            "profile": profile,
-            "jwt": jwt_status,
-        }
+        return _done(
+            {
+                "ok": False,
+                "charts_ok": False,
+                "issues": issues,
+                "actions": actions,
+                "profile": profile,
+                "jwt": jwt_status,
+            }
+        )
 
     try:
         verified = verify_access_token(settings)
@@ -404,15 +443,17 @@ def check_dhan_health(settings: DhanSettings) -> dict[str, Any]:
         actions.append(
             "If using API login: fix DHAN_CLIENT_ID + API key, or see oauth_troubleshooting after Create Login Link."
         )
-        return {
-            "ok": False,
-            "charts_ok": False,
-            "issues": issues,
-            "actions": actions,
-            "profile": profile,
-            "jwt": jwt_status,
-            "oauth_troubleshooting": _oauth_troubleshooting(),
-        }
+        return _done(
+            {
+                "ok": False,
+                "charts_ok": False,
+                "issues": issues,
+                "actions": actions,
+                "profile": profile,
+                "jwt": jwt_status,
+                "oauth_troubleshooting": _oauth_troubleshooting(),
+            }
+        )
 
     profile_cid = str(profile.get("dhanClientId") or "").strip()
     if profile_cid and profile_cid != settings.client_id:
@@ -460,17 +501,20 @@ def check_dhan_health(settings: DhanSettings) -> dict[str, Any]:
             issues.append(f"Chart probe failed: {charts_error}")
 
     ok = not issues and charts_ok
-    return {
-        "ok": ok,
-        "charts_ok": charts_ok,
-        "charts_error": charts_error,
-        "issues": issues,
-        "actions": actions,
-        "profile": profile,
-        "token_validity": token_validity,
-        "data_plan": data_plan or None,
-        "client_id": profile_cid or settings.client_id,
-    }
+    return _done(
+        {
+            "ok": ok,
+            "charts_ok": charts_ok,
+            "charts_error": charts_error,
+            "issues": issues,
+            "actions": actions,
+            "profile": profile,
+            "token_validity": token_validity,
+            "data_plan": data_plan or None,
+            "client_id": profile_cid or settings.client_id,
+            "jwt": jwt_status,
+        }
+    )
 
 
 def _web_token_action() -> str:

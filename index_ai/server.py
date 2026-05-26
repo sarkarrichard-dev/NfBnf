@@ -220,6 +220,7 @@ async def status() -> dict[str, Any]:
         "kill_switch": kill_switch_state(cfg.risk),
         "market": market_status(),
         "timezone": "Asia/Kolkata",
+        "dhan_health": check_dhan_health(cfg.dhan) if cfg.dhan.ready else None,
     }
 
 
@@ -326,7 +327,8 @@ async def auth_renew_token() -> dict[str, Any]:
     try:
         result = renew_access_token(settings().dhan)
         clear_auth_block()
-        return result
+        cfg = settings()
+        return {**result, "health": check_dhan_health(cfg.dhan), "jwt": jwt_token_status(cfg.dhan.access_token)}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -394,14 +396,23 @@ async def learning_cleanup() -> dict[str, Any]:
 
 
 @app.post("/api/auto/start", include_in_schema=False)
-async def auto_start() -> dict[str, Any]:
+async def auto_start(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    token_raw = str(payload.get("token_id") or payload.get("token") or "").strip()
+    if token_raw:
+        try:
+            save_token_from_user_input(settings().dhan, token_raw)
+            clear_auth_block()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Could not save token: {exc}") from exc
     cfg = settings()
-    health = check_dhan_health(cfg.dhan) if cfg.dhan.ready else None
-    if health and not health.get("charts_ok"):
-        detail = "; ".join(health.get("issues") or ["Dhan chart data unavailable."])
+    if not cfg.dhan.ready:
+        raise HTTPException(status_code=400, detail=_dhan_setup_message())
+    health = check_dhan_health(cfg.dhan)
+    if not health.get("ok") and not health.get("charts_ok"):
+        detail = "; ".join(health.get("issues") or ["Dhan not ready."])
         actions = health.get("actions") or []
         if actions:
-            detail += " — " + " ".join(actions)
+            detail += " — " + " ".join(actions[:2])
         raise HTTPException(status_code=400, detail=detail)
     try:
         return await start_scanner()

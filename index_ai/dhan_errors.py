@@ -17,10 +17,11 @@ class DhanRateLimitError(RuntimeError):
 def parse_dhan_error_payload(data: dict[str, Any]) -> str | None:
     code = str(data.get("errorCode") or data.get("error_code") or "").strip()
     msg = str(data.get("errorMessage") or data.get("message") or "").strip()
-    if code == "DH-906" or "invalid token" in msg.lower():
+    if "invalid token" in msg.lower() or code in {"DH-901", "DH-906", "808", "809"}:
         return (
-            "Invalid Token (DH-906). Generate a new access token on web.dhan.co "
-            "(My Profile → Access DhanHQ APIs) and Save Token."
+            "Access token rejected by Dhan (invalid or revoked). "
+            "On web.dhan.co → My Profile → Access DhanHQ APIs → Generate Access Token "
+            "(creates a new JWT; old tokens stop working) → paste the full eyJ… string → Save Token."
         )
     if code == "DH-812":
         return "Invalid date format (DH-812). Use YYYY-MM-DD HH:MM:SS in IST."

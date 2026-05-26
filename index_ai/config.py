@@ -78,6 +78,7 @@ def _float(name: str, default: float) -> float:
 
 
 def settings() -> AppSettings:
+    repair_env_access_token_line()
     load_dotenv(ENV_PATH, override=True)
     try:
         from index_ai.dhan_auth import reconcile_env_with_jwt
@@ -133,19 +134,81 @@ def set_trading_mode(mode: str) -> str:
     return normalized
 
 
-def update_env_values(values: dict[str, str]) -> None:
-    existing = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
-    remaining = dict(values)
-    output: list[str] = []
-    for line in existing:
-        if not line or line.lstrip().startswith("#") or "=" not in line:
-            output.append(line)
+_QUOTED_ENV_KEYS = frozenset(
+    {
+        "DHAN_ACCESS_TOKEN",
+        "DHAN_API_SECRET",
+        "DHAN_API_KEY",
+    }
+)
+
+
+def _strip_env_quotes(value: str) -> str:
+    s = (value or "").strip()
+    if len(s) >= 2 and s[0] == s[-1] == '"':
+        return s[1:-1].replace('\\"', '"')
+    return s
+
+
+def repair_env_access_token_line() -> bool:
+    """
+    Fix .env files where a long JWT was split across multiple lines.
+    Without this, dotenv only loads the first line and Dhan returns DH-906.
+    """
+    if not ENV_PATH.exists():
+        return False
+    lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
+    out: list[str] = []
+    repaired = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("DHAN_ACCESS_TOKEN="):
+            token = line.split("=", 1)[1].strip()
+            token = _strip_env_quotes(token)
+            i += 1
+            while i < len(lines):
+                nxt = lines[i].strip()
+                if not nxt or nxt.startswith("#") or "=" in nxt:
+                    break
+                token += nxt
+                repaired = True
+                i += 1
+            token = token.replace("\n", "").replace("\r", "").strip()
+            out.append(f'DHAN_ACCESS_TOKEN="{token}"')
             continue
-        key, _ = line.split("=", 1)
-        if key in remaining:
-            output.append(f"{key}={remaining.pop(key)}")
+        out.append(line)
+        i += 1
+    if repaired:
+        ENV_PATH.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return repaired
+
+
+def update_env_values(values: dict[str, str]) -> None:
+    from dotenv import dotenv_values
+
+    repair_env_access_token_line()
+    header: list[str] = []
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+            if line.lstrip().startswith("#") or not line.strip():
+                header.append(line)
+
+    merged: dict[str, str] = {}
+    if ENV_PATH.exists():
+        merged = {k: str(v) for k, v in dotenv_values(ENV_PATH).items() if v is not None}
+    merged.update(values)
+
+    body: list[str] = []
+    for key, value in merged.items():
+        if key in _QUOTED_ENV_KEYS or len(value) > 120:
+            safe = value.replace('"', "")
+            body.append(f'{key}="{safe}"')
         else:
-            output.append(line)
-    for key, value in remaining.items():
-        output.append(f"{key}={value}")
-    ENV_PATH.write_text("\n".join(output) + "\n", encoding="utf-8")
+            body.append(f"{key}={value}")
+
+    parts = header[:]
+    if parts and parts[-1].strip():
+        parts.append("")
+    parts.extend(body)
+    ENV_PATH.write_text("\n".join(parts) + "\n", encoding="utf-8")
