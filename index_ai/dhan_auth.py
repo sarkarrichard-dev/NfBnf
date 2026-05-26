@@ -33,6 +33,14 @@ def _jwt_payload(token: str) -> dict[str, Any]:
         return {}
 
 
+def normalize_access_token(raw: str) -> str:
+    """Strip whitespace, quotes, and Bearer prefix from pasted Dhan JWT."""
+    s = (raw or "").strip().strip('"').strip("'")
+    if s.lower().startswith("bearer "):
+        s = s[7:].strip()
+    return s.replace("\n", "").replace("\r", "")
+
+
 def normalize_token_id(raw: str) -> str:
     """
     Accept a bare tokenId or a full redirect URL / query string from Step 2.
@@ -82,8 +90,11 @@ def _parse_json_response(response: httpx.Response) -> dict[str, Any]:
 
 
 def _raise_dhan_http_error(response: httpx.Response, step: str) -> None:
+    from index_ai.dhan_errors import parse_dhan_error_payload
+
     data = _parse_json_response(response)
-    hint = data.get("message") or data.get("error") or data.get("statusMessage") or data
+    friendly = parse_dhan_error_payload(data) if isinstance(data, dict) else None
+    hint = friendly or data.get("message") or data.get("error") or data.get("statusMessage") or data
     raise RuntimeError(f"Dhan {step} failed ({response.status_code}): {hint}")
 
 
@@ -152,7 +163,7 @@ def save_access_token_direct(settings: DhanSettings, access_token: str) -> dict[
 
     Do not send this value to consumeApp-consent (that endpoint expects a short session tokenId).
     """
-    token = (access_token or "").strip()
+    token = normalize_access_token(access_token)
     if not looks_like_jwt(token):
         raise RuntimeError(
             "This does not look like a Dhan access token (JWT). "
@@ -187,7 +198,7 @@ def save_access_token_direct(settings: DhanSettings, access_token: str) -> dict[
 
 def save_token_from_user_input(settings: DhanSettings, raw: str) -> dict[str, Any]:
     """Accept OAuth tokenId (UUID) or a ready-made access token JWT."""
-    text = (raw or "").strip()
+    text = normalize_access_token(raw)
     if not text:
         raise RuntimeError("Paste tokenId from the redirect URL, or paste your Dhan access token JWT.")
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -13,6 +14,7 @@ from index_ai.dhan_errors import (
     DhanRateLimitError,
     classify_http_error,
     explain_dhan_http_error,
+    parse_dhan_error_payload,
 )
 from index_ai.instruments import IndexInstrument
 
@@ -37,6 +39,27 @@ class _RateLimiter:
 
 
 _limiter = _RateLimiter(_MIN_REQUEST_INTERVAL_SEC)
+
+# Dhan /charts/intraday: OHLC for last ~5 trading days only (not multi-week ranges).
+INTRADAY_MAX_CALENDAR_DAYS = 5
+_IST_DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def clamp_intraday_date_range(
+    from_date: str,
+    to_date: str,
+    *,
+    max_calendar_days: int = INTRADAY_MAX_CALENDAR_DAYS,
+) -> tuple[str, str]:
+    """Keep intraday requests inside Dhan's allowed window."""
+    end = datetime.strptime(to_date.strip(), _IST_DATETIME_FMT)
+    start = datetime.strptime(from_date.strip(), _IST_DATETIME_FMT)
+    if start > end:
+        start = end - timedelta(days=1)
+        start = start.replace(hour=9, minute=15, second=0)
+    if (end.date() - start.date()).days > max_calendar_days:
+        start = (end - timedelta(days=max_calendar_days)).replace(hour=9, minute=15, second=0)
+    return start.strftime(_IST_DATETIME_FMT), end.strftime(_IST_DATETIME_FMT)
 
 
 class DhanClient:
@@ -91,6 +114,19 @@ class DhanClient:
                     time.sleep(min(10.0, 2.0 * (2**attempt)))
                     continue
                 raise last_exc
+
+            if response.status_code >= 400:
+                try:
+                    payload = response.json()
+                    if isinstance(payload, dict):
+                        hint = parse_dhan_error_payload(payload)
+                        if hint:
+                            label = f"{context}: " if context else ""
+                            raise RuntimeError(f"{label}{hint}")
+                except RuntimeError:
+                    raise
+                except Exception:
+                    pass
 
             try:
                 response.raise_for_status()
@@ -147,14 +183,15 @@ class DhanClient:
     ) -> dict[str, Any]:
         if instrument.underlying_security_id is None:
             raise RuntimeError(f"{instrument.label} security id is not configured.")
+        from_clamped, to_clamped = clamp_intraday_date_range(from_date, to_date)
         payload = {
             "securityId": str(instrument.underlying_security_id),
             "exchangeSegment": instrument.underlying_segment,
             "instrument": instrument.instrument_type,
-            "interval": interval,
+            "interval": str(interval),
             "oi": False,
-            "fromDate": from_date,
-            "toDate": to_date,
+            "fromDate": from_clamped,
+            "toDate": to_clamped,
         }
         return self._post("/charts/intraday", payload, context=f"{instrument.key} intraday chart")
 

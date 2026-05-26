@@ -777,9 +777,13 @@ $("check-dhan-setup")?.addEventListener("click", async () => {
 });
 
 $("verify-dhan-health")?.addEventListener("click", async () => {
-  write("auth-output", "Checking profile and chart access…");
+  const pasted = $("token-id")?.value?.trim() || "";
+  write("auth-output", pasted ? "Saving pasted token and checking access…" : "Checking profile and chart access…");
   try {
-    const health = await api("/api/auth/health");
+    const health = await api("/api/auth/health", {
+      method: "POST",
+      body: JSON.stringify(pasted ? { token_id: pasted } : {}),
+    });
     write("auth-output", formatHealthResult(health));
     renderDhanHealth(health);
     await loadHeatmap();

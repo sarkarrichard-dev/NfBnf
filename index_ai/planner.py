@@ -27,7 +27,7 @@ def plan_instrument(
     client: DhanClient,
     app_settings: AppSettings,
     instrument_key: str,
-    lookback_days: int = 10,
+    lookback_days: int = 5,
     interval: str = "5",
 ) -> dict[str, Any]:
     """CPR+EMA + Dhan option-chain OI for NIFTY / BANKNIFTY (no order placed)."""

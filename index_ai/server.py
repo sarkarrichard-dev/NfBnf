@@ -301,9 +301,23 @@ async def auth_verify_token() -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/auth/health", include_in_schema=False)
-async def auth_health() -> dict[str, Any]:
-    """Profile + data plan + intraday chart probe (diagnoses 401 on heatmap)."""
+@app.api_route("/api/auth/health", methods=["GET", "POST"], include_in_schema=False)
+async def auth_health(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Profile + data plan + chart probe. POST optional token_id saves pasted token first."""
+    token_raw = str(payload.get("token_id") or payload.get("token") or "").strip()
+    if token_raw:
+        try:
+            save_token_from_user_input(settings().dhan, token_raw)
+            clear_auth_block()
+        except Exception as exc:
+            return {
+                "ok": False,
+                "charts_ok": False,
+                "issues": [f"Could not save pasted token: {exc}"],
+                "actions": [
+                    "Paste the full eyJ… JWT from Dhan Web (no spaces or line breaks), then Verify again.",
+                ],
+            }
     return check_dhan_health(settings().dhan)
 
 
