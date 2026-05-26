@@ -1,195 +1,33 @@
-const state = {
-  lastAnalysis: null,
-  lastFindingId: "",
-};
-
-const $ = (id) => document.getElementById(id);
-
-function fmt(n) {
-  return Number(n || 0).toLocaleString();
-}
-
-/** Display DB UTC ISO timestamps in Asia/Kolkata for operator clarity. */
-function formatIst(isoLike) {
-  if (!isoLike || typeof isoLike !== "string") return isoLike;
-  const t = isoLike.trim();
-  if (t.length < 10) return isoLike;
-  try {
-    const normalized = t.includes("T") ? t : t.replace(" ", "T");
-    const d = new Date(normalized.endsWith("Z") || normalized.includes("+") ? normalized : `${normalized}Z`);
-    if (Number.isNaN(d.getTime())) return isoLike;
-    return `${d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: false })} IST`;
-  } catch {
-    return isoLike;
-  }
-}
-
-function nowStamp() {
-  return new Date().toISOString().replace("T", " ").slice(0, 19);
-}
-
-function logUiError(message) {
-  const el = $("ui-error-log");
-  if (!el) return;
-  const line = `[${nowStamp()}] ${message}`;
-  if (el.textContent.trim() === "No errors yet.") el.textContent = line;
-  else el.textContent = `${line}\n${el.textContent}`;
-}
-
-function isPuterAvailable() {
-  try {
-    const p = globalThis.puter;
-    return p != null && typeof p === "object" && p.ai != null && typeof p.ai.chat === "function";
-  } catch {
-    return false;
-  }
-}
-
-function refreshPuterStatusPill() {
-  const el = $("puter-status");
-  if (!el) return;
-  if (isPuterAvailable()) {
-    el.textContent = "Puter ready";
-    el.classList.add("ok");
-    el.classList.remove("waiting");
-  } else {
-    el.textContent = "Not loaded";
-    el.classList.remove("ok");
-    el.classList.add("waiting");
-  }
-}
-
-function normalizePuterChatResponse(r) {
-  if (r == null) return "";
-  if (typeof r === "string") return r;
-  if (typeof r === "object") {
-    if (typeof r.message === "string") return r.message;
-    if (typeof r.text === "string") return r.text;
-    const msg = r.message;
-    if (msg && typeof msg === "object") {
-      const c = msg.content;
-      if (typeof c === "string") return c;
-      if (Array.isArray(c)) return c.map((part) => (part && (part.text || part.content)) || "").join("");
-    }
-  }
-  try {
-    return JSON.stringify(r, null, 2);
-  } catch {
-    return String(r);
-  }
-}
-
-function buildPuterAnalysisContext() {
-  const data = state.lastAnalysis;
-  if (!data) return "";
-  const slim = {
-    symbol: data.symbol,
-    finding_id: data.finding_id,
-    brain: data.brain,
-    ml: data.ml,
-    trade_plan: data.trade_plan,
-    metrics_subset: {
-      ohlc_bars: data.metrics && data.metrics.ohlc_bars,
-      ohlc_interval: data.metrics && data.metrics.ohlc_interval,
-      market_focus: data.metrics && data.metrics.market_focus,
-    },
-  };
-  return `CONTEXT_JSON (machine snapshot, not advice):\n${JSON.stringify(slim, null, 2)}\n\n`;
-}
-
-async function runPuterUserChat() {
-  const out = $("puter-output");
-  const rawPrompt = (($("puter-prompt") && $("puter-prompt").value) || "").trim();
-  if (!rawPrompt) {
-    if (out) out.textContent = "Enter a question first.";
-    return;
-  }
-  if (!isPuterAvailable()) {
-    if (out) out.textContent = "Puter.js did not load. Check network / blockers and reload.";
-    logUiError("Puter.js not available");
-    return;
-  }
-  const attach = $("puter-attach-analysis") && $("puter-attach-analysis").checked;
-  const prefix = attach ? buildPuterAnalysisContext() : "";
-  const model = ($("puter-model") && $("puter-model").value) || "gpt-4o-mini";
-  if (out) out.textContent = "Waiting for Puter…";
-  try {
-    const resp = await globalThis.puter.ai.chat(prefix + rawPrompt, {
-      model,
-      temperature: 0.25,
-    });
-    if (out) out.textContent = normalizePuterChatResponse(resp) || "(empty response)";
-  } catch (e) {
-    const msg = e && (e.message || String(e));
-    if (out) out.textContent = `Puter error: ${msg}`;
-    logUiError(`Puter: ${msg}`);
-  }
-}
-
-async function runPuterExplainAnalysis() {
-  const out = $("puter-output");
-  if (!state.lastAnalysis) {
-    if (out) out.textContent = "Run Analyze in the Trading portal first.";
-    return;
-  }
-  if (!isPuterAvailable()) {
-    if (out) out.textContent = "Puter.js did not load.";
-    logUiError("Puter.js not available");
-    return;
-  }
-  const model = ($("puter-model") && $("puter-model").value) || "gpt-4o-mini";
-  const prompt = [
-    buildPuterAnalysisContext(),
-    "Task: In 2 short paragraphs, explain what this snapshot suggests about structure vs risk,",
-    "and list concrete caveats (data gaps, overfitting risk, no trade recommendation).",
-    "Plain English; not financial advice.",
-  ].join(" ");
-  if (out) out.textContent = "Waiting for Puter…";
-  try {
-    const resp = await globalThis.puter.ai.chat(prompt, { model, temperature: 0.2 });
-    if (out) out.textContent = normalizePuterChatResponse(resp) || "(empty response)";
-  } catch (e) {
-    const msg = e && (e.message || String(e));
-    if (out) out.textContent = `Puter error: ${msg}`;
-    logUiError(`Puter: ${msg}`);
-  }
-}
-
-function writeHub(text) {
-  const el = $("ml-online-readout");
-  if (el) el.textContent = typeof text === "string" ? text : String(text);
-}
-
-function setPill(id, text, ok = true) {
-  const el = $(id);
-  if (!el) return;
-  el.textContent = text;
-  el.classList.toggle("ok", ok);
-  el.classList.toggle("waiting", !ok);
-}
-
 async function api(path, options = {}) {
-  try {
-    const res = await fetch(path, {
-      headers: { "Content-Type": "application/json" },
-      ...options,
-    });
-    if (!res.ok) {
-      let msg = `${path} -> ${res.status} ${res.statusText}`;
-      try {
-        const j = await res.clone().json();
-        if (j && j.detail != null) msg += ` | ${typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail)}`;
-      } catch {
-        /* ignore */
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!response.ok) {
+    let msg = `${path} → ${response.status} ${response.statusText}`;
+    try {
+      const j = await response.clone().json();
+      if (j?.detail != null) {
+        msg += ` | ${typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail)}`;
+      } else if (j?.error) {
+        msg += ` | ${j.error}`;
       }
-      logUiError(msg);
-      throw new Error(msg);
+    } catch {
+      const text = (await response.clone().text()).trim();
+      if (text && text.length < 800) msg += ` | ${text}`;
     }
-    return res.json();
-  } catch (e) {
-    if (e && String(e.message || e).includes("fetch")) logUiError(`Network: ${path} (${e.message || e})`);
-    throw e;
+    throw new Error(msg);
   }
+  return response.json();
+}
+
+let analyticsData = null;
+let activePeriod = "today";
+let autoPollTimer = null;
+let mtmPollTimer = null;
+
+function $(id) {
+  return document.getElementById(id);
 }
 
 function write(id, value) {
@@ -198,1074 +36,901 @@ function write(id, value) {
   el.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
-function escapeHtml(s) {
-  return String(s ?? "")
+function escapeHtml(text) {
+  return String(text)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
 
-function pct01(x, digits = 1) {
-  if (x == null || Number.isNaN(Number(x))) return "—";
-  const n = Number(x);
-  return `${(n <= 1 && n >= -1 ? n * 100 : n).toFixed(digits)}%`;
+function fmtNum(value, digits = 2) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  return Number(value).toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
-function signalModeLabel(mode) {
-  const m = {
-    structural: "Structural (brain-style score)",
-    trend_ma: "Trend (two moving averages)",
-    mean_reversion_z: "Mean reversion (z-score vs average)",
-  };
-  return m[mode] || mode;
+function fmtPnl(value) {
+  if (value == null) return "—";
+  const n = Number(value);
+  const sign = n >= 0 ? "+" : "";
+  return `${sign}₹${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
-function formatEvalModesReport(data) {
-  const sym = data.symbol || "—";
-  const period = data.period || "";
-  const interval = data.interval || "";
-  const rows = data.rows || [];
-  const lines = [
-    "Research mode comparison (walk-forward, educational only — not live advice)",
-    `Symbol: ${sym}  |  Chart window: ${period} at ${interval} bars`,
-    "",
-  ];
-  rows.forEach((row) => {
-    const mode = row.signal_mode || "?";
-    const a = row.assumptions || {};
-    const cost = a.round_trip_cost_bps != null ? `${a.round_trip_cost_bps} basis points per full buy/sell` : "default costs";
-    const horizon = a.horizon_bars != null ? `${a.horizon_bars} bars forward` : "?";
-    const bar = a.bar_interval || "?";
-    lines.push(`--- ${signalModeLabel(mode)} ---`);
-    lines.push(`  Status: ${row.status || "—"}`);
-    lines.push(`  Simulated trades: ${fmt(row.trades)}`);
-    lines.push(`  Win rate (closed trades): ${pct01(row.win_rate)}`);
-    lines.push(`  Profit factor: ${row.profit_factor != null ? Number(row.profit_factor).toFixed(3) : "—"}`);
-    lines.push(`  Ending equity (normalized run): ${row.ending_equity != null ? Number(row.ending_equity).toFixed(4) : "—"}`);
-    lines.push(`  Worst peak-to-trough drop: ${pct01(row.max_drawdown)}`);
-    lines.push(`  How this run was modeled: ${bar} bars, hold horizon ${horizon}, costs about ${cost}.`);
-    lines.push("");
-  });
-  lines.push("Lower drawdown and steadier profit factor usually matter more than raw win rate.");
-  return lines.join("\n");
-}
-
-function formatOnlineLearningStatus(st) {
-  const lines = ["Online learning (Hugging Face Hub)", ""];
-  lines.push(
-    st.hf_learning_datasets_env
-      ? `Configured datasets: ${st.hf_learning_datasets_env}`
-      : "No Hub datasets configured yet (set TRADING_AI_HF_LEARNING_DATASETS in your .env).",
-  );
-  lines.push(`Hub login token on this PC: ${st.hub_token_configured ? "Yes" : "No — private repos need HF_TOKEN"}`);
-  lines.push(
-    `Python "datasets" library: ${st.datasets_package_installed ? "Installed" : 'Not installed — run: pip install -e ".[hf]"'}`,
-  );
-  lines.push("");
-  lines.push("How to type dataset names in .env:");
-  lines.push("  • repo name, or repo:split, or repo:config:split (comma-separated, up to four).");
-  if (st.install_hint) lines.push(`Tip: ${st.install_hint}`);
-  return lines.join("\n");
-}
-
-function formatOnlineLearningPreview(pv) {
-  const meta = pv.meta || {};
-  const lines = ["Hub sample preview", ""];
-  lines.push(`Status: ${meta.status || "—"}`);
-  if (meta.hint) lines.push(`Note: ${meta.hint}`);
-  if (Array.isArray(meta.datasets)) {
-    meta.datasets.forEach((d) => {
-      lines.push(`  • ${d.spec || d.repo || "?"} — ${d.status || ""}${d.error ? ` (${d.error})` : ""}`);
+function fmtIst(iso) {
+  if (!iso) return "—";
+  if (String(iso).includes("IST")) return String(iso);
+  try {
+    const d = new Date(String(iso).replace("Z", "+00:00"));
+    const text = d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      dateStyle: "medium",
+      timeStyle: "medium",
+      hour12: true,
     });
+    return `${text} IST`;
+  } catch {
+    return iso;
   }
-  lines.push("");
-  lines.push("Short text sample the brain may digest (trimmed):");
-  lines.push(pv.digest_preview || "(empty)");
-  return lines.join("\n");
 }
 
-function formatDhanQuoteMap(d) {
-  const lines = ["Dhan live quotes (LTP map)", ""];
-  lines.push(`Broker credentials loaded: ${d.credentials_ready ? "Yes" : "No — set DHAN_CLIENT_ID and DHAN_ACCESS_TOKEN"}`);
-  const syms = d.mapped_symbols || [];
-  lines.push(
-    syms.length
-      ? `Symbols you mapped for LTP: ${syms.join(", ")}`
-      : "No symbol map yet — set TRADING_AI_DHAN_LTP_MAP (JSON) so each Yahoo ticker points to Dhan security ids.",
-  );
-  if (d.api_base_url) lines.push(`API base: ${d.api_base_url}`);
-  if (d.doc) lines.push(`Docs: ${d.doc}`);
-  return lines.join("\n");
+function tradeTime(t) {
+  return t?.created_at_ist || fmtIst(t?.created_at);
 }
 
-function formatStrategyTaxonomy(t) {
-  const lines = [];
-  if (t.reference_title) lines.push(`Reference: ${t.reference_title}`);
-  if (t.reference_url) lines.push(`Read more: ${t.reference_url}`);
-  if (t.notes) lines.push("", String(t.notes).replace(/`/g, "'"), "");
-  const strategies = t.strategies || [];
-  strategies.forEach((s, i) => {
-    const name = s.groww_name || s.id || `Strategy ${i + 1}`;
-    const ws = s.workstation || {};
-    lines.push(`--- ${name} ---`);
-    if (s.idea) lines.push(String(s.idea).replace(/`/g, "'"));
-    lines.push(`In this app: ${ws.status || "—"}`);
-    if (ws.implementation) lines.push(`How we use it: ${ws.implementation.replace(/`/g, "'")}`);
-    lines.push("");
-  });
-  return lines.join("\n").trim();
-}
-
-function formatParameterCatalog(c) {
-  const lines = ["Learnable parameters (knobs you can tune later)", ""];
-  if (c.version) lines.push(`Catalog version: ${c.version}`, "");
-  (c.families || []).forEach((fam) => {
-    lines.push(`--- ${fam.label || fam.id} ---`);
-    if (fam.description) lines.push(fam.description.replace(/`/g, "'"));
-    (fam.workstation_mapping || []).forEach((m) => {
-      const bits = [m.name];
-      if (m.type) bits.push(`(${m.type})`);
-      if (m.env) bits.push("— environment variable");
-      const tail = m.range_hint || m.api || m.note || m.module || "";
-      lines.push(`  • ${bits.join(" ")}${tail ? `: ${tail}` : ""}`);
-    });
-    lines.push("");
-  });
-  if (Array.isArray(c.feedback_loops) && c.feedback_loops.length) {
-    lines.push("--- Feedback loops ---");
-    c.feedback_loops.forEach((fb) => {
-      lines.push(`  • ${fb.id || "?"}: ${(fb.description || "").replace(/`/g, "'")}`);
-    });
-  }
-  return lines.join("\n").trim();
-}
-
-function coalesceJsonObject(raw) {
-  if (raw == null) return {};
-  if (typeof raw === "object" && !Array.isArray(raw)) return raw;
-  if (typeof raw === "string") {
-    try {
-      const o = JSON.parse(raw);
-      return typeof o === "object" && o != null && !Array.isArray(o) ? o : {};
-    } catch {
-      return {};
+async function detectWrongServerOnPort() {
+  try {
+    const health = await fetch("/api/health");
+    if (!health.ok) return null;
+    const body = await health.json();
+    if (body.app === "index-options-ai") return null;
+    if (body.app) {
+      return `Port 8000 is running "${body.app}", not Index Options AI. Use Start Index Options AI.cmd.`;
     }
+    return "Port 8000 is running the old Trading Workstation. Use Start Index Options AI.cmd.";
+  } catch {
+    return null;
   }
-  return {};
 }
 
-function formatPostMortemWindow(s) {
-  s = coalesceJsonObject(s);
-  if (!s || Object.keys(s).length === 0) return "No summary yet.";
-  const wr = s.win_rate;
-  const winRateText = wr == null ? "not enough labeled trials yet" : pct01(wr);
-  return [
-    `Outcomes stored in the rolling window: ${fmt(s.window_outcomes)}`,
-    `Labeled trials: ${fmt(s.labeled_trials)}`,
-    `Wins counted: ${fmt(s.wins)}`,
-    `Win rate in that window: ${winRateText}`,
-  ].join("\n");
+function handleDhanAuthRedirect() {
+  const params = new URLSearchParams(window.location.search);
+  const auth = params.get("dhan_auth");
+  if (!auth) return;
+  const detail = params.get("detail") || "";
+  const out = $("auth-output");
+  if (auth === "success") {
+    if (out) out.textContent = "Dhan token saved from OAuth redirect. Charts should work after Verify.";
+    loadStatus();
+    api("/api/auth/health")
+      .then(renderDhanHealth)
+      .catch(() => {});
+  } else if (out) {
+    out.textContent = detail ? `OAuth failed: ${detail}` : "OAuth redirect failed — paste tokenId manually.";
+  }
+  params.delete("dhan_auth");
+  params.delete("detail");
+  const qs = params.toString();
+  const clean = window.location.pathname + (qs ? `?${qs}` : "");
+  window.history.replaceState({}, "", clean);
 }
 
-function formatPostMortemEventLine(e) {
-  const p = e.payload || {};
-  const bits = [`Time: ${formatIst(e.created_at)}`, `Type: ${e.event_type || "—"}`];
-  if (p.finding_id) bits.push(`Finding: ${p.finding_id}`);
-  if (p.symbol) bits.push(`Symbol: ${p.symbol}`);
-  if (p.verdict != null) bits.push(`Verdict: ${p.verdict}`);
-  if (p.forward_return != null) bits.push(`Forward return over window: ${(Number(p.forward_return) * 100).toFixed(2)}%`);
-  return bits.join(" | ");
+function periodBlock() {
+  if (!analyticsData) return null;
+  if (activePeriod === "today") return analyticsData.today;
+  if (activePeriod === "week") return analyticsData.week;
+  if (activePeriod === "month") return analyticsData.month;
+  return analyticsData.overview;
 }
 
-function formatHeatmapFeatures(f) {
-  if (!f || typeof f !== "object") return "";
-  return Object.entries(f)
-    .map(([k, v]) => {
-      const label = k.replace(/_/g, " ");
-      if (v != null && typeof v === "object") return `  ${label}: (nested summary — see server logs if needed)`;
-      return `  ${label}: ${v}`;
+function tradesForPeriod() {
+  if (!analyticsData?.trades?.length) return [];
+  if (activePeriod === "all") return analyticsData.trades;
+  const block = periodBlock();
+  if (!block) return [];
+  const instKeys = Object.keys(block.by_instrument || {});
+  if (!instKeys.length && block.trades === 0) return [];
+  const now = new Date();
+  let startMs = 0;
+  if (activePeriod === "today") {
+    const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    ist.setHours(0, 0, 0, 0);
+    startMs = ist.getTime();
+  } else if (activePeriod === "week") {
+    const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const day = ist.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+    ist.setDate(ist.getDate() - diff);
+    ist.setHours(0, 0, 0, 0);
+    startMs = ist.getTime();
+  } else if (activePeriod === "month") {
+    const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    ist.setDate(1);
+    ist.setHours(0, 0, 0, 0);
+    startMs = ist.getTime();
+  }
+  return analyticsData.trades.filter((t) => {
+    const ts = new Date(String(t.created_at).replace("Z", "+00:00")).getTime();
+    return ts >= startMs;
+  });
+}
+
+function renderBreakdownList(elId, data) {
+  const el = $(elId);
+  if (!el) return;
+  const entries = Object.entries(data || {});
+  el.innerHTML = entries.length
+    ? entries.map(([k, v]) => `<li><span>${escapeHtml(k)}</span><strong>${v}</strong></li>`).join("")
+    : '<li class="muted">None in this period</li>';
+}
+
+function renderPeriodStats() {
+  const openMtm = analyticsData?.open_mtm_rupees;
+  const openMtmEl = $("stat-open-mtm");
+  if (openMtmEl) {
+    openMtmEl.textContent = openMtm != null ? fmtPnl(openMtm) : "—";
+    openMtmEl.classList.toggle("pnl-win", (openMtm ?? 0) > 0);
+    openMtmEl.classList.toggle("pnl-loss", (openMtm ?? 0) < 0);
+  }
+  const block = periodBlock() || {
+    trades: 0,
+    closed: 0,
+    open: 0,
+    wins: 0,
+    losses: 0,
+    win_rate: null,
+    pnl_rupees: 0,
+    by_instrument: {},
+    by_action: {},
+    by_leg: {},
+  };
+  $("stat-trades").textContent = String(block.trades ?? 0);
+  $("stat-closed-open").textContent = `${block.closed ?? 0} / ${block.open ?? 0}`;
+  $("stat-wins-losses").textContent = `${block.wins ?? 0} / ${block.losses ?? 0}`;
+  $("stat-win-rate").textContent =
+    block.win_rate != null ? `${(block.win_rate * 100).toFixed(1)}%` : "—";
+  const pnlEl = $("stat-pnl");
+  pnlEl.textContent = fmtPnl(block.pnl_rupees);
+  pnlEl.classList.toggle("pnl-win", (block.pnl_rupees ?? 0) > 0);
+  pnlEl.classList.toggle("pnl-loss", (block.pnl_rupees ?? 0) < 0);
+  renderBreakdownList("breakdown-instrument", block.by_instrument);
+  renderBreakdownList("breakdown-action", block.by_action);
+  renderBreakdownList("breakdown-leg", block.by_leg);
+}
+
+function legBadges(t) {
+  const tx = (t.transaction_type || "BUY").toUpperCase();
+  const side = (t.option_side || "").toUpperCase();
+  const txCls = tx === "SELL" ? "leg-sell" : "leg-buy";
+  const optCls = side === "CE" ? "leg-ce" : side === "PE" ? "leg-pe" : "";
+  const parts = [];
+  parts.push(`<span class="leg-pill ${txCls}">${tx === "SELL" ? "Sell" : "Buy"}</span>`);
+  if (t.strike_display) {
+    parts.push(`<span class="leg-pill leg-strike">${escapeHtml(t.strike_display)}</span>`);
+  }
+  if (side) {
+    parts.push(`<span class="leg-pill ${optCls}">${side}</span>`);
+  }
+  return parts.join(" ");
+}
+
+function formatPositionCell(t) {
+  const badges = legBadges(t);
+  const line = t.leg_display || t.side_label || t.action || "—";
+  const expiry = t.expiry ? `<div class="muted leg-expiry">Exp ${escapeHtml(String(t.expiry))}</div>` : "";
+  const qty = t.lot_label
+    ? `<div class="muted">${escapeHtml(t.lot_label)}</div>`
+    : t.quantity
+      ? `<div class="muted">${Number(t.quantity)} qty</div>`
+      : "";
+  return `<div class="leg-cell">${badges || `<strong>${escapeHtml(line)}</strong>`}${qty}${expiry}</div>`;
+}
+
+function formatExitPremium(t) {
+  const price =
+    t.current_option_ltp ?? t.exit_option_ltp ?? t.last_option_ltp ?? null;
+  if (price == null || Number.isNaN(Number(price))) return "—";
+  const label = t.is_open ? " live" : "";
+  return `₹${fmtNum(price)}${label}`;
+}
+
+function renderMtmSparkline(history) {
+  if (!history?.length) return "";
+  const pts = history.slice(-8).map((h) => Number(h.mtm_pnl));
+  const min = Math.min(...pts);
+  const max = Math.max(...pts);
+  const range = max - min || 1;
+  const bars = pts
+    .map((v) => {
+      const h = Math.max(4, Math.round(((v - min) / range) * 20) + 4);
+      const cls = v >= 0 ? "spark-win" : "spark-loss";
+      return `<span class="spark-bar ${cls}" style="height:${h}px" title="${fmtPnl(v)}"></span>`;
     })
-    .join("\n");
+    .join("");
+  return `<span class="mtm-spark">${bars}</span>`;
 }
 
-function formatPostMortemResult(out) {
-  if (!out || typeof out !== "object") return String(out);
-  if (out.status === "error" || out.status === "insufficient_forward_bars") {
-    return [
-      `Could not finish post-mortem (${out.status}).`,
-      out.message ? `Reason: ${out.message}` : "",
-      out.symbol ? `Symbol: ${out.symbol}` : "",
-      out.bars_available != null ? `Bars available after anchor: ${out.bars_available}` : "",
-      out.horizon_bars != null ? `Needed horizon: ${out.horizon_bars}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+function renderAnalyticsTrades() {
+  const tbody = $("analytics-trades-body");
+  if (!tbody) return;
+  const rows = tradesForPeriod();
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="muted">No trades in this period.</td></tr>`;
+    return;
   }
-  if (out.status !== "ok") return `Status: ${out.status || "unknown"}`;
-  return [
-    "Post-mortem finished (compares the old call to what price did next).",
-    "",
-    `Finding id: ${out.finding_id || "—"}`,
-    `Symbol: ${out.symbol || "—"}`,
-    `Brain action at the time: ${out.brain_action || "—"}`,
-    `Price change over the next window: ${(Number(out.forward_return || 0) * 100).toFixed(3)}%`,
-    `Verdict: ${out.verdict || "—"}${out.correct === true ? " (directionally matched)" : out.correct === false ? " (directionally missed)" : ""}`,
-  ].join("\n");
+  tbody.innerHTML = rows
+    .map((t) => {
+      const entry = [
+        t.entry_index_price != null ? `idx ${fmtNum(t.entry_index_price)}` : null,
+        t.entry_option_ltp != null ? `prem ₹${fmtNum(t.entry_option_ltp)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const exitOpt = formatExitPremium(t);
+      let pnlCell = '<span class="muted">—</span>';
+      if (t.pnl != null) {
+        pnlCell = `<span class="${Number(t.pnl) >= 0 ? "pnl-win" : "pnl-loss"}">${fmtPnl(t.pnl)}</span>`;
+      } else if (t.mtm_pnl != null) {
+        pnlCell = `<span class="mtm-live ${Number(t.mtm_pnl) >= 0 ? "pnl-win" : "pnl-loss"}">${fmtPnl(t.mtm_pnl)}</span>`;
+      }
+      const spark = t.is_open ? renderMtmSparkline(t.mtm_history) : "";
+      const mtmNote =
+        t.is_open && t.mtm_updated_at_ist
+          ? `<div class="mtm-note muted">${escapeHtml(t.mtm_updated_at_ist)}</div>`
+          : "";
+      const conf = t.confidence != null ? `${(Number(t.confidence) * 100).toFixed(0)}%` : "—";
+      const rowCls = t.is_open ? "row-open" : "";
+      return `<tr class="${rowCls}">
+        <td>${tradeTime(t)}</td>
+        <td>${escapeHtml(t.instrument || "")}</td>
+        <td>${formatPositionCell(t)}</td>
+        <td><span class="muted">${escapeHtml(t.action || "")}</span><div class="muted">${conf}</div></td>
+        <td>${escapeHtml(entry || "—")}</td>
+        <td>${escapeHtml(exitOpt)}</td>
+        <td>${pnlCell}${spark}${mtmNote}</td>
+        <td><span class="muted">${escapeHtml(t.mode || "")}</span> ${escapeHtml(t.status || "")}</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+function mergeLiveMtmRows(liveRows) {
+  if (!analyticsData?.trades?.length || !liveRows?.length) return;
+  const byId = Object.fromEntries(liveRows.map((r) => [r.id, r]));
+  analyticsData.trades = analyticsData.trades.map((t) => byId[t.id] || t);
+  if (analyticsData.open_mtm_rupees != null) {
+    analyticsData.open_mtm_rupees = liveRows.reduce(
+      (s, r) => s + (Number(r.mtm_pnl) || 0),
+      0,
+    );
+  }
+}
+
+async function refreshLiveMtm() {
+  try {
+    const data = await api("/api/trades/live-mtm");
+    if (data.error) return;
+    mergeLiveMtmRows(data.trades || []);
+    const label = $("mtm-updated-label");
+    if (label) label.textContent = data.updated_at_ist ? `· MTM ${data.updated_at_ist}` : "";
+    const openMtmEl = $("stat-open-mtm");
+    if (openMtmEl) {
+      openMtmEl.textContent = fmtPnl(data.open_mtm_rupees ?? 0);
+      openMtmEl.classList.toggle("pnl-win", (data.open_mtm_rupees ?? 0) > 0);
+      openMtmEl.classList.toggle("pnl-loss", (data.open_mtm_rupees ?? 0) < 0);
+    }
+    renderAnalyticsTrades();
+  } catch {
+    /* Dhan may be offline */
+  }
+}
+
+function startMtmPolling() {
+  if (mtmPollTimer) clearInterval(mtmPollTimer);
+  const hasOpen = () => (analyticsData?.trades || []).some((t) => t.is_open);
+  mtmPollTimer = setInterval(() => {
+    if (hasOpen()) refreshLiveMtm();
+  }, 12000);
+}
+
+function renderSeriesTable(elId, series) {
+  const el = $(elId);
+  if (!el) return;
+  if (!series?.length) {
+    el.innerHTML = '<p class="muted">No history yet.</p>';
+    return;
+  }
+  el.innerHTML = `<table class="mini-table"><thead><tr><th>Period</th><th>Trades</th><th>W/L</th><th>PnL</th></tr></thead><tbody>${series
+    .map(
+      (s) => `<tr>
+      <td>${escapeHtml(s.period)}</td>
+      <td>${s.trades}</td>
+      <td>${s.wins}/${s.losses}</td>
+      <td class="${s.pnl_rupees >= 0 ? "pnl-win" : "pnl-loss"}">${fmtPnl(s.pnl_rupees)}</td>
+    </tr>`,
+    )
+    .join("")}</tbody></table>`;
+}
+
+function renderAnalytics() {
+  if (!analyticsData) return;
+  renderPeriodStats();
+  renderAnalyticsTrades();
+  renderSeriesTable("series-daily", analyticsData.daily_series);
+  renderSeriesTable("series-weekly", analyticsData.weekly_series);
+  renderSeriesTable("series-monthly", analyticsData.monthly_series);
+}
+
+function renderKillSwitch(ks) {
+  const banner = $("kill-switch-banner");
+  if (!banner || !ks) return;
+  if (ks.active) {
+    banner.classList.remove("hidden");
+    banner.textContent = `Kill switch active — ${(ks.reasons || []).join(" ")}`;
+  } else {
+    banner.classList.add("hidden");
+    banner.textContent = "";
+  }
+}
+
+function renderDhanHealth(health) {
+  const banner = $("dhan-health-banner");
+  if (!banner) return;
+  if (!health) {
+    banner.classList.add("hidden");
+    return;
+  }
+  if (health.ok && health.charts_ok) {
+    banner.classList.remove("hidden");
+    banner.classList.add("ok");
+    const validity = health.token_validity ? ` Token valid until ${health.token_validity} IST.` : "";
+    banner.textContent = `Dhan data access OK (plan: ${health.data_plan || "Active"}).${validity}`;
+    return;
+  }
+  banner.classList.remove("ok");
+  banner.classList.remove("hidden");
+  const parts = [...(health.issues || []), ...(health.actions || [])];
+  banner.textContent = parts.join(" ");
+}
+
+function formatHealthResult(health) {
+  if (!health) return "No health data.";
+  const lines = [];
+  if (health.ok && health.charts_ok) lines.push("Dhan OK — charts and profile working.");
+  else lines.push("Dhan needs attention:");
+  for (const issue of health.issues || []) lines.push(`• ${issue}`);
+  for (const action of health.actions || []) lines.push(`→ ${action}`);
+  if (health.data_plan) lines.push(`Data plan: ${health.data_plan}`);
+  if (health.token_validity) lines.push(`Token validity: ${health.token_validity}`);
+  return lines.join("\n");
+}
+
+async function loadAnalytics() {
+  analyticsData = await api("/api/analytics");
+  renderAnalytics();
+}
+
+function actionClass(action) {
+  if (action === "BUY_CALL") return "heat-bull";
+  if (action === "BUY_PUT") return "heat-bear";
+  if (action === "ERROR") return "heat-error";
+  return "heat-neutral";
+}
+
+function renderHeatmap(data) {
+  const grid = $("heatmap-grid");
+  if (!grid) return;
+  if (data?.error) {
+    grid.innerHTML = `<p class="muted">${escapeHtml(data.error)}</p>`;
+    return;
+  }
+  const cells = data?.cells || [];
+  if (!cells.length) {
+    grid.innerHTML = '<p class="muted">No heatmap data.</p>';
+    return;
+  }
+  const summary = data.summary || {};
+  grid.innerHTML = `
+    <p class="heatmap-summary muted">${summary.executable ?? 0} executable · ${summary.bullish_signals ?? 0} call · ${summary.bearish_signals ?? 0} put</p>
+    <div class="heatmap-cells">
+      ${cells
+        .map((c) => {
+          const heat = Math.round((c.heat ?? 0) * 100);
+          const cls = actionClass(c.action);
+          const allowed = c.plan_allowed ? "ready" : "blocked";
+          return `<article class="heat-cell ${cls} ${allowed}" style="--heat:${heat}%">
+            <header>${escapeHtml(c.instrument || "")}</header>
+            <strong class="heat-action">${escapeHtml(c.action || "—")}</strong>
+            <span class="heat-meta">${escapeHtml(c.cpr_position || "")} · ${escapeHtml(c.ema_bias || "")}</span>
+            <span class="heat-conf">${c.confidence != null ? `${(c.confidence * 100).toFixed(0)}% conf` : ""}</span>
+            <span class="heat-meta">${c.pcr != null ? `PCR ${Number(c.pcr).toFixed(2)} · ${escapeHtml(c.oi_bias || "")}` : ""}</span>
+            <span class="heat-plan muted">${c.plan_allowed ? "Plan OK" : escapeHtml(c.plan_reason || c.error || "—")}</span>
+          </article>`;
+        })
+        .join("")}
+    </div>`;
+}
+
+async function loadHeatmap() {
+  try {
+    renderHeatmap(await api("/api/heatmap"));
+  } catch (err) {
+    renderHeatmap({ error: err.message });
+  }
 }
 
 function renderLearning(data) {
-  const dataset = data.dataset || {};
-  const frame = data.training_frame || {};
-  const model = data.model || {};
-  const metrics = model.metrics || {};
-  $("metric-market-rows").textContent = fmt(dataset.rows);
-  $("metric-training-rows").textContent = fmt(frame.rows);
-  setPill("model-pill", model.version ? "Model ready" : "No model", Boolean(model.version));
-  const dirAcc = metrics.directional_accuracy;
-  const actAcc = metrics.active_accuracy;
-  write(
-    "learning-output",
-    [
-      "Local market model (NSE daily data you downloaded)",
-      "",
-      `Rows downloaded from Yahoo: ${fmt(dataset.rows)}`,
-      `Symbols successfully pulled: ${fmt(dataset.symbols_ok)}`,
-      `Rows used to train the small model: ${fmt(frame.rows)}`,
-      `Model name: ${model.version || "not trained yet"}`,
-      `Last trained (IST): ${model.trained_at ? formatIst(model.trained_at) : "—"}`,
-      "",
-      dirAcc != null
-        ? `Directional hit rate: ${pct01(dirAcc)} of next-day moves called in the right direction (training metric).`
-        : "Directional hit rate: not available until you train.",
-      actAcc != null
-        ? `Active-class hit rate: ${pct01(actAcc)} when the model is confident enough to act.`
-        : "",
-      "",
-      "Hugging Face / Hub status is under Online sources (left panel).",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  );
+  const learned = data?.learned || {};
+  const expl = $("learning-explanation");
+  if (expl) expl.textContent = learned.explanation || "No learning data yet.";
+  const eff = learned.effective_min_confidence;
+  $("learn-effective-conf").textContent =
+    eff != null ? `${(eff * 100).toFixed(0)}%` : "—";
+  const adj = learned.min_confidence_adjustment;
+  $("learn-adjustment").textContent =
+    adj != null ? `${adj >= 0 ? "+" : ""}${(adj * 100).toFixed(0)}%` : "—";
+  const wr = learned.trade_win_rate;
+  $("learn-win-rate").textContent =
+    wr != null ? `${(wr * 100).toFixed(1)}%` : "—";
+  const ml = learned.ml || {};
+  const mlVer = $("learn-ml-version");
+  if (mlVer) {
+    mlVer.textContent = ml.ready
+      ? `v${ml.version || "?"}`
+      : ml.status === "collecting_data"
+        ? "Collecting data"
+        : "Not trained";
+    mlVer.classList.toggle("ml-ready", !!ml.ready);
+  }
+  const mlAcc = $("learn-ml-accuracy");
+  if (mlAcc) {
+    mlAcc.textContent =
+      ml.holdout_accuracy != null ? `${(ml.holdout_accuracy * 100).toFixed(0)}%` : "—";
+  }
+  const mlGate = $("learn-ml-gate");
+  if (mlGate) {
+    const g = ml.min_win_prob_gate ?? learned.ml_min_win_prob;
+    mlGate.textContent = g != null ? `${(g * 100).toFixed(0)}%` : "—";
+  }
+  const mlMsg = $("learning-ml-message");
+  if (mlMsg) {
+    mlMsg.textContent = ml.message || (ml.ready ? "ML active — auto-retrains when trades close." : "");
+  }
+  const hf = learned.hf || {};
+  const hfSt = $("learn-hf-status");
+  if (hfSt) {
+    hfSt.textContent = hf.ready
+      ? "Active"
+      : hf.token_configured
+        ? "Error"
+        : "No token";
+    hfSt.classList.toggle("ml-ready", !!hf.ready);
+  }
+  const hfRows = $("learn-hf-rows");
+  if (hfRows) hfRows.textContent = hf.dataset_rows != null ? String(hf.dataset_rows) : "—";
+  const hfModel = $("learn-hf-model");
+  if (hfModel) hfModel.textContent = hf.model || "—";
+  const hfMsg = $("learning-hf-message");
+  if (hfMsg) {
+    hfMsg.textContent =
+      hf.message ||
+      (hf.hub_repo ? `Hub repo: ${hf.hub_repo}` : "") ||
+      "";
+  }
+  const list = $("learning-feedback");
+  if (!list) return;
+  const rows = data?.recent_feedback || [];
+  list.innerHTML = rows.length
+    ? rows
+        .map(
+          (f) =>
+            `<li><span>${f.rating > 0 ? "+" : f.rating < 0 ? "−" : "0"}</span> ${escapeHtml(f.note_short || f.note || f.trade_id || "feedback")} <time class="muted">${f.created_at_ist || fmtIst(f.created_at)}</time></li>`,
+        )
+        .join("")
+    : '<li class="muted">Log trade PnL below to feed learning.</li>';
 }
 
-function renderOrders(data) {
-  const summary = data.summary || {};
-  const orders = data.orders || [];
-  $("metric-paper-orders").textContent = fmt(summary.orders);
-  const ocDisp = summary.open_filled_orders != null ? fmt(summary.open_filled_orders) : "—";
-  const ccDisp = summary.closed_orders != null ? fmt(summary.closed_orders) : "—";
-  const rpDisp =
-    summary.realized_pnl_total != null ? Number(summary.realized_pnl_total).toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—";
-  $("orders-summary").textContent =
-    `Orders ${fmt(summary.orders)} | Open ${ocDisp} | Closed ${ccDisp} | Realized PnL ${rpDisp} | Notional ${fmt(summary.notional)} | Risk ${fmt(summary.risk_amount)}`;
-  write(
-    "orders-output",
-    orders.length
-      ? orders
-          .slice(0, 40)
-          .map((o) => {
-            const st = o.status === "closed_paper" ? "closed" : o.status;
-            const pnl = o.realized_pnl != null ? ` pnl=${o.realized_pnl}` : "";
-            const ext = o.external_order_id ? ` ext=${o.external_order_id}` : "";
-            const ch = o.execution_channel && o.execution_channel !== "local" ? ` via=${o.execution_channel}` : "";
-            return `${formatIst(o.created_at)} | ${o.symbol} | ${o.side} x${o.quantity} @ ${o.entry_price} | ${st}${pnl}${ext}${ch}`;
+async function loadLearning() {
+  try {
+    renderLearning(await api("/api/learning"));
+  } catch (err) {
+    $("learning-explanation").textContent = err.message;
+  }
+}
+
+function renderMarket(mkt) {
+  const el = $("market-status-line");
+  if (!el || !mkt) return;
+  el.textContent = mkt.message || mkt.now_ist || "—";
+  el.classList.toggle("market-open", !!mkt.is_open);
+  el.classList.toggle("market-closed", !mkt.is_open);
+}
+
+function renderAutoStatus(auto) {
+  if (!auto) return;
+  const running = !!auto.running;
+  $("auto-start").disabled = running;
+  $("auto-stop").disabled = !running;
+  if (auto.market) renderMarket(auto.market);
+  const line = $("auto-status-line");
+  if (line) {
+    const mkt = auto.market;
+    const parts = [
+      running ? "Scanner running" : "Scanner stopped",
+      mkt?.is_open ? "Market open" : mkt?.phase === "square_off" ? "Square-off" : "Market closed",
+      auto.cycles != null ? `${auto.cycles} cycles` : null,
+      auto.executions != null ? `${auto.executions} auto executions` : null,
+      auto.open_trades != null ? `${auto.open_trades} open` : null,
+    ].filter(Boolean);
+    if (auto.auth_blocked) parts.push("Dhan token expired — re-login");
+    if (auto.last_error) parts.push(`⚠ ${auto.last_error}`);
+    if (auto.indices_skipped?.length) {
+      parts.push(`Skipped: ${auto.indices_skipped.join(", ")} (set .env ids)`);
+    }
+    if (auto.kill_switch?.active) parts.push("Kill switch active");
+    line.textContent = parts.join(" · ");
+    line.classList.toggle(
+      "error",
+      !!auto.auth_blocked || !!auto.last_error || !!auto.kill_switch?.active,
+    );
+  }
+  const log = $("scanner-log");
+  if (log) {
+    const events = (auto.events || []).slice(0, 25);
+    log.textContent = events.length
+      ? events
+          .map((e) => {
+            const bits = [
+              e.at_ist || fmtIst(e.at),
+              e.event,
+              e.instrument,
+              e.action,
+              e.trade_id,
+              e.pnl != null ? `PnL ${fmtPnl(e.pnl)}` : null,
+              e.error,
+              e.reason,
+              e.message,
+            ]
+              .filter(Boolean);
+            return bits.join(" · ");
           })
           .join("\n")
-      : "No paper orders yet.",
-  );
-}
-
-function renderRisk(data) {
-  $("metric-live").textContent = data.live_trading_enabled ? "Enabled" : "Blocked";
-  setPill("paper-pill", data.paper_trading_enabled ? "Paper on" : "Paper off", data.paper_trading_enabled);
-}
-
-function renderExecution(data) {
-  const m = $("metric-execution");
-  if (m) m.textContent = data.execution_mode || "?";
-  const sel = $("execution-mode-select");
-  if (sel && data.execution_mode) {
-    const opt = sel.querySelector(`option[value="${data.execution_mode}"]`);
-    if (opt) sel.value = data.execution_mode;
-  }
-  const oa = data.openalgo || {};
-  const r = oa.reachability || {};
-  const reach =
-    r.configured === false
-      ? r.detail || "not configured"
-      : r.reachable
-        ? "reachable"
-        : "not reachable";
-  const hostPart = r.host != null ? ` ${r.scheme || ""}://${r.host}:${r.port || ""}` : "";
-  write(
-    "execution-readout",
-    [
-      `Mode: ${data.execution_mode || "?"}`,
-      `OpenAlgo: configured=${oa.configured ? "yes" : "no"} base=${oa.base_url_display || "—"}`,
-      `OpenAlgo host: ${reach}${hostPart}`,
-      `Live Dhan credentials (feed): ${data.live_dhan && data.live_dhan.credentials_ready ? "present" : "missing"}`,
-    ].join("\n"),
-  );
-}
-
-function renderReadiness(data) {
-  const g = data.workstation_gates || {};
-  const mf = g.market_focus || {};
-  const kill = g.kill_switch_active ? "ON (paper blocked)" : "off";
-  const ps = g.paper_sessions_ist || {};
-  const today = g.paper_today_ist || {};
-  const dq = g.data_quality || {};
-  const cat = g.ml_profile_catalog || {};
-  const chk = g.checklist_preview || {};
-  const ex = g.execution || {};
-  write("readiness-output", [
-    `Market focus (env default): ${mf.default_from_env || "-"}`,
-    mf.blurb || "",
-    "",
-    `Execution mode: ${ex.execution_mode || "-"}`,
-    `OpenAlgo configured: ${ex.openalgo && ex.openalgo.configured ? "yes" : "no"}`,
-    "",
-    `Kill switch: ${kill}`,
-    `Paper IST sessions (days with orders): ${ps.sessions_with_orders ?? "-"} / target ${ps.roadmap_target_sessions ?? 20}`,
-    `Today IST (${today.ist_date || "-"}): orders ${today.orders_today ?? 0}, risk sum ${today.risk_amount_today ?? 0}`,
-    `ML profile catalog: files ${cat.files ?? "-"}, ingest errors ${cat.errors ?? "-"}`,
-    `Data quality: ${dq.status || "-"} | issues: ${(dq.issues || []).join("; ") || "none"}`,
-    `    warnings: ${(dq.warnings || []).join("; ") || "none"}`,
-    "",
-    "Checklist preview:",
-    ...Object.entries(chk).map(([k, v]) => `  ${k}: ${v}`),
-  ].join("\n"));
-}
-
-function renderLoops(data) {
-  const r = data.refinement_for_next_brain || {};
-  const pm = data.recent_post_mortems || [];
-  const file = data.loop_file || {};
-  const pmSummary = coalesceJsonObject(r.post_mortem_summary);
-  write(
-    "loops-output",
-    [
-      "Self-learning loop (how the desk improves over time)",
-      "",
-      `Score nudge applied to the next brain pass: ${r.refinement_score_nudge ?? 0} (small number from recent reviews).`,
-      "",
-      "Recent post-mortem window (paper / research checks):",
-      formatPostMortemWindow(pmSummary),
-      "",
-      `Outcomes saved to disk for learning: ${fmt(file.outcomes_stored ?? 0)}`,
-      "",
-      pm.length ? "Latest post-mortem events:" : "No post-mortems yet — run one from the Post-mortem section above.",
-      pm.length ? pm.map((e) => formatPostMortemEventLine(e)).join("\n") : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n"),
-  );
-}
-
-function formatBrainCouncil(bc) {
-  if (!bc || typeof bc !== "object") return "off";
-  const mode = bc.mode || "?";
-  const d = bc.disagreement != null ? Number(bc.disagreement).toFixed(2) : "?";
-  const agents = Array.isArray(bc.agents) ? bc.agents : [];
-  if (!agents.length) return `${mode} | disagreement=${d}`;
-  const line = agents
-    .map((a) => `${a.id || "?"}:${a.stance || "?"}@${(a.confidence != null ? Number(a.confidence).toFixed(2) : "?")}`)
-    .join(" | ");
-  return `${mode} | disagreement=${d} | ${line}`;
-}
-
-function renderAnalysis(data) {
-  state.lastAnalysis = data;
-  state.lastFindingId = data.finding_id || "";
-  const pmInput = $("post-mortem-id");
-  if (pmInput && state.lastFindingId) pmInput.value = state.lastFindingId;
-  const brain = data.brain || {};
-  const ml = data.ml || {};
-  const plan = data.trade_plan || {};
-  const ol = data.online_learning || {};
-  const mx = data.metrics || {};
-  const bar = mx.ohlc_interval ? `${mx.ohlc_interval}/${mx.ohlc_period || "?"}` : "";
-  $("brain-summary").textContent =
-    `${data.symbol} ${bar ? `(${bar}) ` : ""}| ${brain.action || "-"} | score ${Number(brain.score || 0).toFixed(3)} | ` +
-    `plan ${plan.eligible ? "eligible" : "blocked"}`;
-  $("place-paper-order").disabled = !plan.eligible;
-  const hm = data.heatmap_context || {};
-  const hmLine =
-    hm && hm.features
-      ? `Option heatmap (${hm.underlying || "?"} on ${hm.trade_date || "?"}):\n${formatHeatmapFeatures(hm.features)}`
-      : "";
-  write(
-    "brain-output",
-    [
-      `Finding id: ${data.finding_id || "-"}`,
-      `ML: ${ml.regime || "-"} | score ${Number(ml.score || 0).toFixed(3)}`,
-      `Brain: ${brain.action || "-"} | confidence ${Number(brain.confidence || 0).toFixed(2)}`,
-      `Paper side: ${plan.side || "flat"} | qty ${fmt(plan.quantity)} | type ${plan.instrument_type || "-"} | lots ${fmt(plan.lots)} @ lot ${plan.lot_size ?? "-"}`,
-      `Entry: ${plan.entry_price ?? "-"} | Stop: ${plan.stop_loss ?? "-"} | Target: ${plan.target ?? "-"}`,
-      `Vetoes: ${(plan.vetoes || []).join(", ") || "none"}`,
-      `Warnings: ${(plan.warnings || []).join(", ") || "none"}`,
-      `Bars: ${mx.ohlc_bars ?? "-"} | focus: ${mx.market_focus || "-"}`,
-      `Brain council: ${formatBrainCouncil(data.brain_council)}`,
-      `Online learning: Hugging Face ${(ol.hf_hub || {}).status || "—"} | Global context symbols OK: ${(ol.global_context || {}).symbols_ok ?? "—"} | Extra local file digest sent to brain: ${ol.local_file_digest_included ? "yes" : "no"}`,
-      hmLine,
-      "",
-      ml.rationale || "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  );
-  if (globalThis.TAWSChart && typeof globalThis.TAWSChart.renderFromAnalysis === "function") {
-    try {
-      globalThis.TAWSChart.renderFromAnalysis(data);
-    } catch (e) {
-      logUiError(`Chart render: ${e && e.message ? e.message : e}`);
-    }
+      : "No scanner events yet.";
   }
 }
 
-const PERIODS_EQUITY = [
-  ["6mo", "6 months"],
-  ["1y", "1 year", true],
-  ["2y", "2 years"],
-  ["5y", "5 years"],
-];
-const PERIODS_FNO = [
-  ["5d", "5 days"],
-  ["30d", "30 days"],
-  ["60d", "60 days", true],
-  ["120d", "120 days"],
-];
-
-function syncBrainPeriodOptions() {
-  const focusEl = $("brain-market-focus");
-  const sel = $("brain-period");
-  const wrap = $("brain-interval-wrap");
-  const label = $("brain-period-label");
-  if (!focusEl || !sel) return;
-  const focus = focusEl.value;
-  const list = focus === "derivatives_intraday" ? PERIODS_FNO : PERIODS_EQUITY;
-  sel.innerHTML = "";
-  list.forEach((row) => {
-    const [val, text] = row;
-    const selected = row[2] === true;
-    const opt = document.createElement("option");
-    opt.value = val;
-    opt.textContent = text;
-    if (selected) opt.selected = true;
-    sel.appendChild(opt);
-  });
-  if (wrap) wrap.style.display = focus === "derivatives_intraday" ? "" : "none";
-  if (label) label.textContent = focus === "derivatives_intraday" ? "Intraday lookback" : "Period (daily)";
-  const sym = $("brain-symbol");
-  if (sym && focus === "derivatives_intraday") {
-    if (!sym.value.trim() || sym.value === "RELIANCE.NS" || sym.value === "NIFTY.NS") sym.value = "^NSEI";
-  } else if (sym && focus === "balanced" && (sym.value === "^NSEI" || sym.value === "NIFTY.NS")) {
-    sym.value = "RELIANCE.NS";
-  }
-}
-
-const REQUIRED_API_PATHS = [
-  "/api/ml/online-learning/status",
-  "/api/ml/online-learning/preview",
-  "/api/research/eval-modes",
-  "/api/quant/strategy-taxonomy",
-];
-
-/**
- * Confirms the browser is talking to THIS FastAPI app (not an old process / other tool on the port).
- */
-async function verifyServerThenRefresh() {
-  let res;
+async function loadAutoStatus() {
   try {
-    res = await fetch("/api/health");
-  } catch (e) {
-    logUiError(`Network /api/health: ${e.message || e}`);
-    setPill("server-pill", "Offline", false);
-    write(
-      "learning-output",
-      "Could not reach /api/health. Check that the server is running and the URL is http://127.0.0.1:<port>/",
-    );
-    return false;
+    renderAutoStatus(await api("/api/auto/status"));
+  } catch (err) {
+    $("auto-status-line").textContent = err.message;
   }
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    logUiError(`/api/health -> ${res.status} ${res.statusText}`);
-    setPill("server-pill", "Wrong app / old PID", false);
-    write(
-      "learning-output",
-      [
-        `This page loaded, but /api/health returned ${res.status} (body: ${t.slice(0, 240)}).`,
-        "",
-        "That usually means port 8000 is owned by a different program or an OLD python server.",
-        "Fix: Launcher [2] Stop server, then [1] Start (from THIS project folder).",
-        "Or open http://127.0.0.1:8000/api/health in a tab — you should see JSON with api_paths and app_module_file.",
-      ].join("\n"),
-    );
-    return false;
-  }
-  let meta;
-  try {
-    meta = await res.json();
-  } catch (e) {
-    logUiError(`Bad JSON from /api/health: ${e.message || e}`);
-    return false;
-  }
-  const paths = new Set(meta.api_paths || []);
-  const missing = REQUIRED_API_PATHS.filter((p) => !paths.has(p));
-  if (missing.length) {
-    const msg = [
-      "The process on this port responded to /api/health but is missing routes:",
-      "",
-      ...missing.map((m) => `  - ${m}`),
-      "",
-      `Python: ${meta.python_executable || "?"}`,
-      `App file: ${meta.app_module_file || "?"}`,
-      "",
-      "Stop all \"Trading AI\" / uvicorn windows, then start again from this repo.",
-    ].join("\n");
-    logUiError(`Health OK but missing routes: ${missing.join(", ")}`);
-    setPill("server-pill", "Stale / wrong build", false);
-    write("learning-output", msg);
-    return false;
-  }
-  await refreshAll();
-  return true;
 }
 
-async function refreshAll() {
-  const endpoints = [
-    { path: "/api/ml/market-learning/status", render: renderLearning },
-    { path: "/api/trading/paper/orders", render: renderOrders },
-    { path: "/api/trading/risk", render: renderRisk },
-    { path: "/api/trading/execution", render: renderExecution },
-    { path: "/api/trading/readiness", render: renderReadiness },
-    { path: "/api/learning/loops", render: renderLoops },
-  ];
-  const settled = await Promise.allSettled(endpoints.map((e) => api(e.path)));
-  const errors = [];
-  settled.forEach((r, i) => {
-    if (r.status === "fulfilled") endpoints[i].render(r.value);
-    else errors.push(String(r.reason?.message || r.reason));
-  });
-  if (errors.length === 0) {
-    setPill("server-pill", "Online", true);
-  } else if (errors.length === endpoints.length) {
-    setPill("server-pill", "Offline", false);
-    write(
-      "learning-output",
-      [
-        "Could not reach the Trading AI API (all checks failed).",
-        "",
-        ...errors,
-        "",
-        "Stop the launcher server [2] then [1] Start, or fix the port conflict.",
-      ].join("\n"),
-    );
-    errors.forEach((e) => logUiError(e));
+function startAutoPolling() {
+  if (autoPollTimer) clearInterval(autoPollTimer);
+  autoPollTimer = setInterval(async () => {
+    await loadAutoStatus();
+    await loadAnalytics();
+  }, 15000);
+}
+
+async function loadStatus() {
+  const status = await api("/api/status");
+  const tok = status.dhan_token;
+  if (!status.dhan_ready) {
+    $("dhan-status").textContent = "Need token";
+  } else if (tok?.expired) {
+    $("dhan-status").textContent = "Expired";
+  } else if (tok?.expires_ist) {
+    $("dhan-status").textContent = `OK until ${tok.expires_ist.replace(" IST", "")}`;
   } else {
-    setPill("server-pill", "Partial", false);
-    const learningOk = settled[0].status === "fulfilled";
-    const learningSnap = learningOk ? $("learning-output").textContent.trim() : "";
-    write(
-      "learning-output",
-      ["--- Some API calls failed ---", "", ...errors, "", learningSnap].filter(Boolean).join("\n\n"),
-    );
-    errors.forEach((e) => logUiError(e));
+    $("dhan-status").textContent = "Configured";
   }
+  const live = status.trading_mode === "LIVE";
+  $("toggle-trading-mode").checked = live;
+  const pill = $("mode-pill");
+  const ks = status.kill_switch;
+  renderKillSwitch(ks);
+  if (ks?.active) {
+    pill.textContent = "Kill switch";
+    pill.classList.add("error");
+  } else if (live && status.dhan_ready) {
+    pill.textContent = "Live trading";
+    pill.classList.remove("error");
+  } else if (live) {
+    pill.textContent = "Live (need Dhan)";
+    pill.classList.remove("error");
+  } else {
+    pill.textContent = "Paper";
+    pill.classList.remove("error");
+  }
+  if (status.market) renderMarket(status.market);
+  if (status.auto) renderAutoStatus(status.auto);
+  if (status.learned) renderLearning({ learned: status.learned, recent_feedback: [] });
+  renderDhanHealth(status.dhan_health);
 }
 
-function wirePortalTabs() {
-  document.querySelectorAll(".portal-tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const p = btn.getAttribute("data-portal");
-      document.querySelectorAll(".portal-tab").forEach((b) => b.classList.toggle("active", b === btn));
-      $("portal-ml").classList.toggle("hidden", p !== "ml");
-      $("portal-trading").classList.toggle("hidden", p !== "trading");
-    });
-  });
-  document.querySelectorAll(".subportal-tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const sub = btn.getAttribute("data-sub");
-      document.querySelectorAll(".subportal-tab").forEach((b) => b.classList.toggle("active", b === btn));
-      $("trading-paper").classList.toggle("hidden", sub !== "paper");
-      $("trading-live").classList.toggle("hidden", sub !== "live");
-    });
-  });
-}
-
-function defaultPaperDates() {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - 90);
-  const toEl = $("paper-to-date");
-  const fromEl = $("paper-from-date");
-  if (toEl && !toEl.value) toEl.value = to.toISOString().slice(0, 10);
-  if (fromEl && !fromEl.value) fromEl.value = from.toISOString().slice(0, 10);
-}
-
-function defaultTaDate() {
-  const el = $("ta-date");
-  if (!el || el.value) return;
-  el.value = new Date().toISOString().slice(0, 10);
-}
-
-function paperRangeQuery() {
-  const q = new URLSearchParams();
-  const df = ($("paper-from-date") && $("paper-from-date").value) || "";
-  const dt = ($("paper-to-date") && $("paper-to-date").value) || "";
-  if (df) q.set("date_from", df);
-  if (dt) q.set("date_to", dt);
-  return q.toString();
-}
-
-async function loadPaperHistoryPanel() {
-  const qs = paperRangeQuery();
-  write("paper-pnl-readout", "Loading...");
-  try {
-    const [hist, pnl] = await Promise.all([
-      api(`/api/trading/paper/history?${qs}&limit=500`),
-      api(`/api/trading/paper/pnl-summary?${qs}`),
-    ]);
-    const s = hist.summary || {};
-    const tbody = $("paper-history-tbody");
-    tbody.innerHTML = "";
-    (hist.orders || []).forEach((o) => {
-      const tr = document.createElement("tr");
-      const exitCell =
-        o.exit_price != null && o.exit_price !== ""
-          ? escapeHtml(String(o.exit_price))
-          : "—";
-      const pnlCell = o.realized_pnl != null && o.realized_pnl !== "" ? escapeHtml(String(o.realized_pnl)) : "—";
-      const canClose = o.status === "filled_paper";
-      const closeBtn = canClose
-        ? `<button type="button" class="secondary" data-close-order="${escapeHtml(o.id)}">Close @ Yahoo</button>`
-        : "";
-      tr.innerHTML = [
-        `<td>${escapeHtml(formatIst(o.created_at))}</td>`,
-        `<td>${escapeHtml(o.symbol)}</td>`,
-        `<td>${escapeHtml(o.side)}</td>`,
-        `<td>${escapeHtml(o.quantity)}</td>`,
-        `<td>${escapeHtml(o.entry_price)}</td>`,
-        `<td>${escapeHtml(o.notional)}</td>`,
-        `<td>${escapeHtml(o.risk_amount)}</td>`,
-        `<td>${escapeHtml(o.status)}</td>`,
-        `<td>${exitCell}</td>`,
-        `<td>${pnlCell}</td>`,
-        `<td>${closeBtn}</td>`,
-      ].join("");
-      tbody.appendChild(tr);
-    });
-    const rtot = pnl.realized_pnl_total != null ? pnl.realized_pnl_total : s.realized_pnl_total;
-    const openN = pnl.open_filled_orders != null ? pnl.open_filled_orders : s.open_filled_orders;
-    const closedN = pnl.closed_orders != null ? pnl.closed_orders : s.closed_orders;
-    write(
-      "paper-pnl-readout",
-      [
-        `Orders in window: ${fmt(s.orders)} | Open: ${fmt(openN)} | Closed: ${fmt(closedN)} | Realized PnL sum: ${fmt(rtot)}`,
-        `Notional sum: ${fmt(s.notional)} | Risk sum: ${fmt(s.risk_amount)}`,
-        `First: ${s.first_order_at ? formatIst(s.first_order_at) : "-"} | Last: ${s.last_order_at ? formatIst(s.last_order_at) : "-"}`,
-        "",
-        pnl.disclaimer || "",
-      ].join("\n"),
-    );
-  } catch (e) {
-    write("paper-pnl-readout", String(e.message || e));
-  }
-}
-
-async function loadFindingsTable() {
-  const tbody = $("findings-tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-  try {
-    const data = await api("/api/ml/findings/recent?limit=50");
-    (data.findings || []).forEach((f) => {
-      const tr = document.createElement("tr");
-      const tags = Array.isArray(f.tags) ? f.tags.join(", ") : "";
-      tr.innerHTML = [
-        `<td>${escapeHtml(formatIst(f.created_at))}</td>`,
-        `<td>${escapeHtml(f.symbol)}</td>`,
-        `<td>${escapeHtml((f.summary || "").slice(0, 220))}</td>`,
-        `<td>${escapeHtml(tags)}</td>`,
-      ].join("");
-      tbody.appendChild(tr);
-    });
-    if (!data.findings || data.findings.length === 0) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="4">No findings stored yet. Run Analyze in the Trading portal.</td>`;
-      tbody.appendChild(tr);
-    }
-  } catch (e) {
-    logUiError(String(e.message || e));
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="4">${escapeHtml(String(e.message || e))}</td>`;
-    tbody.appendChild(tr);
-  }
-}
-
-/* ---- Event bindings ---- */
-
-$("clear-ui-errors")?.addEventListener("click", () => {
-  write("ui-error-log", "No errors yet.");
-});
-
-$("refresh-learning")?.addEventListener("click", refreshAll);
-
-$("refresh-online-learning")?.addEventListener("click", async () => {
-  writeHub("Loading...");
-  try {
-    const st = await api("/api/ml/online-learning/status");
-    writeHub(formatOnlineLearningStatus(st));
-  } catch (e) {
-    writeHub(String(e.message || e));
-  }
-});
-
-$("dhan-quote-map")?.addEventListener("click", async () => {
-  writeHub("Loading...");
-  try {
-    writeHub(formatDhanQuoteMap(await api("/api/dhan/quote-map")));
-  } catch (e) {
-    writeHub(String(e.message || e));
-  }
-});
-
-$("eval-research-modes")?.addEventListener("click", async () => {
-  const sym = $("brain-symbol").value.trim() || "^NSEI";
-  writeHub("Running mode comparison (may take a minute)...");
-  try {
-    const data = await api(
-      `/api/research/eval-modes?symbol=${encodeURIComponent(sym)}&period=2y&interval=1d&horizon=5&cost_bps=12&spread_bps=0`
-    );
-    writeHub(formatEvalModesReport(data));
-  } catch (e) {
-    writeHub(String(e.message || e));
-  }
-});
-
-$("preview-hf-digest")?.addEventListener("click", async () => {
-  writeHub("Fetching Hub streaming preview...");
-  try {
-    const pv = await api("/api/ml/online-learning/preview?max_rows=8");
-    writeHub(formatOnlineLearningPreview(pv));
-  } catch (e) {
-    writeHub(String(e.message || e));
-  }
-});
-
-$("refresh-findings")?.addEventListener("click", loadFindingsTable);
-
-$("load-strategy-taxonomy")?.addEventListener("click", async () => {
-  try {
-    write("ml-strat-readout", formatStrategyTaxonomy(await api("/api/quant/strategy-taxonomy")));
-  } catch (e) {
-    write("ml-strat-readout", String(e.message || e));
-  }
-});
-
-$("load-param-catalog")?.addEventListener("click", async () => {
-  try {
-    write("ml-strat-readout", formatParameterCatalog(await api("/api/quant/parameter-catalog")));
-  } catch (e) {
-    write("ml-strat-readout", String(e.message || e));
-  }
-});
-
-$("refresh-loops-ml")?.addEventListener("click", async () => {
-  try {
-    renderLoops(await api("/api/learning/loops"));
-  } catch (e) {
-    write("loops-output", String(e.message || e));
-  }
-});
-
-$("refresh-orders")?.addEventListener("click", async () => {
-  try {
-    renderOrders(await api("/api/trading/paper/orders"));
-  } catch (e) {
-    logUiError(String(e.message || e));
-  }
-});
-
-$("refresh-readiness")?.addEventListener("click", async () => {
-  try {
-    renderReadiness(await api("/api/trading/readiness"));
-  } catch (e) {
-    write("readiness-output", String(e.message || e));
-  }
-});
-
-$("refresh-risk-live")?.addEventListener("click", async () => {
-  try {
-    write("live-risk-readout", JSON.stringify(await api("/api/trading/risk"), null, 2));
-  } catch (e) {
-    write("live-risk-readout", String(e.message || e));
-  }
-});
-
-$("refresh-evolution")?.addEventListener("click", async () => {
-  try {
-    write("evolution-readout", JSON.stringify(await api("/api/trading/evolution"), null, 2));
-  } catch (e) {
-    write("evolution-readout", String(e.message || e));
-  }
-});
-
-$("load-paper-history")?.addEventListener("click", loadPaperHistoryPanel);
-
-$("download-trades-csv")?.addEventListener("click", () => {
-  const qs = paperRangeQuery();
-  window.location.assign(`/api/trading/paper/export.csv?${qs}`);
-});
-
-$("download-pnl-json")?.addEventListener("click", async () => {
-  const qs = paperRangeQuery();
-  try {
-    const data = await api(`/api/trading/paper/pnl-summary?${qs}`);
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `pnl_exposure_${($("paper-from-date") && $("paper-from-date").value) || "all"}_${($("paper-to-date") && $("paper-to-date").value) || "all"}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  } catch (e) {
-    logUiError(String(e.message || e));
-  }
-});
-
-$("download-data")?.addEventListener("click", async () => {
-  write("learning-output", "Downloading market data. This can take a minute.");
-  try {
-    const years = Number($("learn-years").value || 7);
-    const maxSymbols = Number($("learn-symbols").value || 25);
-    const data = await api(`/api/ml/market-learning/download?years=${years}&max_symbols=${maxSymbols}`, {
-      method: "POST",
-    });
-    renderLearning(data.status);
-  } catch (e) {
-    write("learning-output", String(e.message || e));
-  }
-});
-
-$("train-model")?.addEventListener("click", async () => {
-  write("learning-output", "Training model from downloaded rows.");
-  try {
-    await api("/api/ml/market-learning/train", { method: "POST" });
-    renderLearning(await api("/api/ml/market-learning/status"));
-  } catch (e) {
-    write("learning-output", String(e.message || e));
-  }
-});
-
-$("analyze-symbol")?.addEventListener("click", async () => {
-  write("brain-output", "Running brain.");
-  try {
-    const focus = ($("brain-market-focus") && $("brain-market-focus").value) || "derivatives_intraday";
-    const intraday = focus === "derivatives_intraday";
-    const data = await api("/api/brain/analyze", {
-      method: "POST",
-      body: JSON.stringify({
-        symbol: $("brain-symbol").value.trim() || "^NSEI",
-        period: $("brain-period").value,
-        interval: intraday ? $("brain-interval").value : "1d",
-        market_focus: focus,
-        use_llm: Boolean($("brain-use-llm") && $("brain-use-llm").checked),
-        use_brain_council: Boolean($("brain-use-council") && $("brain-use-council").checked),
-        include_yahoo_deep: $("include-yahoo-deep").checked,
-        include_ml_digest: false,
-        include_heatmap: $("include-heatmap").checked,
-        heatmap_underlying: $("heatmap-underlying").value,
-        heatmap_source: $("heatmap-source").value,
-      }),
-    });
-    renderAnalysis(data);
-    refreshPuterStatusPill();
-  } catch (e) {
-    write("brain-output", String(e.message || e));
-  }
-});
-
-$("puter-ask")?.addEventListener("click", () => {
-  runPuterUserChat().catch((e) => logUiError(String((e && e.message) || e)));
-});
-
-$("puter-explain-analysis")?.addEventListener("click", () => {
-  runPuterExplainAnalysis().catch((e) => logUiError(String((e && e.message) || e)));
-});
-
-$("run-post-mortem")?.addEventListener("click", async () => {
-  const fid = ($("post-mortem-id").value || "").trim() || state.lastFindingId;
-  if (!fid) {
-    write("loops-output", "Set finding id or run Analyze in Trading portal first.");
+async function setTradingMode(live) {
+  const mode = live ? "LIVE" : "PAPER";
+  if (
+    live &&
+    !window.confirm(
+      "Switch to LIVE? The auto scanner will send real broker MARKET orders when signals pass gates.",
+    )
+  ) {
+    $("toggle-trading-mode").checked = false;
     return;
   }
-  const h = Number($("post-mortem-horizon").value || 5);
-  write("loops-output", "Running post-mortem...");
   try {
-    const out = await api("/api/learning/post-mortem", {
+    await api("/api/trading/mode", {
       method: "POST",
-      body: JSON.stringify({ finding_id: fid, horizon_bars: h }),
+      body: JSON.stringify({ mode }),
     });
-    write("loops-output", formatPostMortemResult(out));
-    renderLoops(await api("/api/learning/loops"));
-  } catch (e) {
-    write("loops-output", String(e.message || e));
+    await loadStatus();
+  } catch (err) {
+    alert(err.message);
+    $("toggle-trading-mode").checked = !live;
+  }
+}
+
+function formatAuthResult(result) {
+  if (!result || typeof result !== "object") return String(result ?? "");
+  if (result.error) return String(result.error);
+  const lines = [];
+  if (result.message) lines.push(result.message);
+  if (result.login_url) lines.push(`Login URL:\n${result.login_url}`);
+  if (result.expiryTime) lines.push(`Expires: ${result.expiryTime}`);
+  return lines.join("\n\n") || JSON.stringify(result, null, 2);
+}
+
+function setBootError(message) {
+  $("mode-pill").textContent = "API offline";
+  $("mode-pill").classList.add("error");
+  write("auth-output", message);
+  const tbody = $("analytics-trades-body");
+  if (tbody) tbody.innerHTML = `<tr><td colspan="8">${escapeHtml(message)}</td></tr>`;
+}
+
+document.querySelectorAll(".period-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".period-tab").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    activePeriod = btn.dataset.period;
+    renderAnalytics();
+  });
+});
+
+$("toggle-trading-mode")?.addEventListener("change", (e) => {
+  setTradingMode(e.target.checked);
+});
+
+$("create-consent")?.addEventListener("click", async () => {
+  write("auth-output", "Creating login link…");
+  try {
+    const result = await api("/api/auth/generate-consent", { method: "POST" });
+    write("auth-output", formatAuthResult(result));
+    if (result.login_url) window.open(result.login_url, "_blank", "noopener");
+  } catch (err) {
+    write("auth-output", err.message);
   }
 });
 
-$("sweep-backtest")?.addEventListener("click", async () => {
-  const sym = $("brain-symbol").value.trim() || "RELIANCE.NS";
-  write("backtest-output", "Running coarse horizon x cost grid (may take a minute)...");
+$("save-token")?.addEventListener("click", async () => {
+  const tokenId = $("token-id").value.trim();
+  if (!tokenId) {
+    write("auth-output", "Paste token from Dhan redirect.");
+    return;
+  }
   try {
-    const data = await api(`/api/quant/backtest-sweep?symbol=${encodeURIComponent(sym)}&period=5y`);
+    const result = await api("/api/auth/consume-consent", {
+      method: "POST",
+      body: JSON.stringify({ token_id: tokenId }),
+    });
+    write("auth-output", formatAuthResult(result) + (result.health ? `\n\n${formatHealthResult(result.health)}` : ""));
+    renderDhanHealth(result.health);
+    await loadStatus();
+    await loadHeatmap();
+  } catch (err) {
+    write("auth-output", err.message);
+  }
+});
+
+$("check-dhan-setup")?.addEventListener("click", async () => {
+  try {
+    write("auth-output", formatAuthResult(await api("/api/auth/setup")));
+    await loadStatus();
+  } catch (err) {
+    write("auth-output", err.message);
+  }
+});
+
+$("verify-dhan-health")?.addEventListener("click", async () => {
+  write("auth-output", "Checking profile and chart access…");
+  try {
+    const health = await api("/api/auth/health");
+    write("auth-output", formatHealthResult(health));
+    renderDhanHealth(health);
+    await loadHeatmap();
+    await loadStatus();
+  } catch (err) {
+    write("auth-output", err.message);
+  }
+});
+
+$("renew-dhan-token")?.addEventListener("click", async () => {
+  write("auth-output", "Renewing token…");
+  try {
+    const result = await api("/api/auth/renew-token", { method: "POST" });
+    write("auth-output", formatAuthResult(result) + "\n\n" + formatHealthResult(result.health));
+    renderDhanHealth(result.health);
+    await loadStatus();
+    await loadHeatmap();
+  } catch (err) {
+    write("auth-output", err.message);
+  }
+});
+
+$("auto-start")?.addEventListener("click", async () => {
+  $("auto-status-line").textContent = "Starting scanner…";
+  try {
+    renderAutoStatus(await api("/api/auto/start", { method: "POST" }));
+    startAutoPolling();
+    await loadHeatmap();
+  } catch (err) {
+    $("auto-status-line").textContent = err.message;
     write(
-      "backtest-output",
-      [
-        `Best grid cell: ${JSON.stringify(data.best || {})}`,
-        "",
-        "Top ranked:",
-        ...(data.ranked || []).map((r) => JSON.stringify(r)),
-      ].join("\n")
+      "auth-output",
+      `${err.message}\n\nUse Method A: Dhan Web → Generate Access Token → paste eyJ… → Save Token → Verify data access.`,
     );
-  } catch (e) {
-    write("backtest-output", String(e.message || e));
+  }
+});
+
+$("auto-stop")?.addEventListener("click", async () => {
+  try {
+    renderAutoStatus(await api("/api/auto/stop", { method: "POST" }));
+  } catch (err) {
+    $("auto-status-line").textContent = err.message;
+  }
+});
+
+$("refresh-heatmap")?.addEventListener("click", () => loadHeatmap());
+$("refresh-learning")?.addEventListener("click", () => loadLearning());
+
+$("hf-sync")?.addEventListener("click", async () => {
+  try {
+    const result = await api("/api/learning/hf-sync", { method: "POST" });
+    renderLearning(result.learning || result);
+    if ($("learning-hf-message") && result.hf?.message) {
+      $("learning-hf-message").textContent = result.hf.message;
+    }
+  } catch (err) {
+    $("learning-hf-message").textContent = err.message;
+  }
+});
+
+$("hf-upload")?.addEventListener("click", async () => {
+  if (!window.confirm("Upload local outcomes.jsonl to your Hugging Face dataset repo?")) return;
+  try {
+    const result = await api("/api/learning/hf-upload", { method: "POST" });
+    renderLearning(result.learning || result);
+    const msg = result.upload?.message || result.upload?.detail || "Upload finished.";
+    $("learning-hf-message").textContent = msg;
+  } catch (err) {
+    $("learning-hf-message").textContent = err.message;
+  }
+});
+
+$("retrain-ml")?.addEventListener("click", async () => {
+  const btn = $("retrain-ml");
+  if (btn) btn.disabled = true;
+  try {
+    const result = await api("/api/learning/retrain-ml", { method: "POST" });
+    renderLearning(result.learning || result);
+    if (result.ml?.message) {
+      const mlMsg = $("learning-ml-message");
+      if (mlMsg) mlMsg.textContent = result.ml.message;
+    }
+  } catch (err) {
+    $("learning-ml-message").textContent = err.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+$("cleanup-learning")?.addEventListener("click", async () => {
+  if (!window.confirm("Remove test/automation feedback from learning? Real trades are kept.")) return;
+  try {
+    const result = await api("/api/learning/cleanup", { method: "POST" });
+    renderLearning(result.learning || result);
+    const extra =
+      result.removed?.feedback_removed > 0
+        ? ` Removed ${result.removed.feedback_removed} test feedback row(s).`
+        : "";
+    const expl = $("learning-explanation");
+    if (expl && result.learning?.learned?.explanation) {
+      expl.textContent = result.learning.learned.explanation + extra;
+    }
+    await loadStatus();
+  } catch (err) {
+    $("learning-explanation").textContent = err.message;
+  }
+});
+
+$("close-trade-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const tradeId = $("close-trade-id").value.trim();
+  const pnlRaw = $("close-trade-pnl").value.trim();
+  if (!tradeId || !pnlRaw) return;
+  try {
+    await api("/api/outcome", {
+      method: "POST",
+      body: JSON.stringify({ trade_id: tradeId, pnl: Number(pnlRaw) }),
+    });
+    $("close-trade-output").textContent = "Saved";
+    await loadAnalytics();
+    await loadStatus();
+    await loadLearning();
+  } catch (err) {
+    $("close-trade-output").textContent = err.message;
+  }
+});
+
+$("download-history")?.addEventListener("click", async () => {
+  const kind = $("data-kind").value;
+  write("history-output", "Downloading…");
+  try {
+    write(
+      "history-output",
+      await api("/api/download-history", {
+        method: "POST",
+        body: JSON.stringify({
+          instrument: $("data-instrument").value,
+          kind,
+          years: kind === "daily" ? 7 : 5,
+          interval: "5",
+        }),
+      }),
+    );
+  } catch (err) {
+    write("history-output", err.message);
   }
 });
 
 $("run-backtest")?.addEventListener("click", async () => {
-  const sym = $("brain-symbol").value.trim() || "RELIANCE.NS";
-  const h = Number($("bt-horizon").value || 5);
-  const cost = Number($("bt-cost").value || 8);
-  const mode = ($("bt-signal-mode") && $("bt-signal-mode").value) || "structural";
-  write("backtest-output", "Running backtest...");
+  const file = $("backtest-file").value.trim();
+  if (!file) return;
   try {
-    const sp = Number($("bt-spread")?.value || 0);
-    const data = await api(
-      `/api/research/backtest?symbol=${encodeURIComponent(sym)}&period=5y&horizon=${h}&cost_bps=${cost}&spread_bps=${sp}&signal_mode=${encodeURIComponent(mode)}`
-    );
-    const s = data.summary || {};
-    const cfg = data.config || {};
-    write(
-      "backtest-output",
-      [
-        `mode ${cfg.signal_mode || mode} | ${data.symbol} | trades ${s.trades ?? "-"} | win rate ${s.win_rate ?? "-"}`,
-        `avg return/trade ${s.avg_return_per_trade ?? "-"} | max DD ${s.max_drawdown ?? "-"}`,
-        `ending equity ${s.ending_equity ?? "-"} | ${s.warning || ""}`,
-        "",
-        JSON.stringify(s, null, 2),
-      ].join("\n")
-    );
-  } catch (e) {
-    write("backtest-output", String(e.message || e));
+    write("backtest-output", await api("/api/backtest", { method: "POST", body: JSON.stringify({ file }) }));
+  } catch (err) {
+    write("backtest-output", err.message);
   }
 });
 
-$("place-paper-order")?.addEventListener("click", async () => {
-  if (!state.lastAnalysis) return;
+async function bootDashboard() {
+  handleDhanAuthRedirect();
+  const wrong = await detectWrongServerOnPort();
+  if (wrong) {
+    setBootError(wrong);
+    return;
+  }
   try {
-    const result = await api("/api/trading/paper/order", {
-      method: "POST",
-      body: JSON.stringify({
-        finding_id: state.lastAnalysis.finding_id,
-        symbol: state.lastAnalysis.symbol,
-        plan: state.lastAnalysis.trade_plan,
-        brain: state.lastAnalysis.brain,
-      }),
-    });
-    write("brain-output", JSON.stringify(result, null, 2));
-    renderOrders(await api("/api/trading/paper/orders"));
+    await loadStatus();
+    await loadAnalytics();
+    startMtmPolling();
+    await refreshLiveMtm();
+    await loadLearning();
     try {
-      renderExecution(await api("/api/trading/execution"));
-    } catch (_) {
-      /* non-fatal */
+      const health = await api("/api/auth/health");
+      renderDhanHealth(health);
+    } catch {
+      /* optional on boot */
     }
-  } catch (e) {
-    write("brain-output", String(e.message || e));
+    await loadHeatmap();
+    await loadAutoStatus();
+    startAutoPolling();
+  } catch (err) {
+    setBootError(String(err.message || err));
   }
-});
-
-$("refresh-execution")?.addEventListener("click", async () => {
-  try {
-    renderExecution(await api("/api/trading/execution"));
-  } catch (e) {
-    write("execution-readout", String(e.message || e));
-  }
-});
-
-$("save-execution-mode")?.addEventListener("click", async () => {
-  const sel = $("execution-mode-select");
-  const mode = sel && sel.value ? sel.value : "paper_local";
-  try {
-    renderExecution(
-      await api("/api/trading/execution/mode", {
-        method: "POST",
-        body: JSON.stringify({ mode }),
-      }),
-    );
-  } catch (e) {
-    write("execution-readout", String(e.message || e));
-  }
-});
-
-$("paper-history-tbody")?.addEventListener("click", async (ev) => {
-  const btn = ev.target && ev.target.closest ? ev.target.closest("[data-close-order]") : null;
-  if (!btn) return;
-  const id = btn.getAttribute("data-close-order");
-  if (!id) return;
-  btn.disabled = true;
-  try {
-    await api("/api/trading/paper/close", {
-      method: "POST",
-      body: JSON.stringify({ order_id: id }),
-    });
-    await loadPaperHistoryPanel();
-    renderOrders(await api("/api/trading/paper/orders"));
-  } catch (e) {
-    btn.disabled = false;
-    write("paper-pnl-readout", String(e.message || e));
-  }
-});
-
-if ($("brain-market-focus")) {
-  $("brain-market-focus").addEventListener("change", syncBrainPeriodOptions);
-  syncBrainPeriodOptions();
 }
 
-$("tradingagents-status")?.addEventListener("click", async () => {
-  const out = $("ta-output");
-  if (out) out.textContent = "Checking…";
-  try {
-    const j = await api("/api/research/trading-agents");
-    if (out) out.textContent = JSON.stringify(j, null, 2);
-  } catch (e) {
-    if (out) out.textContent = String(e.message || e);
-  }
-});
-
-$("ta-run")?.addEventListener("click", async () => {
-  const out = $("ta-output");
-  if (out) out.textContent = "Running TradingAgents… (may take minutes)";
-  try {
-    const sym = ($("ta-symbol") && $("ta-symbol").value.trim()) || "TCS.NS";
-    const dt = ($("ta-date") && $("ta-date").value.trim()) || "";
-    const deb = Boolean($("ta-debug") && $("ta-debug").checked);
-    const j = await api("/api/research/trading-agents", {
-      method: "POST",
-      body: JSON.stringify({ symbol: sym, trade_date: dt, debug: deb }),
-    });
-    if (out) out.textContent = JSON.stringify(j, null, 2);
-  } catch (e) {
-    if (out) out.textContent = String(e.message || e);
-  }
-});
-
-wirePortalTabs();
-defaultPaperDates();
-defaultTaDate();
-verifyServerThenRefresh().then((ok) => {
-  refreshPuterStatusPill();
-  setTimeout(refreshPuterStatusPill, 600);
-  setTimeout(refreshPuterStatusPill, 2500);
-  if (ok) loadFindingsTable();
-});
+bootDashboard();

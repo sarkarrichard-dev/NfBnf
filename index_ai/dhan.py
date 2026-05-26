@@ -1,0 +1,244 @@
+from __future__ import annotations
+
+import threading
+import time
+from typing import Any
+
+import httpx
+import pandas as pd
+
+from index_ai.config import DhanSettings
+from index_ai.dhan_errors import (
+    DhanAuthError,
+    DhanRateLimitError,
+    classify_http_error,
+    explain_dhan_http_error,
+)
+from index_ai.instruments import IndexInstrument
+
+# Dhan documents ~3 req/s for some feeds; stay conservative to avoid 429/805.
+_MIN_REQUEST_INTERVAL_SEC = 0.65
+_MAX_RETRIES = 4
+
+
+class _RateLimiter:
+    def __init__(self, min_interval: float) -> None:
+        self.min_interval = min_interval
+        self._lock = threading.Lock()
+        self._last = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            gap = self.min_interval - (now - self._last)
+            if gap > 0:
+                time.sleep(gap)
+            self._last = time.monotonic()
+
+
+_limiter = _RateLimiter(_MIN_REQUEST_INTERVAL_SEC)
+
+
+class DhanClient:
+    def __init__(self, settings: DhanSettings) -> None:
+        self.settings = settings
+
+    def _headers(self, path: str = "") -> dict[str, str]:
+        """Chart/historical APIs use access-token only; market feed & orders need client-id."""
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "access-token": self.settings.access_token,
+        }
+        if not path.startswith("/charts/") and self.settings.client_id:
+            headers["client-id"] = self.settings.client_id
+        return headers
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        context: str = "",
+    ) -> dict[str, Any]:
+        if not self.settings.ready:
+            raise RuntimeError("Dhan credentials are missing. Put them in .env.")
+        url = f"{self.settings.api_base_url}{path}"
+        last_exc: BaseException | None = None
+
+        for attempt in range(_MAX_RETRIES):
+            _limiter.wait()
+            try:
+                with httpx.Client(timeout=25) as client:
+                    headers = self._headers(path)
+                    if method.upper() == "GET":
+                        response = client.get(url, headers=headers)
+                    else:
+                        response = client.post(url, headers=headers, json=payload or {})
+            except httpx.HTTPError as exc:
+                last_exc = exc
+                if attempt + 1 < _MAX_RETRIES:
+                    time.sleep(min(8.0, 1.5 * (attempt + 1)))
+                    continue
+                raise
+
+            if response.status_code in {401, 807, 808, 809}:
+                raise DhanAuthError(explain_dhan_http_error(response, context))
+            if response.status_code in {429, 805}:
+                last_exc = DhanRateLimitError(explain_dhan_http_error(response, context))
+                if attempt + 1 < _MAX_RETRIES:
+                    time.sleep(min(10.0, 2.0 * (2**attempt)))
+                    continue
+                raise last_exc
+
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                classified = classify_http_error(exc, context)
+                last_exc = classified
+                if isinstance(classified, DhanRateLimitError) and attempt + 1 < _MAX_RETRIES:
+                    time.sleep(min(10.0, 2.0 * (2**attempt)))
+                    continue
+                raise classified from exc
+
+            try:
+                data = response.json()
+            except Exception as exc:
+                raise RuntimeError(f"Dhan returned non-JSON for {path}") from exc
+            return data if isinstance(data, dict) else {"data": data}
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError(f"Dhan request failed for {path}")
+
+    def _post(self, path: str, payload: dict[str, Any], *, context: str = "") -> dict[str, Any]:
+        return self._request("POST", path, payload=payload, context=context or path)
+
+    def ltp(self, segment: str, security_ids: list[int]) -> dict[str, Any]:
+        return self._post("/marketfeed/ltp", {segment: security_ids}, context="market LTP")
+
+    def index_ltp(self, instrument: IndexInstrument) -> dict[str, Any]:
+        if instrument.underlying_security_id is None:
+            raise RuntimeError(f"{instrument.label} security id is not configured.")
+        sid = str(instrument.underlying_security_id)
+        raw = self.ltp(instrument.underlying_segment, [instrument.underlying_security_id])
+        data = raw.get("data") or raw
+        bucket = data.get(instrument.underlying_segment) or data.get(instrument.underlying_segment.lower()) or {}
+        row = bucket.get(sid) or bucket.get(instrument.underlying_security_id) or {}
+        last = row.get("last_price") or row.get("ltp") or row.get("lastPrice")
+        if last is None and bucket:
+            first = next(iter(bucket.values()), {})
+            last = first.get("last_price") or first.get("ltp") or first.get("lastPrice")
+        if last is None:
+            raise RuntimeError(f"No LTP returned for {instrument.key}.")
+        return {"last_price": float(last), "raw": raw}
+
+    def ohlc(self, segment: str, security_ids: list[int]) -> dict[str, Any]:
+        return self._post("/marketfeed/ohlc", {segment: security_ids}, context="market OHLC")
+
+    def intraday_history(
+        self,
+        instrument: IndexInstrument,
+        *,
+        from_date: str,
+        to_date: str,
+        interval: str = "5",
+    ) -> dict[str, Any]:
+        if instrument.underlying_security_id is None:
+            raise RuntimeError(f"{instrument.label} security id is not configured.")
+        payload = {
+            "securityId": str(instrument.underlying_security_id),
+            "exchangeSegment": instrument.underlying_segment,
+            "instrument": instrument.instrument_type,
+            "interval": interval,
+            "oi": False,
+            "fromDate": from_date,
+            "toDate": to_date,
+        }
+        return self._post("/charts/intraday", payload, context=f"{instrument.key} intraday chart")
+
+    def historical_daily(
+        self,
+        instrument: IndexInstrument,
+        *,
+        from_date: str,
+        to_date: str,
+    ) -> dict[str, Any]:
+        if instrument.underlying_security_id is None:
+            raise RuntimeError(f"{instrument.label} security id is not configured.")
+        payload = {
+            "securityId": str(instrument.underlying_security_id),
+            "exchangeSegment": instrument.underlying_segment,
+            "instrument": instrument.instrument_type,
+            "expiryCode": 0,
+            "oi": False,
+            "fromDate": from_date,
+            "toDate": to_date,
+        }
+        return self._post("/charts/historical", payload, context=f"{instrument.key} daily chart")
+
+    def expiry_list(self, instrument: IndexInstrument) -> list[str]:
+        if instrument.underlying_security_id is None:
+            raise RuntimeError(f"{instrument.label} security id is not configured.")
+        payload = {
+            "UnderlyingScrip": instrument.underlying_security_id,
+            "UnderlyingSeg": instrument.underlying_segment,
+        }
+        data = self._post("/optionchain/expirylist", payload, context=f"{instrument.key} expiries")
+        return list(data.get("data") or [])
+
+    def option_chain(self, instrument: IndexInstrument, expiry: str) -> dict[str, Any]:
+        if instrument.underlying_security_id is None:
+            raise RuntimeError(f"{instrument.label} security id is not configured.")
+        payload = {
+            "UnderlyingScrip": instrument.underlying_security_id,
+            "UnderlyingSeg": instrument.underlying_segment,
+            "Expiry": expiry,
+        }
+        return self._post("/optionchain", payload, context=f"{instrument.key} option chain")
+
+    def place_market_order(
+        self,
+        *,
+        security_id: int,
+        exchange_segment: str,
+        transaction_type: str,
+        quantity: int,
+        correlation_id: str,
+    ) -> dict[str, Any]:
+        payload = {
+            "dhanClientId": self.settings.client_id,
+            "correlationId": correlation_id[:30],
+            "transactionType": transaction_type,
+            "exchangeSegment": exchange_segment,
+            "productType": "INTRADAY",
+            "orderType": "MARKET",
+            "validity": "DAY",
+            "securityId": str(security_id),
+            "quantity": int(quantity),
+            "disclosedQuantity": 0,
+            "price": 0,
+            "triggerPrice": 0,
+            "afterMarketOrder": False,
+            "amoTime": "",
+            "boProfitValue": "",
+            "boStopLossValue": "",
+        }
+        return self._post("/orders", payload, context="place order")
+
+
+def chart_response_to_frame(data: dict[str, Any]) -> pd.DataFrame:
+    timestamps = data.get("timestamp") or data.get("t") or []
+    frame = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(timestamps, unit="s", errors="coerce"),
+            "open": data.get("open") or [],
+            "high": data.get("high") or [],
+            "low": data.get("low") or [],
+            "close": data.get("close") or [],
+            "volume": data.get("volume") or [],
+        }
+    )
+    frame = frame.dropna(subset=["datetime"]).sort_values("datetime")
+    return frame.reset_index(drop=True)

@@ -1,68 +1,21 @@
-# Python
 __pycache__/
 *.py[cod]
-*$py.class
-.Python
 .venv/
 venv/
-env/
 .env
 .env.*
 !.env.example
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
 
-# Local-only secrets module (copy from trading_ai_engine/local_secrets.example.py)
-trading_ai_engine/local_secrets.py
-
-# Jupyter
-.ipynb_checkpoints/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Data & secrets (trading)
-data/
-data for ml/
-Your Trading Data/
-Files To Teach AI/
-local_data/
-*.csv
-*.parquet
-*.db
+# Private trading data and local memory
+memory/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-secrets/
-*.pem
-token.json
-kite_session/
-
-# ML artifacts
-*.pkl
-*.joblib
-*.onnx
-mlruns/
-.wandb/
-
-# Build / test
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-dist/
-build/
-*.egg-info/
-
-# Launcher / local logs
-logs/
-
-# Local guides
-plan.docx
-Original Project Plan.docx
+*.csv
+*.parquet
+*.xlsx
