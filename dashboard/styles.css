@@ -426,6 +426,46 @@ code {
   align-items: center;
 }
 
+.spread-leg-detail {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.spread-leg-detail:last-child {
+  border-bottom: none;
+}
+
+.leg-prices {
+  font-size: 0.72rem;
+  color: var(--muted, #9aa3b2);
+  margin-left: 0.1rem;
+}
+
+.leg-expiry-line {
+  font-size: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.spread-net {
+  font-size: 0.72rem;
+  margin-top: 0.25rem;
+}
+
+.entry-cell,
+.leg-current-block {
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.mtm-err {
+  color: #f59e0b;
+  font-size: 0.72rem;
+}
+
 .credit-risk {
   font-size: 0.72rem;
   line-height: 1.3;

@@ -52,7 +52,11 @@ def enrich_open_trade_mtm(trade: dict[str, Any], client: DhanClient) -> dict[str
     option = dict(trade.get("option") or {})
     try:
         if is_credit_option(option):
-            mtm, close_debit, leg_ltps = compute_credit_mtm(option, client)
+            mtm, close_debit, leg_ltps = compute_credit_mtm(
+                option,
+                client,
+                instrument_key=str(trade.get("instrument") or option.get("instrument") or ""),
+            )
             now = now_ist_iso()
             option["last_option_ltp"] = close_debit
             option["last_close_debit"] = close_debit

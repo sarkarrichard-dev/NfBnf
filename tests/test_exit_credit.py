@@ -42,7 +42,7 @@ def test_close_credit_spread_imports_compute_mtm(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "index_ai.exit.compute_credit_mtm",
-        lambda option, client: (142.5, 72.6, [95.0, 22.4]),
+        lambda option, client, **kw: (142.5, 72.6, [95.0, 22.4]),
     )
 
     class _Client:

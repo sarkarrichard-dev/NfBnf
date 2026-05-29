@@ -226,23 +226,44 @@ function legBadges(t) {
   return parts.join(" ");
 }
 
+function formatLegPrice(v) {
+  if (v == null || Number.isNaN(Number(v))) return "—";
+  return `₹${fmtNum(v)}`;
+}
+
 function formatSpreadLegRows(t) {
   const legs = t.legs_detail || [];
   if (!legs.length) return "";
-  return `<div class="spread-legs">${legs
+  const expiry = t.expiry
+    ? `<div class="leg-expiry-line"><strong>Expiry</strong> ${escapeHtml(String(t.expiry))}</div>`
+    : "";
+  const rows = legs
     .map((leg) => {
       const tx = (leg.transaction_type || "BUY").toUpperCase();
       const txCls = tx === "SELL" ? "leg-sell" : "leg-buy";
       const side = (leg.option_type || "").toUpperCase();
       const optCls = side === "CALL" ? "leg-ce" : side === "PUT" ? "leg-pe" : "";
-      const strike = leg.strike != null ? String(leg.strike) : "";
-      return `<div class="spread-leg-row">
+      const strike = leg.strike_display || (leg.strike != null ? String(leg.strike) : "");
+      const entry = formatLegPrice(leg.entry_ltp);
+      const now = formatLegPrice(leg.current_ltp);
+      const live = t.is_open && leg.current_ltp != null ? " live" : "";
+      return `<div class="spread-leg-row spread-leg-detail">
         <span class="leg-pill ${txCls}">${tx === "SELL" ? "Sell" : "Buy"}</span>
         ${strike ? `<span class="leg-pill leg-strike">${escapeHtml(strike)}</span>` : ""}
         ${side ? `<span class="leg-pill ${optCls}">${side}</span>` : ""}
+        <span class="leg-prices">entry ${entry} · now ${now}${live}</span>
       </div>`;
     })
-    .join("")}</div>`;
+    .join("");
+  const net =
+    t.net_credit_points != null
+      ? `<div class="spread-net muted">Net credit (entry) ₹${fmtNum(t.net_credit_points)}/unit</div>`
+      : "";
+  const close =
+    t.last_close_debit != null && t.is_open
+      ? `<div class="spread-net muted">Net close (now) ₹${fmtNum(t.last_close_debit)}/unit</div>`
+      : "";
+  return `<div class="spread-legs">${expiry}${rows}${net}${close}</div>`;
 }
 
 function formatPositionCell(t) {
@@ -250,27 +271,42 @@ function formatPositionCell(t) {
   const risk = t.credit_risk_label
     ? `<div class="muted credit-risk">${escapeHtml(t.credit_risk_label)}</div>`
     : "";
-  const expiry = t.expiry ? `<div class="muted leg-expiry">Exp ${escapeHtml(String(t.expiry))}</div>` : "";
   const qty = t.lot_label
     ? `<div class="muted">${escapeHtml(t.lot_label)}</div>`
     : t.quantity
       ? `<div class="muted">${Number(t.quantity)} qty</div>`
       : "";
   if (spreadRows) {
-    return `<div class="leg-cell">${spreadRows}${risk}${qty}${expiry}</div>`;
+    return `<div class="leg-cell">${spreadRows}${risk}${qty}</div>`;
   }
+  const expiry = t.expiry ? `<div class="muted leg-expiry">Exp ${escapeHtml(String(t.expiry))}</div>` : "";
   const badges = legBadges(t);
   const line = t.leg_display || t.side_label || t.action || "—";
   return `<div class="leg-cell">${badges || `<strong>${escapeHtml(line)}</strong>`}${risk}${qty}${expiry}</div>`;
 }
 
 function formatExitPremium(t) {
-  const price =
-    t.current_option_ltp ?? t.exit_option_ltp ?? t.last_option_ltp ?? null;
-  if (price == null || Number.isNaN(Number(price))) return "—";
+  const legs = t.legs_detail || [];
+  if (legs.length) {
+    const lines = legs
+      .map((leg) => {
+        const strike = leg.strike_display || leg.strike || "";
+        const side = (leg.option_type || "").toUpperCase();
+        const px = leg.current_ltp ?? null;
+        if (px == null) return `${strike} ${side}: —`;
+        return `${strike} ${side}: ₹${fmtNum(px)}`;
+      })
+      .join("<br>");
+    const net = t.last_close_debit != null ? `<div class="muted">Net close ₹${fmtNum(t.last_close_debit)}</div>` : "";
+    const err = t.mtm_error ? `<div class="muted mtm-err">${escapeHtml(t.mtm_error)}</div>` : "";
+    return `<div class="leg-current-block">${lines}${net}${err}</div>`;
+  }
+  const price = t.current_option_ltp ?? t.exit_option_ltp ?? t.last_option_ltp ?? null;
+  if (price == null || Number.isNaN(Number(price))) {
+    return t.mtm_error ? `<span class="muted mtm-err">${escapeHtml(t.mtm_error)}</span>` : "—";
+  }
   const label = t.is_open ? " live" : "";
-  const prefix = (t.legs_detail || []).length ? "close " : "";
-  return `${prefix}₹${fmtNum(price)}${label}`;
+  return `₹${fmtNum(price)}${label}`;
 }
 
 function renderMtmSparkline(history) {
@@ -302,12 +338,17 @@ function renderAnalyticsTrades() {
       const entryParts = [
         t.entry_index_price != null ? `idx ${fmtNum(t.entry_index_price)}` : null,
       ];
-      if ((t.legs_detail || []).length && t.net_credit_points != null) {
-        entryParts.push(`credit ₹${fmtNum(t.net_credit_points)}`);
+      const legs = t.legs_detail || [];
+      if (legs.length && t.net_credit_points != null) {
+        entryParts.push(`net credit ₹${fmtNum(t.net_credit_points)}`);
+        const legEntry = legs
+          .map((l) => `${l.strike_display || ""} ${(l.option_type || "").toUpperCase()}: ₹${fmtNum(l.entry_ltp)}`)
+          .join(" · ");
+        if (legEntry) entryParts.push(legEntry);
       } else if (t.entry_option_ltp != null) {
         entryParts.push(`prem ₹${fmtNum(t.entry_option_ltp)}`);
       }
-      const entry = entryParts.filter(Boolean).join(" · ");
+      const entry = entryParts.filter(Boolean).join("<br>");
       const exitOpt = formatExitPremium(t);
       let pnlCell = '<span class="muted">—</span>';
       if (t.pnl != null) {
@@ -327,7 +368,7 @@ function renderAnalyticsTrades() {
         <td>${escapeHtml(t.instrument || "")}</td>
         <td>${formatPositionCell(t)}</td>
         <td><span class="muted">${escapeHtml(t.action || "")}</span><div class="muted">${conf}</div></td>
-        <td>${escapeHtml(entry || "—")}</td>
+        <td class="entry-cell">${entry || "—"}</td>
         <td>${escapeHtml(exitOpt)}</td>
         <td>${pnlCell}${spark}${mtmNote}</td>
         <td><span class="muted">${escapeHtml(t.mode || "")}</span> ${escapeHtml(t.status || "")}</td>

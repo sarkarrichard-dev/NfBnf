@@ -147,6 +147,9 @@ def execute_plan(
             status = str(broker_response.get("orderStatus") or "LIVE_SENT")
     inst = instrument or get_instrument(str(plan.option.get("instrument") or "NIFTY"))
     option_payload = dict(plan.option)
+    for leg in option_payload.get("legs") or []:
+        if leg.get("ltp") is not None and leg.get("entry_ltp") is None:
+            leg["entry_ltp"] = leg["ltp"]
     option_payload["ml_features"] = extract_features(
         plan.signal, option_payload, inst.key
     )

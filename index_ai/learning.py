@@ -332,6 +332,39 @@ def option_leg_fields(trade: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_legs_ui(option: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-leg row for dashboard: strike, side, entry LTP, current LTP."""
+    legs = list(option.get("legs") or [])
+    leg_ltps = option.get("leg_ltps") or []
+    rows: list[dict[str, Any]] = []
+    for i, leg in enumerate(legs):
+        tx = str(leg.get("transaction_type") or "BUY").upper()
+        side = str(leg.get("option_type") or "").upper()
+        strike = leg.get("strike")
+        if strike is not None and float(strike) == int(strike):
+            strike_s = str(int(strike))
+        elif strike is not None:
+            strike_s = f"{float(strike):g}"
+        else:
+            strike_s = ""
+        entry = leg.get("entry_ltp", leg.get("ltp"))
+        current = leg.get("current_ltp")
+        if current is None and i < len(leg_ltps):
+            current = leg_ltps[i]
+        rows.append(
+            {
+                "transaction_type": tx,
+                "option_type": side,
+                "strike": strike,
+                "strike_display": strike_s,
+                "entry_ltp": float(entry) if entry is not None else None,
+                "current_ltp": float(current) if current is not None else None,
+                "label": f"{'Sell' if tx == 'SELL' else 'Buy'} {strike_s} {side}".strip(),
+            }
+        )
+    return rows
+
+
 def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
     """Flatten signal/option into dashboard-friendly entry/exit fields."""
     trade = sync_option_lot_size(trade)
@@ -419,8 +452,9 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
         "exit_label": exit_label,
         "is_paper": mode == "PAPER" or status == "PAPER_RECORDED",
         "structure": option.get("structure"),
-        "legs_detail": option.get("legs") or [],
+        "legs_detail": build_legs_ui(option),
         "net_credit_points": option.get("net_credit_points"),
+        "mtm_error": option.get("mtm_error"),
         "max_loss_rupees": option.get("max_loss_rupees"),
         "max_profit_rupees": option.get("max_profit_rupees"),
         "last_close_debit": option.get("last_close_debit"),

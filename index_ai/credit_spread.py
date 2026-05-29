@@ -158,21 +158,100 @@ def init_credit_trail_meta(
     }
 
 
-def fetch_leg_ltps(client: Any, legs: list[dict[str, Any]]) -> list[float]:
-    from index_ai.exit import option_ltp_with_retry
+def _parse_ltp_bucket(raw: dict[str, Any], segment: str, security_id: int) -> float | None:
+    from index_ai.exit import _parse_ltp_from_feed
 
-    return [option_ltp_with_retry(client, leg, attempts=2) for leg in legs]
+    return _parse_ltp_from_feed(raw, segment, security_id)
+
+
+def fetch_leg_ltps(
+    client: Any,
+    option: dict[str, Any],
+    *,
+    instrument_key: str | None = None,
+) -> list[float]:
+    """Fetch live LTP per leg (batch marketfeed, then option-chain fallback)."""
+    legs = list(option.get("legs") or [])
+    if not legs:
+        return []
+
+    segment = str(legs[0].get("segment") or "NSE_FNO")
+    ids = [int(leg["security_id"]) for leg in legs if leg.get("security_id") is not None]
+    prices: dict[int, float] = {}
+
+    if ids:
+        try:
+            raw = client.ltp(segment, ids)
+            for sid in ids:
+                px = _parse_ltp_bucket(raw, segment, sid)
+                if px is not None:
+                    prices[sid] = px
+        except Exception:
+            pass
+
+    missing = [leg for leg in legs if int(leg["security_id"]) not in prices]
+    if missing:
+        key = instrument_key or str(option.get("instrument") or "")
+        if key:
+            try:
+                from index_ai.dhan import DhanClient
+                from index_ai.instruments import get_instrument
+                from index_ai.options_expiry import resolve_trade_expiry
+
+                inst = get_instrument(key)
+                expiry = resolve_trade_expiry(option, client, inst)
+                if expiry:
+                    chain = client.option_chain(inst, expiry)
+                    rows = (chain.get("data") or {}).get("oc") or {}
+                    for leg in missing:
+                        strike = leg.get("strike")
+                        side = "ce" if str(leg.get("option_type") or "").upper() == "CALL" else "pe"
+                        row = rows.get(str(strike)) or (
+                            rows.get(str(int(strike))) if strike is not None else {}
+                        )
+                        if not row and strike is not None and rows:
+                            nearest = min(rows.keys(), key=lambda k: abs(float(k) - float(strike)))
+                            row = rows.get(nearest) or {}
+                        leg_row = row.get(side) or {}
+                        ltp = leg_row.get("last_price") or leg_row.get("ltp")
+                        if ltp is not None:
+                            prices[int(leg["security_id"])] = float(ltp)
+            except Exception:
+                pass
+
+    out: list[float] = []
+    for leg in legs:
+        sid = int(leg["security_id"])
+        if sid in prices:
+            out.append(prices[sid])
+            continue
+        from index_ai.exit import option_ltp_with_retry
+
+        out.append(option_ltp_with_retry(client, leg, attempts=2))
+    return out
+
+
+def sync_leg_current_ltps(option: dict[str, Any], leg_ltps: list[float]) -> None:
+    legs = list(option.get("legs") or [])
+    for leg, px in zip(legs, leg_ltps):
+        leg["entry_ltp"] = leg.get("entry_ltp", leg.get("ltp"))
+        leg["current_ltp"] = float(px)
+    option["legs"] = legs
 
 
 def compute_credit_mtm(
     option: dict[str, Any],
     client: Any,
+    *,
+    instrument_key: str | None = None,
 ) -> tuple[float, float, list[float]]:
     """Return (mtm_rupees, close_debit_points, leg_ltps)."""
     legs = list(option.get("legs") or [])
     if not legs:
         raise RuntimeError("Credit spread has no legs.")
-    leg_ltps = fetch_leg_ltps(client, legs)
+    leg_ltps = fetch_leg_ltps(client, option, instrument_key=instrument_key)
+    sync_leg_current_ltps(option, leg_ltps)
+    legs = list(option.get("legs") or [])
     debit = mark_to_close_debit(legs, leg_ltps)
     credit = float(option.get("net_credit_points") or option.get("ltp") or net_credit_points(legs))
     qty = int(option.get("quantity") or 1)

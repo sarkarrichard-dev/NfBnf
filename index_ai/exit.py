@@ -210,7 +210,11 @@ def close_open_trade(
         and resolved_exit_ltp is None
     ):
         try:
-            pnl, close_debit, _ = compute_credit_mtm(option, client)
+            pnl, close_debit, _ = compute_credit_mtm(
+                option,
+                client,
+                instrument_key=str(trade.get("instrument") or option.get("instrument") or ""),
+            )
             resolved_exit_ltp = close_debit
         except Exception:
             pnl = float(option.get("mtm_pnl") or 0)
