@@ -89,12 +89,26 @@ def build_analytics(limit: int = 500, client: DhanClient | None = None) -> dict[
     raw = recent_trades(limit=limit)
     raw = enrich_open_trades_mtm(raw, client)
     rows = [format_trade_for_ui(t) for t in raw]
-    open_mtm = sum(float(r["mtm_pnl"]) for r in rows if r.get("is_open") and r.get("mtm_pnl") is not None)
     now = datetime.now(IST)
     start_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start_week = start_today - timedelta(days=start_today.weekday())
     start_month = start_today.replace(day=1)
     tomorrow = start_today + timedelta(days=1)
+
+    open_mtm = sum(float(r["mtm_pnl"]) for r in rows if r.get("is_open") and r.get("mtm_pnl") is not None)
+    today_open_mtm = sum(
+        float(r["mtm_pnl"])
+        for r in rows
+        if r.get("is_open")
+        and r.get("mtm_pnl") is not None
+        and _parse_created_at(str(r.get("created_at") or "")) >= start_today
+    )
+    open_count = sum(1 for r in rows if r.get("is_open"))
+    stale_open_count = sum(
+        1
+        for r in rows
+        if r.get("is_open") and _parse_created_at(str(r.get("created_at") or "")) < start_today
+    )
 
     today_trades = _filter_period(raw, start_today, tomorrow)
     week_trades = _filter_period(raw, start_week, tomorrow)
@@ -106,6 +120,9 @@ def build_analytics(limit: int = 500, client: DhanClient | None = None) -> dict[
         "generated_at": now_ist_iso(),
         "generated_at_ist": format_ist_display(now_ist_iso()),
         "open_mtm_rupees": round(open_mtm, 2),
+        "today_open_mtm_rupees": round(today_open_mtm, 2),
+        "open_positions": open_count,
+        "stale_open_positions": stale_open_count,
         "overview": _period_stats(raw),
         "today": _period_stats(today_trades),
         "week": _period_stats(week_trades),

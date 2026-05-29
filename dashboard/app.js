@@ -150,6 +150,9 @@ function tradesForPeriod() {
   }
   return analyticsData.trades.filter((t) => {
     const ts = new Date(String(t.created_at).replace("Z", "+00:00")).getTime();
+    if (activePeriod === "today") {
+      return ts >= startMs || Boolean(t.is_open);
+    }
     return ts >= startMs;
   });
 }
@@ -164,13 +167,6 @@ function renderBreakdownList(elId, data) {
 }
 
 function renderPeriodStats() {
-  const openMtm = analyticsData?.open_mtm_rupees;
-  const openMtmEl = $("stat-open-mtm");
-  if (openMtmEl) {
-    openMtmEl.textContent = openMtm != null ? fmtPnl(openMtm) : "—";
-    openMtmEl.classList.toggle("pnl-win", (openMtm ?? 0) > 0);
-    openMtmEl.classList.toggle("pnl-loss", (openMtm ?? 0) < 0);
-  }
   const block = periodBlock() || {
     trades: 0,
     closed: 0,
@@ -183,6 +179,23 @@ function renderPeriodStats() {
     by_action: {},
     by_leg: {},
   };
+  const openMtm =
+    activePeriod === "today"
+      ? analyticsData?.today_open_mtm_rupees
+      : activePeriod === "all"
+        ? analyticsData?.open_mtm_rupees
+        : analyticsData?.open_mtm_rupees;
+  const staleOpen = analyticsData?.stale_open_positions ?? 0;
+  const openMtmEl = $("stat-open-mtm");
+  if (openMtmEl) {
+    openMtmEl.textContent = openMtm != null ? fmtPnl(openMtm) : "—";
+    openMtmEl.classList.toggle("pnl-win", (openMtm ?? 0) > 0);
+    openMtmEl.classList.toggle("pnl-loss", (openMtm ?? 0) < 0);
+    openMtmEl.title =
+      staleOpen > 0 && activePeriod === "today"
+        ? `${staleOpen} older open position(s) not included — switch to All time or close them.`
+        : "";
+  }
   $("stat-trades").textContent = String(block.trades ?? 0);
   $("stat-closed-open").textContent = `${block.closed ?? 0} / ${block.open ?? 0}`;
   $("stat-wins-losses").textContent = `${block.wins ?? 0} / ${block.losses ?? 0}`;

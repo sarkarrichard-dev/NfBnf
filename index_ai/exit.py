@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from index_ai.config import AppSettings
+from index_ai.credit_spread import compute_credit_mtm, is_credit_option
 from index_ai.dhan import DhanClient
 from index_ai.dhan_errors import DhanRateLimitError
 from index_ai.instruments import get_instrument
@@ -49,18 +50,42 @@ def option_ltp_with_retry(client: DhanClient, option: dict[str, Any], *, attempt
 
 
 def _ltp_from_chain(client: DhanClient, trade: dict[str, Any]) -> float | None:
+    from index_ai.options_expiry import resolve_trade_expiry
+
     option = trade.get("option") or {}
     instrument_key = str(trade.get("instrument") or option.get("instrument") or "")
-    strike = option.get("strike")
-    if not instrument_key or strike is None:
+    if not instrument_key:
         return None
     inst = get_instrument(instrument_key)
-    expiries = client.expiry_list(inst)
-    if not expiries:
+    expiry = resolve_trade_expiry(option, client, inst)
+    if not expiry:
         return None
-    chain = client.option_chain(inst, expiries[0])
+    chain = client.option_chain(inst, expiry)
     rows = (chain.get("data") or {}).get("oc") or {}
-    side = "ce" if str(option.get("option_type") or "").upper() == "CALL" else "pe"
+
+    legs = list(option.get("legs") or [])
+    if legs:
+        from index_ai.credit_spread import mark_to_close_debit
+
+        leg_ltps: list[float] = []
+        for leg in legs:
+            strike = leg.get("strike")
+            side = "ce" if str(leg.get("option_type") or "").upper() == "CALL" else "pe"
+            row = rows.get(str(strike)) or rows.get(str(int(strike))) if strike is not None else {}
+            if not row and strike is not None:
+                nearest = min(rows.keys(), key=lambda k: abs(float(k) - float(strike)), default=None)
+                row = rows.get(nearest) or {} if nearest is not None else {}
+            leg_row = row.get(side) or {}
+            ltp = leg_row.get("last_price") or leg_row.get("ltp")
+            if ltp is None:
+                return None
+            leg_ltps.append(float(ltp))
+        return mark_to_close_debit(legs, leg_ltps)
+
+    strike = option.get("strike")
+    if strike is None:
+        return None
+    side = "ce" if str(option.get("option_type") or "").upper() in {"CALL", "CE"} else "pe"
     row = rows.get(str(strike)) or rows.get(str(int(strike))) or {}
     leg = row.get(side) or {}
     ltp = leg.get("last_price") or leg.get("ltp")

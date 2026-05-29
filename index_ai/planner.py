@@ -17,7 +17,7 @@ from index_ai.options_oi import (
 from index_ai.risk_policy import HARDCODED_RISK
 from index_ai.option_structures import CREDIT_ACTIONS, build_credit_structure
 from index_ai.strategy import StrategySignal, copy_signal
-from index_ai.strategy_router import route_intraday_signal
+from index_ai.options_expiry import pick_nearest_expiry
 
 INDEX_KEYS = configured_index_keys()
 
@@ -59,7 +59,7 @@ def plan_instrument(
     expiry = None
     if signal.action != "NO_TRADE":
         expiries = client.expiry_list(instrument)
-        expiry = expiries[0] if expiries else None
+        expiry = pick_nearest_expiry(expiries, now=now) if expiries else None
         if expiry:
             chain = client.option_chain(instrument, expiry)
             if signal.action in CREDIT_ACTIONS:

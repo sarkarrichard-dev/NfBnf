@@ -474,8 +474,10 @@ async def analyze(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
     option = None
     expiry = None
     if signal.action != "NO_TRADE" and cfg.dhan.ready:
+        from index_ai.options_expiry import pick_nearest_expiry
+
         expiries = client.expiry_list(instrument)
-        expiry = expiries[0] if expiries else None
+        expiry = pick_nearest_expiry(expiries) if expiries else None
         if expiry:
             chain = client.option_chain(instrument, expiry)
             option = choose_option_from_chain(chain, signal, instrument)
