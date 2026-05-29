@@ -18,6 +18,7 @@ from index_ai.risk_policy import HARDCODED_RISK
 from index_ai.option_structures import CREDIT_ACTIONS, build_credit_structure
 from index_ai.strategy import StrategySignal, copy_signal
 from index_ai.options_expiry import pick_nearest_expiry
+from index_ai.strategy_router import route_intraday_signal
 
 INDEX_KEYS = configured_index_keys()
 
