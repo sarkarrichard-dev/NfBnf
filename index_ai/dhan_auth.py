@@ -182,6 +182,8 @@ def save_access_token_direct(settings: DhanSettings, access_token: str) -> dict[
         expiry = datetime.fromtimestamp(int(exp), tz=timezone.utc).isoformat()
 
     clear_dhan_health_cache()
+    probe_settings = _settings_with_token(settings, token, client_id)
+    probe = probe_access_token(probe_settings)
     update_env_values(
         {
             "DHAN_CLIENT_ID": client_id,
@@ -190,22 +192,18 @@ def save_access_token_direct(settings: DhanSettings, access_token: str) -> dict[
         }
     )
     clear_dhan_health_cache()
-    from index_ai.config import settings as load_settings
-
-    fresh = load_settings().dhan
-    try:
-        verify_access_token(fresh)
-    except Exception as exc:
-        raise RuntimeError(
-            f"Token saved to .env but Dhan rejected it: {exc} "
-            "Generate a fresh access token on web.dhan.co (old JWTs are invalidated when you generate a new one)."
-        ) from exc
+    message = "Access token saved to .env and verified on Dhan option-chain API."
+    if not probe.get("profile_ok"):
+        message += " (/profile unavailable — normal for some web tokens.)"
+    if not probe.get("charts_ok"):
+        message += " Intraday charts need Data API on web.dhan.co → Access DhanHQ APIs."
     return {
         "status": "saved",
         "source": "access_token_jwt",
         "dhanClientId": client_id,
         "expiryTime": expiry or None,
-        "message": "Access token verified with Dhan /profile and saved to .env.",
+        "message": message,
+        "probe": probe,
     }
 
 
@@ -274,8 +272,131 @@ def consume_consent(settings: DhanSettings, token_id: str) -> dict[str, Any]:
 
 
 def _profile_headers(settings: DhanSettings) -> dict[str, str]:
-    # Dhan docs: profile uses access-token only. A wrong client-id causes DH-901 / 401.
-    return {"Accept": "application/json", "access-token": settings.access_token}
+    headers = {"Accept": "application/json", "access-token": settings.access_token}
+    if settings.client_id:
+        headers["client-id"] = settings.client_id
+    return headers
+
+
+def _market_headers(settings: DhanSettings) -> dict[str, str]:
+    """Headers for option chain / market feed (require client-id with web tokens)."""
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "access-token": settings.access_token,
+    }
+    if settings.client_id:
+        headers["client-id"] = settings.client_id
+    return headers
+
+
+def _settings_with_token(settings: DhanSettings, access_token: str, client_id: str) -> DhanSettings:
+    return DhanSettings(
+        client_id=client_id,
+        access_token=access_token,
+        api_base_url=settings.api_base_url,
+        api_key=settings.api_key,
+        api_secret=settings.api_secret,
+        auth_base_url=settings.auth_base_url,
+        token_expiry=settings.token_expiry,
+    )
+
+
+def probe_access_token(settings: DhanSettings) -> dict[str, Any]:
+    """
+    Validate token against APIs this app uses.
+
+    Dhan /profile often returns misleading DH-906 for valid web tokens; option-chain is reliable.
+    Intraday charts need a separate Data API subscription.
+    """
+    if not settings.ready:
+        raise RuntimeError(_missing_token_message(settings))
+
+    profile: dict[str, Any] = {}
+    profile_ok = False
+    market_ok = False
+    charts_ok = False
+    charts_error: str | None = None
+    probe_errors: list[str] = []
+
+    url_base = settings.api_base_url.rstrip("/")
+
+    try:
+        with httpx.Client(timeout=20) as client:
+            response = client.get(f"{url_base}/profile", headers=_profile_headers(settings))
+            if response.status_code < 400:
+                data = _parse_json_response(response)
+                profile = data.get("data") if isinstance(data.get("data"), dict) else data
+                profile_ok = bool(profile)
+    except Exception as exc:
+        probe_errors.append(f"profile: {exc}")
+
+    try:
+        from index_ai.instruments import get_instrument
+
+        inst = get_instrument("NIFTY")
+        if inst.underlying_security_id is None:
+            raise RuntimeError("NIFTY_SECURITY_ID is not set in .env.")
+        payload = {
+            "UnderlyingScrip": inst.underlying_security_id,
+            "UnderlyingSeg": inst.option_segment,
+        }
+        with httpx.Client(timeout=20) as client:
+            response = client.post(
+                f"{url_base}/optionchain/expirylist",
+                json=payload,
+                headers=_market_headers(settings),
+            )
+            if response.status_code >= 400:
+                _raise_dhan_http_error(response, "optionchain expirylist")
+            data = _parse_json_response(response)
+        if not list(data.get("data") or []):
+            raise RuntimeError("optionchain expirylist returned no expiries.")
+        market_ok = True
+    except Exception as exc:
+        probe_errors.append(f"market: {exc}")
+
+    try:
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        from index_ai.dhan import DhanClient
+        from index_ai.instruments import get_instrument
+
+        client = DhanClient(settings)
+        inst = get_instrument("NIFTY")
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        start = now - timedelta(days=2)
+        client.intraday_history(
+            inst,
+            from_date=start.strftime("%Y-%m-%d 09:15:00"),
+            to_date=now.strftime("%Y-%m-%d %H:%M:%S"),
+            interval="5",
+        )
+        charts_ok = True
+    except Exception as exc:
+        charts_error = str(exc)
+        probe_errors.append(f"charts: {exc}")
+
+    token_ok = market_ok
+    if not token_ok:
+        detail = "; ".join(probe_errors[:3])
+        raise RuntimeError(
+            "Access token rejected by Dhan on option-chain API. "
+            f"{detail} "
+            "Generate a fresh token on web.dhan.co → Access DhanHQ APIs → Generate Access Token."
+        )
+
+    return {
+        "ok": token_ok and charts_ok,
+        "token_ok": token_ok,
+        "profile_ok": profile_ok,
+        "market_ok": market_ok,
+        "charts_ok": charts_ok,
+        "charts_error": charts_error,
+        "profile": profile,
+        "probe_errors": probe_errors,
+    }
 
 
 def jwt_token_status(access_token: str) -> dict[str, Any]:
@@ -333,17 +454,9 @@ def reconcile_env_with_jwt() -> dict[str, Any] | None:
 
 
 def verify_access_token(settings: DhanSettings) -> dict[str, Any]:
-    """Call Dhan /profile to confirm the stored access token works."""
-    if not settings.ready:
-        raise RuntimeError(_missing_token_message(settings))
-    url = f"{settings.api_base_url}/profile"
-    with httpx.Client(timeout=20) as client:
-        response = client.get(url, headers=_profile_headers(settings))
-        if response.status_code >= 400:
-            _raise_dhan_http_error(response, "profile")
-        data = _parse_json_response(response)
-    profile = data.get("data") if isinstance(data.get("data"), dict) else data
-    return {"ok": True, "profile": profile}
+    """Confirm access token works against Dhan market APIs."""
+    probe = probe_access_token(settings)
+    return {"ok": True, "profile": probe.get("profile") or {}, **probe}
 
 
 def renew_access_token(settings: DhanSettings) -> dict[str, Any]:
@@ -357,6 +470,7 @@ def renew_access_token(settings: DhanSettings) -> dict[str, Any]:
             headers={
                 "Accept": "application/json",
                 "access-token": settings.access_token,
+                "client-id": settings.client_id,
                 "dhanClientId": settings.client_id,
             },
         )
@@ -435,18 +549,25 @@ def check_dhan_health(settings: DhanSettings, *, use_cache: bool = True) -> dict
         )
 
     try:
-        verified = verify_access_token(settings)
-        profile = dict(verified.get("profile") or {})
+        probe = probe_access_token(settings)
+        profile = dict(probe.get("profile") or {})
+        charts_ok = bool(probe.get("charts_ok"))
+        charts_error = probe.get("charts_error")
+        if not probe.get("profile_ok"):
+            actions.append(
+                "Profile API unavailable (Dhan quirk) — token verified via option-chain instead."
+            )
     except Exception as exc:
-        issues.append(f"Profile check failed: {exc}")
+        issues.append(f"Dhan token check failed: {exc}")
         actions.append(_web_token_action())
         actions.append(
-            "If using API login: fix DHAN_CLIENT_ID + API key, or see oauth_troubleshooting after Create Login Link."
+            "Ensure DHAN_CLIENT_ID matches your Dhan account. Try OAuth: Create Login Link."
         )
         return _done(
             {
                 "ok": False,
                 "charts_ok": False,
+                "token_ok": False,
                 "issues": issues,
                 "actions": actions,
                 "profile": profile,
@@ -466,44 +587,31 @@ def check_dhan_health(settings: DhanSettings, *, use_cache: bool = True) -> dict
         actions.append("On web.dhan.co → My Profile → Access DhanHQ APIs → enable Data API.")
 
     token_validity = profile.get("tokenValidity")
-    charts_ok = False
-    charts_error: str | None = None
 
-    try:
-        from datetime import datetime, timedelta
-        from zoneinfo import ZoneInfo
-
-        from index_ai.dhan import DhanClient
-        from index_ai.instruments import get_instrument
-
-        client = DhanClient(settings)
-        inst = get_instrument("NIFTY")
-        now = datetime.now(ZoneInfo("Asia/Kolkata"))
-        start = now - timedelta(days=2)
-        client.intraday_history(
-            inst,
-            from_date=start.strftime("%Y-%m-%d 09:15:00"),
-            to_date=now.strftime("%Y-%m-%d %H:%M:%S"),
-            interval="5",
-        )
-        charts_ok = True
-    except Exception as exc:
-        charts_error = str(exc)
-        if "401" in charts_error or "808" in charts_error or "809" in charts_error:
-            issues.append("Access token rejected for chart data (HTTP 401).")
-            actions.append(
-                "Paste a fresh tokenId from today's Dhan login, or click Renew Token if you used Dhan Web token."
-            )
-        elif "806" in charts_error:
+    if not charts_ok and charts_error:
+        err = charts_error.lower()
+        if "806" in charts_error:
             issues.append("Data API not subscribed (HTTP 806).")
-            actions.append("Subscribe to Data API on Dhan Web.")
+            actions.append("Subscribe to Data API on web.dhan.co → Access DhanHQ APIs.")
+        elif "401" in charts_error or "808" in charts_error or "809" in charts_error:
+            issues.append("Access token rejected for intraday chart data.")
+            actions.append(_web_token_action())
+        elif "906" in charts_error or "invalid token" in err:
+            issues.append(
+                "Intraday charts unavailable (Dhan DH-906). This often means Data API is not active on your account."
+            )
+            actions.append(
+                "On web.dhan.co → My Profile → Access DhanHQ APIs → enable/subscribe to Data API, then Verify again."
+            )
         else:
             issues.append(f"Chart probe failed: {charts_error}")
 
-    ok = not issues and charts_ok
+    token_ok = True
+    ok = token_ok and not issues and charts_ok
     return _done(
         {
             "ok": ok,
+            "token_ok": token_ok,
             "charts_ok": charts_ok,
             "charts_error": charts_error,
             "issues": issues,

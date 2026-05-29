@@ -408,8 +408,14 @@ async def auto_start(payload: dict[str, Any] = Body(default_factory=dict)) -> di
     if not cfg.dhan.ready:
         raise HTTPException(status_code=400, detail=_dhan_setup_message())
     health = check_dhan_health(cfg.dhan)
-    if not health.get("ok") and not health.get("charts_ok"):
-        detail = "; ".join(health.get("issues") or ["Dhan not ready."])
+    if not health.get("token_ok"):
+        detail = "; ".join(health.get("issues") or ["Dhan token not accepted."])
+        actions = health.get("actions") or []
+        if actions:
+            detail += " — " + " ".join(actions[:2])
+        raise HTTPException(status_code=400, detail=detail)
+    if not health.get("charts_ok"):
+        detail = "; ".join(health.get("issues") or ["Intraday chart data unavailable."])
         actions = health.get("actions") or []
         if actions:
             detail += " — " + " ".join(actions[:2])

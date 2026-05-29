@@ -472,6 +472,13 @@ function renderDhanHealth(health) {
     banner.textContent = `Dhan data access OK (plan: ${health.data_plan || "Active"}).${validity}`;
     return;
   }
+  if (health.token_ok && !health.charts_ok) {
+    banner.classList.remove("ok");
+    banner.classList.remove("hidden");
+    banner.textContent =
+      "Token OK for option chain; intraday charts need Data API on web.dhan.co → Access DhanHQ APIs.";
+    return;
+  }
   banner.classList.remove("ok");
   banner.classList.remove("hidden");
   const parts = [...(health.issues || []), ...(health.actions || [])];
@@ -708,7 +715,10 @@ async function loadStatus() {
   dhanEl?.classList.remove("error");
   if (!status.dhan_ready) {
     dhanEl.textContent = "Need token";
-  } else if (dh && !dh.ok) {
+  } else if (dh?.token_ok && !dh?.charts_ok) {
+    dhanEl.textContent = "Need Data API";
+    dhanEl.classList.add("error");
+  } else if (dh && !dh.ok && !dh.token_ok) {
     dhanEl.textContent = "Token rejected";
     dhanEl.classList.add("error");
   } else if (dh?.ok && dh?.charts_ok) {
