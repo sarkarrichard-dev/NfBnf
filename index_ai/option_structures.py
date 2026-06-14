@@ -7,6 +7,7 @@ from typing import Any
 from index_ai.cpr_regime import CprRegime
 from index_ai.instruments import IndexInstrument
 from index_ai.strategy import StrategySignal, nearest_strike
+from index_ai.premium_sell import PREMIUM_SELL_ACTIONS, is_premium_sell_action
 from index_ai.credit_spread import CREDIT_ACTIONS, attach_credit_risk_metrics
 from index_ai.strategy_params import get_strategy_params
 
@@ -37,7 +38,7 @@ def _leg(
         row = rows[nearest]
         strike = nearest
     leg = row.get(side) or {}
-    sid = leg.get("security_id")
+    sid = leg.get("security_id") or leg.get("securityId")
     if sid is None:
         return None
     return {
@@ -81,15 +82,17 @@ def build_iron_condor(
     buy_put = sell_put - step * wings
 
     legs = [
-        _leg(rows, sell_call, "ce", "SELL", instrument),
         _leg(rows, buy_call, "ce", "BUY", instrument),
-        _leg(rows, sell_put, "pe", "SELL", instrument),
         _leg(rows, buy_put, "pe", "BUY", instrument),
+        _leg(rows, sell_call, "ce", "SELL", instrument),
+        _leg(rows, sell_put, "pe", "SELL", instrument),
     ]
     if any(x is None for x in legs):
         raise RuntimeError("Could not resolve all iron condor legs on chain.")
     legs_typed: list[dict[str, Any]] = [x for x in legs if x is not None]
-    short = legs_typed[0]
+    short = next(
+        leg for leg in legs_typed if str(leg.get("transaction_type") or "").upper() == "SELL"
+    )
     return attach_credit_risk_metrics(
         {
             "instrument": instrument.key,
@@ -124,13 +127,13 @@ def build_bull_put_spread(
     sell_put = atm - step * params.credit_short_strike_steps
     buy_put = sell_put - step * wings
     legs_raw = [
-        _leg(rows, sell_put, "pe", "SELL", instrument),
         _leg(rows, buy_put, "pe", "BUY", instrument),
+        _leg(rows, sell_put, "pe", "SELL", instrument),
     ]
     if any(x is None for x in legs_raw):
         raise RuntimeError("Could not resolve bull put spread legs.")
     legs = [x for x in legs_raw if x is not None]
-    short = legs[0]
+    short = next(leg for leg in legs if str(leg.get("transaction_type") or "").upper() == "SELL")
     return attach_credit_risk_metrics(
         {
             "instrument": instrument.key,
@@ -165,13 +168,13 @@ def build_bear_call_spread(
     sell_call = atm + step * params.credit_short_strike_steps
     buy_call = sell_call + step * wings
     legs_raw = [
-        _leg(rows, sell_call, "ce", "SELL", instrument),
         _leg(rows, buy_call, "ce", "BUY", instrument),
+        _leg(rows, sell_call, "ce", "SELL", instrument),
     ]
     if any(x is None for x in legs_raw):
         raise RuntimeError("Could not resolve bear call spread legs.")
     legs = [x for x in legs_raw if x is not None]
-    short = legs[0]
+    short = next(leg for leg in legs if str(leg.get("transaction_type") or "").upper() == "SELL")
     return attach_credit_risk_metrics(
         {
             "instrument": instrument.key,
@@ -190,6 +193,39 @@ def build_bear_call_spread(
         },
         instrument,
     )
+
+
+def build_atm_short_option(
+    chain: dict[str, Any],
+    signal: StrategySignal,
+    instrument: IndexInstrument,
+) -> dict[str, Any]:
+    """Sell nearest ATM call or put (Apex Pivot-Trend / naked premium sell)."""
+    action = str(signal.action or "").upper()
+    if not is_premium_sell_action(action):
+        raise ValueError(f"Not a premium sell action: {action}")
+    side = "pe" if action == "SELL_ATM_PUT" else "ce"
+    opt_type = "PUT" if side == "pe" else "CALL"
+    rows = _chain_rows(chain)
+    if not rows:
+        raise RuntimeError("Empty option chain for ATM sell.")
+    atm = nearest_strike(signal.price, instrument)
+    leg = _leg(rows, atm, side, "SELL", instrument)
+    if leg is None:
+        raise RuntimeError(f"Could not resolve ATM {opt_type} on chain.")
+    return {
+        "instrument": instrument.key,
+        "structure": f"ATM_SHORT_{opt_type}",
+        "transaction_type": "SELL",
+        "option_type": opt_type,
+        "strike": leg["strike"],
+        "security_id": leg["security_id"],
+        "segment": instrument.option_segment,
+        "quantity": instrument.lot_size,
+        "ltp": leg.get("ltp"),
+        "legs": [leg],
+        "hedge_note": "Short ATM premium (Apex Pivot-Trend). Defined risk only if hedged spread mode is on.",
+    }
 
 
 def build_credit_structure(

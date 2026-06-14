@@ -20,15 +20,37 @@ CREDIT_EXIT_MODE = "credit_spread"
 
 
 def is_credit_option(option: dict[str, Any]) -> bool:
-    legs = option.get("legs") or []
-    if len(legs) >= 2:
+    legs = list(option.get("legs") or [])
+    if len(legs) >= 2 and all(leg.get("security_id") is not None for leg in legs):
         return True
     structure = str(option.get("structure") or "").upper()
-    return structure.endswith("_SPREAD") or structure == "IRON_CONDOR"
+    return False
 
 
 def is_credit_action(action: str) -> bool:
     return str(action or "").upper() in CREDIT_ACTIONS
+
+
+def credit_spread_entry_ready(option: dict[str, Any], *, action: str = "") -> tuple[bool, str]:
+    """Require full Dhan legs before journal or broker entry."""
+    act = str(action or "").upper()
+    structure = str(option.get("structure") or "").upper()
+    if act not in CREDIT_ACTIONS and not (
+        structure.endswith("_SPREAD") or structure == "IRON_CONDOR"
+    ):
+        return True, "not a credit spread"
+    legs = list(option.get("legs") or [])
+    min_legs = 4 if structure == "IRON_CONDOR" or act == "SELL_IRON_CONDOR" else 2
+    if len(legs) < min_legs:
+        return False, f"Credit spread needs {min_legs} legs (got {len(legs)})."
+    for idx, leg in enumerate(legs, start=1):
+        if leg.get("security_id") is None:
+            return False, f"Leg {idx} missing security_id — option chain snapshot incomplete."
+        if not str(leg.get("transaction_type") or "").upper():
+            return False, f"Leg {idx} missing buy/sell side."
+        if leg.get("strike") is None:
+            return False, f"Leg {idx} missing strike."
+    return True, "ok"
 
 
 def net_credit_points(legs: list[dict[str, Any]]) -> float:
@@ -124,6 +146,8 @@ def init_credit_trail_meta(
     action: str,
     entry_index_price: float,
     params: StrategyParams | None = None,
+    supertrend_direction: int = 0,
+    supertrend_stop: float = 0.0,
 ) -> dict[str, Any]:
     cfg = params or get_strategy_params()
     legs = list(option.get("legs") or [])
@@ -137,7 +161,9 @@ def init_credit_trail_meta(
     profit_target = float(getattr(cfg, "credit_profit_target_pct", 0.50))
     stop_pct = float(getattr(cfg, "credit_stop_loss_pct", 0.60))
     shorts = _short_strikes(legs)
-    return {
+    from index_ai.profit_trail import attach_profit_trail_meta
+
+    meta = {
         "exit_mode": CREDIT_EXIT_MODE,
         "entry_index_price": entry_index_price,
         "entry_net_credit": credit,
@@ -153,9 +179,12 @@ def init_credit_trail_meta(
         "instrument": instrument.key,
         "structure": option.get("structure"),
         "action": action,
+        "supertrend_direction": int(supertrend_direction),
+        "supertrend_stop": float(supertrend_stop or 0),
         "last_mtm_pnl": None,
         "last_close_debit": None,
     }
+    return attach_profit_trail_meta(meta, params=cfg)
 
 
 def _parse_ltp_bucket(raw: dict[str, Any], segment: str, security_id: int) -> float | None:
@@ -169,6 +198,7 @@ def fetch_leg_ltps(
     option: dict[str, Any],
     *,
     instrument_key: str | None = None,
+    ltp_cache: dict[tuple[str, int], float] | None = None,
 ) -> list[float]:
     """Fetch live LTP per leg (batch marketfeed, then option-chain fallback)."""
     legs = list(option.get("legs") or [])
@@ -177,19 +207,34 @@ def fetch_leg_ltps(
 
     segment = str(legs[0].get("segment") or "NSE_FNO")
     ids = [int(leg["security_id"]) for leg in legs if leg.get("security_id") is not None]
+    if not ids:
+        return []
     prices: dict[int, float] = {}
+    if ltp_cache:
+        for leg in legs:
+            if leg.get("security_id") is None:
+                continue
+            sid = int(leg["security_id"])
+            cached = ltp_cache.get((segment, sid))
+            if cached is not None:
+                prices[sid] = cached
 
-    if ids:
+    missing_ids = [sid for sid in ids if sid not in prices]
+    if missing_ids:
         try:
-            raw = client.ltp(segment, ids)
-            for sid in ids:
+            raw = client.ltp(segment, missing_ids)
+            for sid in missing_ids:
                 px = _parse_ltp_bucket(raw, segment, sid)
                 if px is not None:
                     prices[sid] = px
         except Exception:
             pass
 
-    missing = [leg for leg in legs if int(leg["security_id"]) not in prices]
+    missing = [
+        leg
+        for leg in legs
+        if leg.get("security_id") is not None and int(leg["security_id"]) not in prices
+    ]
     if missing:
         key = instrument_key or str(option.get("instrument") or "")
         if key:
@@ -221,13 +266,15 @@ def fetch_leg_ltps(
 
     out: list[float] = []
     for leg in legs:
+        if leg.get("security_id") is None:
+            continue
         sid = int(leg["security_id"])
         if sid in prices:
             out.append(prices[sid])
             continue
         from index_ai.exit import option_ltp_with_retry
 
-        out.append(option_ltp_with_retry(client, leg, attempts=2))
+        out.append(option_ltp_with_retry(client, leg, attempts=1))
     return out
 
 
@@ -244,12 +291,15 @@ def compute_credit_mtm(
     client: Any,
     *,
     instrument_key: str | None = None,
+    ltp_cache: dict[tuple[str, int], float] | None = None,
 ) -> tuple[float, float, list[float]]:
     """Return (mtm_rupees, close_debit_points, leg_ltps)."""
     legs = list(option.get("legs") or [])
     if not legs:
         raise RuntimeError("Credit spread has no legs.")
-    leg_ltps = fetch_leg_ltps(client, option, instrument_key=instrument_key)
+    leg_ltps = fetch_leg_ltps(
+        client, option, instrument_key=instrument_key, ltp_cache=ltp_cache
+    )
     sync_leg_current_ltps(option, leg_ltps)
     legs = list(option.get("legs") or [])
     debit = mark_to_close_debit(legs, leg_ltps)
@@ -285,8 +335,9 @@ def evaluate_credit_open_trade(
     fresh_supertrend: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Exit credit spreads on PnL targets, short-strike breach, or EOD (not index-point trail)."""
+    from index_ai.trailing import check_supertrend_exit
+
     _ = risk
-    _ = fresh_supertrend
     option = dict(trade.get("option") or {})
     signal = trade.get("signal") or {}
     action = str(trade.get("action") or signal.get("action") or "")
@@ -316,7 +367,17 @@ def evaluate_credit_open_trade(
 
     if mtm is not None:
         pnl = float(mtm)
-        if profit_target > 0 and pnl >= profit_target:
+        from index_ai.profit_trail import evaluate_profit_trail
+
+        meta, profit_hit, profit_reason = evaluate_profit_trail(meta, pnl)
+        if profit_hit and profit_reason:
+            should_exit = True
+            exit_reason = profit_reason
+        elif (
+            not meta.get("use_profit_trail")
+            and profit_target > 0
+            and pnl >= profit_target
+        ):
             should_exit = True
             exit_reason = (
                 f"Credit profit target hit: ₹{pnl:,.0f} "
@@ -353,6 +414,12 @@ def evaluate_credit_open_trade(
             elif sp is not None and current_index_price < sp:
                 should_exit = True
                 exit_reason = f"Iron condor: index {current_index_price:g} below short put {sp:g}."
+
+    if not should_exit:
+        st_hit, st_reason = check_supertrend_exit(meta, current_index_price, fresh_supertrend)
+        if st_hit and st_reason:
+            should_exit = True
+            exit_reason = st_reason
 
     return {
         "trade_id": trade.get("id"),

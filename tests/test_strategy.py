@@ -4,6 +4,7 @@ import pandas as pd
 
 from index_ai.instruments import get_instrument
 from index_ai.strategy import choose_option_from_chain, cpr_ema_signal
+from index_ai.strategy_params import StrategyParams
 
 
 def test_cpr_ema_buys_call_when_price_is_above_cpr_and_fast_ema() -> None:
@@ -17,7 +18,11 @@ def test_cpr_ema_buys_call_when_price_is_above_cpr_and_fast_ema() -> None:
         [{"open": 115 + i, "high": 116 + i, "low": 114 + i, "close": 115 + i} for i in range(25)]
     )
 
-    signal = cpr_ema_signal(today, previous)
+    signal = cpr_ema_signal(
+        today,
+        previous,
+        params=StrategyParams(min_directional_ema_spread_pct=0.0),
+    )
 
     assert signal.action == "BUY_CALL"
     assert signal.confidence >= 0.55
@@ -40,7 +45,11 @@ def test_option_chain_uses_exact_dhan_decimal_strike_key() -> None:
             for i in range(25)
         ]
     )
-    signal = cpr_ema_signal(today, previous)
+    signal = cpr_ema_signal(
+        today,
+        previous,
+        params=StrategyParams(min_directional_ema_spread_pct=0.0),
+    )
 
     option = choose_option_from_chain(chain, signal, instrument)
 

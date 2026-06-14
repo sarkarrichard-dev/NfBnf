@@ -37,6 +37,16 @@ def _dataset_repo() -> str:
     return os.getenv("HF_DATASET_REPO", "").strip()
 
 
+def _bucket_uri() -> str:
+    """HF Buckets path (hf://buckets/owner/name), not a Datasets repo."""
+    raw = os.getenv("HF_BUCKET", "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("hf://"):
+        return raw
+    return f"hf://buckets/{raw.strip('/')}"
+
+
 def build_setup_narrative(
     signal: dict[str, Any],
     option: dict[str, Any] | None,
@@ -257,16 +267,19 @@ def sync_hf_dataset() -> dict[str, Any]:
     }
 
 
-def upload_dataset_to_hub() -> dict[str, Any]:
-    """Push outcomes.jsonl to a Hugging Face dataset repo (private recommended)."""
+def upload_bucket_to_hub() -> dict[str, Any]:
+    """Sync memory/hf/ to an HF Bucket (hf://buckets/owner/name)."""
     token = _hf_token()
-    repo = _dataset_repo()
+    bucket = _bucket_uri()
     if not token:
         return {"ok": False, "message": "HF_TOKEN is not set in .env."}
-    if not repo:
-        return {"ok": False, "message": "HF_DATASET_REPO is not set (e.g. your-username/index-options-outcomes)."}
+    if not bucket:
+        return {
+            "ok": False,
+            "message": "HF_BUCKET is not set (e.g. SarkarRichard/Bnf for hf://buckets/SarkarRichard/Bnf).",
+        }
     sync = sync_hf_dataset()
-    if sync["rows"] < 1:
+    if sync["rows"] < 1 and not DATASET_PATH.is_file():
         return {"ok": False, "message": "No closed trades to upload — close trades first."}
 
     try:
@@ -275,24 +288,94 @@ def upload_dataset_to_hub() -> dict[str, Any]:
         return {"ok": False, "message": "pip install huggingface-hub", "detail": str(exc)}
 
     api = HfApi(token=token)
-    api.create_repo(repo_id=repo, repo_type="dataset", exist_ok=True, private=True)
-    api.upload_file(
-        path_or_fileobj=str(DATASET_PATH),
-        path_in_repo="outcomes.jsonl",
-        repo_id=repo,
-        repo_type="dataset",
-        commit_message=f"Sync {sync['rows']} trade outcomes",
-    )
+    plan = api.sync_bucket(str(HF_DIR), bucket, token=token)
     meta = _load_meta()
-    meta["hub_repo"] = repo
-    meta["hub_uploaded_at"] = now_ist_iso()
-    meta["hub_uploaded_at_ist"] = format_ist_display(now_ist_iso())
+    meta["bucket_uri"] = bucket
+    meta["bucket_uploaded_at"] = now_ist_iso()
+    meta["bucket_uploaded_at_ist"] = format_ist_display(now_ist_iso())
+    meta["bucket_last_sync"] = {
+        "uploaded": getattr(plan, "uploaded", None),
+        "updated": getattr(plan, "updated", None),
+    }
     _save_meta(meta)
+    uploaded = getattr(plan, "uploaded", 0) or 0
+    updated = getattr(plan, "updated", 0) or 0
     return {
         "ok": True,
-        "repo": repo,
+        "bucket": bucket,
         "rows": sync["rows"],
-        "message": f"Uploaded {sync['rows']} rows to {repo}",
+        "files_uploaded": uploaded,
+        "files_updated": updated,
+        "message": (
+            f"Synced {sync['rows']} trade outcomes to bucket {bucket} "
+            f"({uploaded} new, {updated} updated file(s))."
+        ),
+    }
+
+
+def upload_dataset_to_hub() -> dict[str, Any]:
+    """Push outcomes to HF Bucket (if HF_BUCKET set) and/or Datasets repo (HF_DATASET_REPO)."""
+    token = _hf_token()
+    if not token:
+        return {"ok": False, "message": "HF_TOKEN is not set in .env."}
+
+    sync = sync_hf_dataset()
+    if sync["rows"] < 1:
+        return {"ok": False, "message": "No closed trades to upload — close trades first."}
+
+    bucket = _bucket_uri()
+    repo = _dataset_repo()
+    if not bucket and not repo:
+        return {
+            "ok": False,
+            "message": (
+                "Set HF_BUCKET=SarkarRichard/Bnf (Buckets UI) and/or "
+                "HF_DATASET_REPO=you/repo (classic dataset)."
+            ),
+        }
+
+    results: list[dict[str, Any]] = []
+    if bucket:
+        results.append(upload_bucket_to_hub())
+    if repo:
+        try:
+            from huggingface_hub import HfApi
+        except ImportError as exc:
+            results.append({"ok": False, "message": "pip install huggingface-hub", "detail": str(exc)})
+        else:
+            api = HfApi(token=token)
+            api.create_repo(repo_id=repo, repo_type="dataset", exist_ok=True, private=True)
+            api.upload_file(
+                path_or_fileobj=str(DATASET_PATH),
+                path_in_repo="outcomes.jsonl",
+                repo_id=repo,
+                repo_type="dataset",
+                commit_message=f"Sync {sync['rows']} trade outcomes",
+            )
+            meta = _load_meta()
+            meta["hub_repo"] = repo
+            meta["hub_uploaded_at"] = now_ist_iso()
+            meta["hub_uploaded_at_ist"] = format_ist_display(now_ist_iso())
+            _save_meta(meta)
+            results.append(
+                {
+                    "ok": True,
+                    "repo": repo,
+                    "rows": sync["rows"],
+                    "message": f"Uploaded {sync['rows']} rows to dataset {repo}",
+                }
+            )
+
+    ok = all(r.get("ok") for r in results)
+    messages = [r.get("message") for r in results if r.get("message")]
+    meta = _load_meta()
+    return {
+        "ok": ok,
+        "rows": sync["rows"],
+        "bucket": bucket or meta.get("bucket_uri"),
+        "repo": repo or meta.get("hub_repo"),
+        "message": " ".join(messages) if messages else "Upload finished.",
+        "details": results,
     }
 
 
@@ -312,6 +395,8 @@ def update_hf_learning() -> dict[str, Any]:
         "dataset_synced_at_ist": dataset.get("synced_at_ist"),
         "hub_repo": _dataset_repo() or meta.get("hub_repo"),
         "hub_last_upload_ist": meta.get("hub_uploaded_at_ist"),
+        "bucket_uri": _bucket_uri() or meta.get("bucket_uri"),
+        "bucket_last_upload_ist": meta.get("bucket_uploaded_at_ist"),
     }
 
     if not status["enabled"]:

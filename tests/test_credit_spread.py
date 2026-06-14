@@ -15,8 +15,22 @@ from index_ai.trailing import evaluate_open_trade
 
 def _bull_put_legs() -> list[dict]:
     return [
-        {"transaction_type": "SELL", "option_type": "PUT", "strike": 24000, "ltp": 80.0},
-        {"transaction_type": "BUY", "option_type": "PUT", "strike": 23900, "ltp": 40.0},
+        {
+            "transaction_type": "SELL",
+            "option_type": "PUT",
+            "strike": 24000,
+            "ltp": 80.0,
+            "security_id": 1001,
+            "segment": "NSE_FNO",
+        },
+        {
+            "transaction_type": "BUY",
+            "option_type": "PUT",
+            "strike": 23900,
+            "ltp": 40.0,
+            "security_id": 1002,
+            "segment": "NSE_FNO",
+        },
     ]
 
 
@@ -51,20 +65,23 @@ def test_attach_credit_risk_metrics() -> None:
     assert option["max_loss_rupees"] == round(60 * 65, 2)
 
 
-def test_credit_profit_target_exit() -> None:
+def test_credit_profit_target_exit_when_trail_disabled() -> None:
     inst = get_instrument("NIFTY")
     legs = _bull_put_legs()
+    meta = init_credit_trail_meta(
+        option={"legs": legs, "structure": "BULL_PUT_SPREAD", "quantity": 65, "net_credit_points": 40.0},
+        instrument=inst,
+        action="SELL_BULL_PUT_SPREAD",
+        entry_index_price=24050.0,
+    )
+    meta["enable_profit_trail"] = False
+    meta["use_profit_trail"] = False
     option = {
         "legs": legs,
         "structure": "BULL_PUT_SPREAD",
         "quantity": 65,
         "net_credit_points": 40.0,
-        "trail_meta": init_credit_trail_meta(
-            option={"legs": legs, "structure": "BULL_PUT_SPREAD", "quantity": 65, "net_credit_points": 40.0},
-            instrument=inst,
-            action="SELL_BULL_PUT_SPREAD",
-            entry_index_price=24050.0,
-        ),
+        "trail_meta": meta,
         "mtm_pnl": 1400.0,
     }
     trade = {
@@ -74,11 +91,43 @@ def test_credit_profit_target_exit() -> None:
         "option": option,
         "signal": {"price": 24050.0, "action": "SELL_BULL_PUT_SPREAD"},
     }
-    meta = option["trail_meta"]
     assert meta["profit_target_rupees"] == round(40 * 65 * 0.5, 2)
     result = evaluate_credit_open_trade(trade, 24050.0, _dummy_risk())
     assert result["should_exit"] is True
     assert "profit target" in (result.get("exit_reason") or "").lower()
+
+
+def test_credit_profit_trail_exits_on_giveback() -> None:
+    inst = get_instrument("NIFTY")
+    legs = _bull_put_legs()
+    meta = init_credit_trail_meta(
+        option={"legs": legs, "structure": "BULL_PUT_SPREAD", "quantity": 65, "net_credit_points": 40.0},
+        instrument=inst,
+        action="SELL_BULL_PUT_SPREAD",
+        entry_index_price=24050.0,
+    )
+    meta["peak_mtm_pnl"] = 2000.0
+    meta["profit_trail_armed"] = True
+    meta["enable_profit_trail"] = True
+    meta["use_profit_trail"] = True
+    option = {
+        "legs": legs,
+        "structure": "BULL_PUT_SPREAD",
+        "quantity": 65,
+        "net_credit_points": 40.0,
+        "trail_meta": meta,
+        "mtm_pnl": 800.0,
+    }
+    trade = {
+        "id": "t1b",
+        "instrument": "NIFTY",
+        "action": "SELL_BULL_PUT_SPREAD",
+        "option": option,
+        "signal": {"price": 24050.0, "action": "SELL_BULL_PUT_SPREAD"},
+    }
+    result = evaluate_credit_open_trade(trade, 24050.0, _dummy_risk())
+    assert result["should_exit"] is True
+    assert "profit trail" in (result.get("exit_reason") or "").lower()
 
 
 def test_credit_uses_credit_eval_not_index_trail() -> None:

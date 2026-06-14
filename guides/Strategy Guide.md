@@ -2,11 +2,57 @@
 
 NIFTY and BANKNIFTY index options (NSE FNO) using Dhan intraday charts and live option-chain OI.
 
-## CPR + EMA
+## Apex Pivot-Trend (Theta Gainers style)
+
+Based on [this walkthrough](https://youtu.be/bLVNs9HD1dw) — **Apex / Momentum option selling** on 5m NIFTY, SENSEX (and BANKNIFTY in the same codebase).
+
+| Piece | Rule |
+|-------|------|
+| Pivots | Standard PP/R1/S1 from **previous day** HLC (not Camarilla) |
+| Supertrend | **(7, 3)** on 5m spot (tighter than default 10,3) |
+| Long / sell put | 5m **close > R1** and ST **bullish** → `SELL_ATM_PUT` |
+| Short / sell call | 5m **close < S1** and ST **bearish** → `SELL_ATM_CALL` |
+| Sideways | Price **between S1 and R1** → **no entry** |
+| Exit | Supertrend flip or **15:15** square-off |
+| Limits | Max **3** trades per index per day; **no entry after 15:00** IST |
+
+Enable:
+
+```env
+STRATEGY_STYLE=APEX
+SENSEX_SECURITY_ID=51
+APEX_USE_HEDGED_SPREADS=true
+```
+
+`APEX_USE_HEDGED_SPREADS=true` (default) maps ATM sells to **bull put / bear call spreads** for defined risk. Set `false` only if you accept **naked** short ATM options like the video (unlimited risk on the short leg).
+
+## CPR + EMA (spot 5m)
 
 - CPR from the previous session (pivot, BC, TC).
-- Bullish: price above TC and EMA 9 > EMA 21 → `BUY_CALL`.
-- Bearish: price below BC and EMA 9 < EMA 21 → `BUY_PUT`.
+- Default EMAs: **8** (fast) and **20** (slow) on index spot — set `EMA_FAST_PERIOD` / `EMA_SLOW_PERIOD` in `.env`.
+- **Long premium:** price above TC and fast EMA > slow → `BUY_CALL`; below BC and fast < slow → `BUY_PUT` (plus Supertrend when enabled).
+
+### AUTO autopilot (default)
+
+When `STRATEGY_STYLE=AUTO`, `AUTO_INTELLIGENT_ROUTING=true`, and `AUTO_INCLUDE_APEX=true` (all default), **each scan** picks the best subsystem:
+
+| Priority | Market read | Entry | `strategy_mode` |
+|----------|-------------|--------|-----------------|
+| 1 | **Above R1** or **below S1** + Apex Supertrend (7,3) aligned | Bull put / bear call (hedged if `APEX_USE_HEDGED_SPREADS=true`) | `apex` / `apex_hedged` |
+| 2 | Fresh **8/20 cross** (no CPR conflict) | Directional credit spread | `ema_cross` |
+| 3 | **Sideways CPR** + flat EMA | Iron condor | `cpr_sideways` |
+| 4 | **Trending CPR** + EMA aligned | Bull put / bear call | `cpr_trend` |
+| 5 | Conflicts / no setup | Buy rules or wait | `conflict` / `wait` / `apex_wait` |
+
+Apex session limits (09:16–15:00 entries, max 3 trades/index/day) apply to Apex picks inside AUTO as well.  
+Force Apex-only: `STRATEGY_STYLE=APEX`. Disable Apex inside AUTO: `AUTO_INCLUDE_APEX=false`.
+
+**SENSEX** runs with the other indices when `SENSEX_SECURITY_ID=51` (Dhan BSE INDEX / IDX_I).
+
+Exits also switch automatically: EMA flip closes directional credit; range end or EMA cross closes iron condor; CPR regime flip closes `cpr_trend` positions.
+
+Fixed cross-only mode: `AUTO_INTELLIGENT_ROUTING=false` + `REQUIRE_EMA_CROSS_FOR_CREDIT=true`.  
+Legacy CPR-only credit: `AUTO_INTELLIGENT_ROUTING=false` + `REQUIRE_EMA_CROSS_FOR_CREDIT=false`.
 
 ## CPR regime (sideways vs trending)
 
@@ -29,7 +75,13 @@ Set in `.env` (see `.env.example`; **restart the server** after edits). The dash
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `STRATEGY_STYLE` | `AUTO` | `AUTO` / `CREDIT` / `BUY` |
-| `ENABLE_CREDIT_STRATEGIES` | `true` | Allow iron condor / spreads in AUTO |
+| `EMA_FAST_PERIOD` | `8` | Fast EMA on spot |
+| `EMA_SLOW_PERIOD` | `20` | Slow EMA on spot |
+| `AUTO_INTELLIGENT_ROUTING` | `true` | AUTO picks cross / range / trend credit per scan |
+| `REQUIRE_EMA_CROSS_FOR_CREDIT` | `true` | Used when intelligent routing is off |
+| `EXIT_CREDIT_ON_EMA_CROSS_FLIP` | `true` | Exit credit when EMA flips against position |
+| `CREDIT_IRON_CONDOR_WITHOUT_CROSS` | `false` | Sideways iron condor without a cross |
+| `ENABLE_CREDIT_STRATEGIES` | `true` | Allow credit structures in AUTO |
 | `CPR_NARROW_WIDTH_PCT` | `0.35` | At or below → trending bias |
 | `CPR_WIDE_WIDTH_PCT` | `0.75` | At or above → sideways bias |
 | `CREDIT_SHORT_STRIKE_STEPS` | `2` | Short leg distance from ATM (× strike step) |
@@ -96,7 +148,10 @@ When `STRATEGY_STYLE=AUTO` or `CREDIT` fires an iron condor / bull put / bear ca
 
 | Exit | Default | Meaning |
 |------|---------|---------|
-| `CREDIT_PROFIT_TARGET_PCT` | 0.50 | Close when MTM reaches 50% of max profit (net credit × lot). |
+| `ENABLE_PROFIT_TRAIL` | true | No fixed profit cap — trail peak MTM profit and exit on giveback. |
+| `PROFIT_TRAIL_ARM_RUPEES_PER_LOT` | 500 | Start trailing after this much profit per lot (× dashboard lots). |
+| `PROFIT_TRAIL_GIVEBACK_PCT` | 0.25 | Exit when profit falls 25% from the session peak (e.g. peak ₹1000 → floor ₹750). |
+| `CREDIT_PROFIT_TARGET_PCT` | 0.50 | Used only if `ENABLE_PROFIT_TRAIL=false`. |
 | `CREDIT_STOP_LOSS_PCT` | 0.60 | Close when loss reaches 60% of defined max loss (wing width − credit). |
 | Short-strike breach | — | Bull put: index below short put; bear call: above short call; iron condor: beyond either short. |
 
@@ -118,9 +173,23 @@ Exits were too early with a 1-point index trail. New logic per index:
 
 Square-off still closes open positions in the last minutes of the session (IST).
 
+## Execution safety (finance-grade gates)
+
+Every entry and live exit passes centralized checks in `index_ai/execution_safety.py`:
+
+- **Strategy**: blocks `conflict` / `wait` AUTO modes and EMA-vs-credit mismatches (e.g. bear call while EMA bullish).
+- **Structure**: action must match option legs (iron condor = 4 legs, spreads = 2, single buy = 1).
+- **Quantity**: each leg matches NSE lot × dashboard lots (1–10).
+- **Duplicates**: no second open position on the same index + mode.
+- **Live**: requires `ALLOW_LIVE_TRADING`, Dhan token, kill switch clear; exits only on **LIVE_TRADED** with broker fill proof.
+- **Lock**: per-index mutex so two scans cannot double-post orders.
+
+The scanner uses the **plan** from `plan_instrument` (not a bypass). Live orders are validated again immediately before each Dhan API call.
+
 ## Risk (hard-coded)
 
-- 1 lot per trade
-- 3 losing trades / day kill switch (**Live mode only** — paper keeps trading)
+- Lots per trade: use **Execution mode → Lots per trade** (+/−) on the dashboard (1–10 NSE lots). Saved in `memory/`; applies to new scanner trades and re-syncs open journal quantities. Optional default: `LOTS_PER_TRADE` in `.env`.
+- **Risk scales with lots**: daily loss cap = **₹6,000 × lots** (2 lots → ₹12,000). Credit spread profit/stop targets scale with order quantity automatically.
+- Kill switch (**Live only**): **3 consecutive** losing closed trades in one IST day, or daily realized loss hits the scaled cap. A winning trade resets the loss streak. Paper mode is not blocked.
 - ₹6,000 daily loss cap
 - Paper or Live via dashboard toggle

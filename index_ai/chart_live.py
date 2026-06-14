@@ -9,6 +9,7 @@ from index_ai.candles import prepare_intraday_signal_frames
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.instruments import get_instrument
 from index_ai.strategy_params import get_strategy_params
+from index_ai.config import candle_interval_minutes
 from index_ai.supertrend import supertrend_snapshot
 
 
@@ -22,13 +23,17 @@ def fetch_supertrend_snapshot(client: DhanClient, instrument_key: str) -> dict:
         instrument,
         from_date=start.strftime("%Y-%m-%d 09:15:00"),
         to_date=now.strftime("%Y-%m-%d %H:%M:%S"),
-        interval="5",
+        interval=candle_interval_minutes(),
     )
     candles = chart_response_to_frame(data)
     ema_frame, _ = prepare_intraday_signal_frames(candles)
     params = get_strategy_params()
-    return supertrend_snapshot(
-        ema_frame,
-        period=params.supertrend_period,
-        multiplier=params.supertrend_multiplier,
-    )
+    from index_ai.strategy_router import strategy_style
+
+    if strategy_style() == "APEX":
+        period = params.apex_supertrend_period
+        multiplier = params.apex_supertrend_multiplier
+    else:
+        period = params.supertrend_period
+        multiplier = params.supertrend_multiplier
+    return supertrend_snapshot(ema_frame, period=period, multiplier=multiplier)

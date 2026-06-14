@@ -40,6 +40,18 @@ class _RateLimiter:
 
 _limiter = _RateLimiter(_MIN_REQUEST_INTERVAL_SEC)
 
+
+def unwrap_dhan_record_list(data: Any) -> list[dict[str, Any]]:
+    """Normalize list payloads from Dhan trading APIs (array or nested under data)."""
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    if isinstance(data, dict):
+        for key in ("data", "orders", "orderBook", "orderList", "trades", "tradeBook", "positions"):
+            block = data.get(key)
+            if isinstance(block, list):
+                return [x for x in block if isinstance(x, dict)]
+    return []
+
 # Dhan /charts/intraday: OHLC for last ~5 trading days only (not multi-week ranges).
 INTRADAY_MAX_CALENDAR_DAYS = 5
 _IST_DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
@@ -89,6 +101,20 @@ class DhanClient:
             raise RuntimeError("Dhan credentials are missing. Put them in .env.")
         url = f"{self.settings.api_base_url}{path}"
         last_exc: BaseException | None = None
+        auth_refreshed = False
+
+        try:
+            from index_ai.dhan_auth import auto_refresh_dhan_token
+
+            refreshed = auto_refresh_dhan_token(
+                self.settings,
+                reason=f"preflight:{context or path}",
+            )
+            if refreshed.get("renewed"):
+                self.settings = refreshed.get("settings") or self.settings
+        except Exception:
+            # Non-fatal: request still proceeds with current token.
+            pass
 
         for attempt in range(_MAX_RETRIES):
             _limiter.wait()
@@ -107,6 +133,22 @@ class DhanClient:
                 raise
 
             if response.status_code in {401, 807, 808, 809}:
+                if not auth_refreshed:
+                    try:
+                        from index_ai.dhan_auth import auto_refresh_dhan_token
+
+                        refreshed = auto_refresh_dhan_token(
+                            self.settings,
+                            force=True,
+                            reason=f"auth_error:{context or path}",
+                        )
+                        if refreshed.get("renewed"):
+                            self.settings = refreshed.get("settings") or self.settings
+                            auth_refreshed = True
+                            if attempt + 1 < _MAX_RETRIES:
+                                continue
+                    except Exception:
+                        pass
                 raise DhanAuthError(explain_dhan_http_error(response, context))
             if response.status_code in {429, 805}:
                 last_exc = DhanRateLimitError(explain_dhan_http_error(response, context))
@@ -151,6 +193,41 @@ class DhanClient:
     def _post(self, path: str, payload: dict[str, Any], *, context: str = "") -> dict[str, Any]:
         return self._request("POST", path, payload=payload, context=context or path)
 
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        oid = str(order_id or "").strip()
+        if not oid:
+            raise ValueError("order_id is required")
+        return self._request("GET", f"/orders/{oid}", context="order status")
+
+    def list_today_orders(self) -> list[dict[str, Any]]:
+        """All orders for the current session (order book)."""
+        data = self._request("GET", "/orders", context="order book")
+        return unwrap_dhan_record_list(data)
+
+    def get_fund_limits(self) -> dict[str, Any]:
+        """Available balance, utilized margin, withdrawable (GET /fundlimit)."""
+        return self._request("GET", "/fundlimit", context="fund limits")
+
+    def list_today_trades(self) -> list[dict[str, Any]]:
+        """Today's trade book from Dhan (executed fills, not journal)."""
+        data = self._request("GET", "/trades", context="trade book")
+        return unwrap_dhan_record_list(data)
+
+    def trades_for_order(self, order_id: str) -> list[dict[str, Any]]:
+        """All fills for a single order id."""
+        oid = str(order_id or "").strip()
+        if not oid:
+            raise ValueError("order_id is required")
+        data = self._request("GET", f"/trades/{oid}", context="order trades")
+        if isinstance(data, dict):
+            return [data]
+        return unwrap_dhan_record_list(data)
+
+    def list_positions(self) -> list[dict[str, Any]]:
+        """Open positions for the day (includes F&O carryforward)."""
+        data = self._request("GET", "/positions", context="positions")
+        return unwrap_dhan_record_list(data)
+
     def ltp(self, segment: str, security_ids: list[int]) -> dict[str, Any]:
         return self._post("/marketfeed/ltp", {segment: security_ids}, context="market LTP")
 
@@ -179,7 +256,7 @@ class DhanClient:
         *,
         from_date: str,
         to_date: str,
-        interval: str = "5",
+        interval: str = "1",
     ) -> dict[str, Any]:
         if instrument.underlying_security_id is None:
             raise RuntimeError(f"{instrument.label} security id is not configured.")
@@ -243,26 +320,29 @@ class DhanClient:
         transaction_type: str,
         quantity: int,
         correlation_id: str,
+        product_type: str | None = None,
     ) -> dict[str, Any]:
-        payload = {
-            "dhanClientId": self.settings.client_id,
-            "correlationId": correlation_id[:30],
-            "transactionType": transaction_type,
-            "exchangeSegment": exchange_segment,
-            "productType": "INTRADAY",
-            "orderType": "MARKET",
-            "validity": "DAY",
-            "securityId": str(security_id),
-            "quantity": int(quantity),
-            "disclosedQuantity": 0,
-            "price": 0,
-            "triggerPrice": 0,
-            "afterMarketOrder": False,
-            "amoTime": "",
-            "boProfitValue": "",
-            "boStopLossValue": "",
-        }
-        return self._post("/orders", payload, context="place order")
+        from index_ai.dhan_orders import (
+            build_market_order_payload,
+            normalize_order_response,
+            order_product_type_for_leg,
+        )
+
+        pt = product_type or order_product_type_for_leg(
+            transaction_type=transaction_type,
+            exchange_segment=exchange_segment,
+        )
+        payload = build_market_order_payload(
+            client_id=str(self.settings.client_id),
+            security_id=int(security_id),
+            exchange_segment=exchange_segment,
+            transaction_type=transaction_type,
+            quantity=int(quantity),
+            correlation_id=correlation_id,
+            product_type=pt,
+        )
+        raw = self._post("/orders", payload, context="place order")
+        return normalize_order_response(raw)
 
 
 def chart_response_to_frame(data: dict[str, Any]) -> pd.DataFrame:

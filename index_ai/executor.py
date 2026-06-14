@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
 from index_ai.config import AppSettings
 from index_ai.dhan import DhanClient
 from index_ai.instruments import IndexInstrument, get_instrument
-from index_ai.learning import learned_settings, record_trade
+from index_ai.learning import learned_settings, loss_guard_for_setup, record_trade
 from index_ai.hf_learning import build_setup_narrative, score_setup_hf
 from index_ai.ml_outcomes import extract_features, score_trade_setup
-from index_ai.option_structures import CREDIT_ACTIONS
+from index_ai.credit_spread import CREDIT_ACTIONS
+from index_ai.premium_sell import is_premium_sell_action
 from index_ai.risk import check_execution_gates
 from index_ai.strategy import StrategySignal
 from index_ai.strategy_params import get_strategy_params
 from index_ai.credit_spread import init_credit_trail_meta, is_credit_option
+from index_ai.execution_safety import acquire_execution_lock, validate_execution_plan
 from index_ai.trailing import init_trail_meta
 
 
@@ -29,15 +30,19 @@ class ExecutionPlan:
 
 def _min_confidence_gate(signal_action: str, app_settings: AppSettings, learned: dict[str, Any]) -> float:
     """Buy setups use learned gate; credit spreads use CPR credit floor (not buy-tuned learning)."""
-    if signal_action in CREDIT_ACTIONS:
-        return get_strategy_params().credit_min_confidence
-    return float(
-        learned.get("effective_min_confidence")
-        or (
-            app_settings.risk.min_confidence
-            + float(learned.get("min_confidence_adjustment") or 0)
+    from index_ai.pre_open_brief import entry_confidence_bump
+
+    if signal_action in CREDIT_ACTIONS or is_premium_sell_action(signal_action):
+        base = get_strategy_params().credit_min_confidence
+    else:
+        base = float(
+            learned.get("effective_min_confidence")
+            or (
+                app_settings.risk.min_confidence
+                + float(learned.get("min_confidence_adjustment") or 0)
+            )
         )
-    )
+    return base + entry_confidence_bump()
 
 
 def build_execution_plan(
@@ -59,12 +64,33 @@ def build_execution_plan(
         transaction_type=tx,
         confidence=signal.confidence,
         min_confidence=min_conf,
+        strategy_mode=str(signal.strategy_mode or ""),
     )
     if not ok:
         mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
         return ExecutionPlan(False, mode, reason, option, signal.to_dict())
 
-    if signal_action in CREDIT_ACTIONS:
+    loss_guard = loss_guard_for_setup(instrument.key, signal_action)
+    if loss_guard.get("blocked"):
+        mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        guarded_signal = {
+            **signal.to_dict(),
+            "loss_guard": loss_guard,
+        }
+        return ExecutionPlan(False, mode, str(loss_guard["reason"]), option, guarded_signal)
+
+    safety = validate_execution_plan(
+        app_settings=app_settings,
+        instrument=instrument,
+        signal=signal.to_dict(),
+        option=option,
+        min_confidence=min_conf,
+    )
+    if not safety.ok:
+        mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        return ExecutionPlan(False, mode, safety.reason, option, signal.to_dict())
+
+    if signal_action in CREDIT_ACTIONS or is_premium_sell_action(signal_action):
         return ExecutionPlan(
             True,
             app_settings.risk.trading_mode,
@@ -115,81 +141,119 @@ def execute_plan(
     *,
     instrument: IndexInstrument | None = None,
 ) -> dict[str, Any]:
+    from index_ai.config import settings as load_settings
+    from index_ai.dhan_orders import attach_broker_orders
+
+    fresh = load_settings()
+    trade_mode = str(fresh.risk.trading_mode or plan.mode or "PAPER").upper()
+
     if not plan.allowed or not plan.option:
         return {"status": "BLOCKED", "reason": plan.reason, "plan": plan.__dict__}
+
+    inst = instrument or get_instrument(str(plan.option.get("instrument") or "NIFTY"))
+    learned = learned_settings()
+    min_conf = _min_confidence_gate(str(plan.signal.get("action") or ""), fresh, learned)
+    safety = validate_execution_plan(
+        app_settings=fresh,
+        instrument=inst,
+        signal=plan.signal,
+        option=plan.option,
+        min_confidence=min_conf,
+    )
+    if not safety.ok:
+        return {"status": "BLOCKED", "reason": safety.reason, "safety_code": safety.code, "plan": plan.__dict__}
+
+    instrument_key = str(plan.option.get("instrument") or inst.key)
+    lock = acquire_execution_lock(instrument_key)
     status = "PAPER_RECORDED"
     broker_response: dict[str, Any] | None = None
-    if plan.mode == "LIVE":
-        legs = list(plan.option.get("legs") or [])
-        if legs:
-            broker_responses: list[dict[str, Any]] = []
-            base_id = uuid.uuid4().hex[:10]
-            for idx, leg in enumerate(legs):
-                broker_responses.append(
-                    client.place_market_order(
-                        security_id=int(leg["security_id"]),
-                        exchange_segment=str(leg["segment"]),
-                        transaction_type=str(leg["transaction_type"]),
-                        quantity=int(leg.get("quantity") or plan.option["quantity"]),
-                        correlation_id=f"idxai-{base_id}-{idx}"[:30],
-                    )
+
+    with lock:
+        safety = validate_execution_plan(
+            app_settings=fresh,
+            instrument=inst,
+            signal=plan.signal,
+            option=plan.option,
+            min_confidence=min_conf,
+        )
+        if not safety.ok:
+            return {"status": "BLOCKED", "reason": safety.reason, "safety_code": safety.code, "plan": plan.__dict__}
+
+        if trade_mode == "LIVE":
+            from index_ai.dhan_orders import attach_broker_orders, live_orders_enabled, place_live_entry_orders
+
+            if not live_orders_enabled(fresh):
+                return {
+                    "status": "BLOCKED",
+                    "reason": (
+                        "Live orders are not enabled. Confirm Live mode, Dhan token, and kill switch."
+                    ),
+                    "plan": plan.__dict__,
+                }
+            try:
+                broker_response = place_live_entry_orders(
+                    client,
+                    plan.option,
+                    settings=fresh,
+                    signal_action=str(plan.signal.get("action") or ""),
                 )
-            broker_response = {"legs": broker_responses}
-            status = "LIVE_SENT"
-        else:
-            broker_response = client.place_market_order(
-                security_id=int(plan.option["security_id"]),
-                exchange_segment=str(plan.option["segment"]),
-                transaction_type=str(plan.option["transaction_type"]),
-                quantity=int(plan.option["quantity"]),
-                correlation_id=f"idxai-{uuid.uuid4().hex[:12]}",
+                status = str(broker_response.get("status") or "LIVE_SENT")
+            except Exception as exc:
+                return {"status": "LIVE_FAILED", "reason": str(exc), "plan": plan.__dict__}
+
+        option_payload = attach_broker_orders(dict(plan.option), broker_response) if broker_response else dict(plan.option)
+        for leg in option_payload.get("legs") or []:
+            if leg.get("ltp") is not None and leg.get("entry_ltp") is None:
+                leg["entry_ltp"] = leg["ltp"]
+        if option_payload.get("ltp") is not None and option_payload.get("entry_ltp") is None:
+            option_payload["entry_ltp"] = option_payload["ltp"]
+        option_payload["ml_features"] = extract_features(
+            plan.signal, option_payload, inst.key
+        )
+        ml_snap = score_trade_setup(plan.signal, option_payload, inst.key)
+        if ml_snap.get("win_probability") is not None:
+            option_payload["ml_win_probability"] = ml_snap["win_probability"]
+        hf_snap = score_setup_hf(plan.signal, option_payload, inst.key)
+        if hf_snap.get("ready"):
+            option_payload["hf_sentiment"] = {
+                "label": hf_snap.get("label"),
+                "positive_prob": hf_snap.get("positive_prob"),
+                "negative_prob": hf_snap.get("negative_prob"),
+                "model": hf_snap.get("model"),
+            }
+        option_payload["setup_narrative"] = build_setup_narrative(
+            plan.signal, option_payload, inst.key
+        )
+        if is_credit_option(option_payload):
+            option_payload["trail_meta"] = init_credit_trail_meta(
+                option=option_payload,
+                instrument=inst,
+                action=str(plan.signal["action"]),
+                entry_index_price=float(plan.signal["price"]),
+                supertrend_direction=int(plan.signal.get("supertrend_direction") or 0),
+                supertrend_stop=float(plan.signal.get("supertrend_stop") or 0),
             )
-            status = str(broker_response.get("orderStatus") or "LIVE_SENT")
-    inst = instrument or get_instrument(str(plan.option.get("instrument") or "NIFTY"))
-    option_payload = dict(plan.option)
-    for leg in option_payload.get("legs") or []:
-        if leg.get("ltp") is not None and leg.get("entry_ltp") is None:
-            leg["entry_ltp"] = leg["ltp"]
-    option_payload["ml_features"] = extract_features(
-        plan.signal, option_payload, inst.key
-    )
-    ml_snap = score_trade_setup(plan.signal, option_payload, inst.key)
-    if ml_snap.get("win_probability") is not None:
-        option_payload["ml_win_probability"] = ml_snap["win_probability"]
-    hf_snap = score_setup_hf(plan.signal, option_payload, inst.key)
-    if hf_snap.get("ready"):
-        option_payload["hf_sentiment"] = {
-            "label": hf_snap.get("label"),
-            "positive_prob": hf_snap.get("positive_prob"),
-            "negative_prob": hf_snap.get("negative_prob"),
-            "model": hf_snap.get("model"),
-        }
-    option_payload["setup_narrative"] = build_setup_narrative(
-        plan.signal, option_payload, inst.key
-    )
-    if is_credit_option(option_payload):
-        option_payload["trail_meta"] = init_credit_trail_meta(
+        else:
+            option_payload["trail_meta"] = init_trail_meta(
+                entry_index_price=float(plan.signal["price"]),
+                action=str(plan.signal["action"]),
+                transaction_type=str(plan.option.get("transaction_type") or "BUY"),
+                instrument=inst,
+                supertrend_direction=int(plan.signal.get("supertrend_direction") or 0),
+                supertrend_stop=float(plan.signal.get("supertrend_stop") or 0),
+            )
+        trade_id = record_trade(
+            mode=trade_mode,
+            instrument=str(plan.option["instrument"]),
+            action=str(plan.signal["action"]),
+            confidence=float(plan.signal["confidence"]),
             option=option_payload,
-            instrument=inst,
-            action=str(plan.signal["action"]),
-            entry_index_price=float(plan.signal["price"]),
+            signal=plan.signal,
+            status=status,
         )
-    else:
-        option_payload["trail_meta"] = init_trail_meta(
-            entry_index_price=float(plan.signal["price"]),
-            action=str(plan.signal["action"]),
-            transaction_type=str(plan.option.get("transaction_type") or "BUY"),
-            instrument=inst,
-            supertrend_direction=int(plan.signal.get("supertrend_direction") or 0),
-            supertrend_stop=float(plan.signal.get("supertrend_stop") or 0),
-        )
-    trade_id = record_trade(
-        mode=plan.mode,
-        instrument=str(plan.option["instrument"]),
-        action=str(plan.signal["action"]),
-        confidence=float(plan.signal["confidence"]),
-        option=option_payload,
-        signal=plan.signal,
-        status=status,
-    )
-    return {"status": status, "trade_id": trade_id, "broker_response": broker_response, "plan": plan.__dict__}
+        return {
+            "status": status,
+            "trade_id": trade_id,
+            "broker_response": broker_response,
+            "plan": plan.__dict__,
+        }

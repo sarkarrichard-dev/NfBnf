@@ -1,0 +1,16 @@
+[Unit]
+Description=Index Options AI (NIFTY/BANKNIFTY/SENSEX algo)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=algo
+WorkingDirectory=/opt/algo-bnf
+EnvironmentFile=/opt/algo-bnf/.env
+ExecStart=/opt/algo-bnf/.venv/bin/python -m uvicorn index_ai.server:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

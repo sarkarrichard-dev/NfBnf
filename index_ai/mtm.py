@@ -41,14 +41,20 @@ def persist_trade_option(trade_id: str, option: dict[str, Any]) -> None:
         )
 
 
-def enrich_open_trade_mtm(trade: dict[str, Any], client: DhanClient) -> dict[str, Any]:
+def enrich_open_trade_mtm(
+    trade: dict[str, Any],
+    client: DhanClient,
+    *,
+    persist: bool = True,
+    ltp_cache: dict[tuple[str, int], float] | None = None,
+) -> dict[str, Any]:
     """Fetch live option LTP and attach MTM + short history on the trade dict."""
     if trade.get("pnl") is not None:
         return trade
 
     from index_ai.learning import sync_option_lot_size
 
-    trade = sync_option_lot_size(trade, persist=True)
+    trade = sync_option_lot_size(trade, persist=False)
     option = dict(trade.get("option") or {})
     try:
         if is_credit_option(option):
@@ -56,6 +62,7 @@ def enrich_open_trade_mtm(trade: dict[str, Any], client: DhanClient) -> dict[str
                 option,
                 client,
                 instrument_key=str(trade.get("instrument") or option.get("instrument") or ""),
+                ltp_cache=ltp_cache,
             )
             now = now_ist_iso()
             option["last_option_ltp"] = close_debit
@@ -74,7 +81,7 @@ def enrich_open_trade_mtm(trade: dict[str, Any], client: DhanClient) -> dict[str
                 },
             )
         else:
-            ltp = option_ltp_with_retry(client, option, attempts=2)
+            ltp = _ltp_from_cache_or_fetch(client, option, ltp_cache)
             mtm = compute_mtm_pnl(trade, ltp)
             now = now_ist_iso()
             option["last_option_ltp"] = ltp
@@ -90,20 +97,87 @@ def enrich_open_trade_mtm(trade: dict[str, Any], client: DhanClient) -> dict[str
                 },
             )
         trade["option"] = option
-        persist_trade_option(str(trade["id"]), option)
+        if persist:
+            persist_trade_option(str(trade["id"]), option)
     except Exception as exc:
         option["mtm_error"] = str(exc)[:200]
         trade["option"] = option
     return trade
 
 
-def enrich_open_trades_mtm(trades: list[dict[str, Any]], client: DhanClient | None) -> list[dict[str, Any]]:
+def _ltp_from_cache_or_fetch(
+    client: DhanClient,
+    option: dict[str, Any],
+    ltp_cache: dict[tuple[str, int], float] | None,
+) -> float:
+    segment = str(option.get("segment") or "")
+    sid = int(option["security_id"])
+    if ltp_cache is not None:
+        cached = ltp_cache.get((segment, sid))
+        if cached is not None:
+            return cached
+    return option_ltp_with_retry(client, option, attempts=1)
+
+
+def _build_ltp_cache(client: DhanClient, trades: list[dict[str, Any]]) -> dict[tuple[str, int], float]:
+    """One marketfeed LTP request per segment for all open legs (fast poll path)."""
+    from index_ai.credit_spread import _parse_ltp_bucket
+
+    by_segment: dict[str, set[int]] = {}
+    for trade in trades:
+        if trade.get("pnl") is not None:
+            continue
+        option = trade.get("option") or {}
+        for leg in option.get("legs") or [option]:
+            if not isinstance(leg, dict) or leg.get("security_id") is None:
+                continue
+            seg = str(leg.get("segment") or option.get("segment") or "NSE_FNO")
+            by_segment.setdefault(seg, set()).add(int(leg["security_id"]))
+        if option.get("security_id") is not None and not option.get("legs"):
+            seg = str(option.get("segment") or "NSE_FNO")
+            by_segment.setdefault(seg, set()).add(int(option["security_id"]))
+
+    cache: dict[tuple[str, int], float] = {}
+    for segment, ids in by_segment.items():
+        if not ids:
+            continue
+        try:
+            raw = client.ltp(segment, sorted(ids))
+            for sid in ids:
+                px = _parse_ltp_bucket(raw, segment, sid)
+                if px is not None:
+                    cache[(segment, sid)] = px
+        except Exception:
+            continue
+    return cache
+
+
+def enrich_open_trades_mtm(
+    trades: list[dict[str, Any]],
+    client: DhanClient | None,
+    *,
+    persist: bool = True,
+) -> list[dict[str, Any]]:
     if client is None:
         return trades
+    from index_ai.learning import is_broker_filled_open
+
+    open_rows = [
+        t
+        for t in trades
+        if t.get("pnl") is None and is_broker_filled_open(t)
+    ]
+    ltp_cache = _build_ltp_cache(client, open_rows) if open_rows else {}
+
     out: list[dict[str, Any]] = []
     for trade in trades:
         if trade.get("pnl") is not None:
             out.append(trade)
             continue
-        out.append(enrich_open_trade_mtm(trade, client))
+        if not is_broker_filled_open(trade):
+            out.append(trade)
+            continue
+        out.append(
+            enrich_open_trade_mtm(trade, client, persist=persist, ltp_cache=ltp_cache)
+        )
     return out

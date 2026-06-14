@@ -13,11 +13,28 @@ from index_ai.config import ENV_PATH
 
 @dataclass(frozen=True)
 class StrategyParams:
+    ema_fast_period: int = 8
+    ema_slow_period: int = 20
+    auto_intelligent_routing: bool = True
+    auto_include_apex: bool = True
+    auto_trend_buy_first: bool = True
+    auto_credit_sideways_only: bool = False
+    apex_supertrend_period: int = 7
+    apex_supertrend_multiplier: float = 3.0
+    apex_max_trades_per_day: int = 3
+    apex_use_hedged_spreads: bool = True
+    require_ema_cross_for_credit: bool = True
+    exit_credit_on_ema_cross_flip: bool = True
+    credit_iron_condor_without_cross: bool = False
     supertrend_period: int = 10
     supertrend_multiplier: float = 3.0
     breakout_lookback: int = 20
     require_supertrend_align: bool = True
     require_breakout_tag: bool = False
+    entry_confirmation_bars: int = 2
+    min_directional_ema_spread_pct: float = 0.015
+    max_cpr_entry_extension_pct: float = 0.0
+    max_sideways_ema_spread_pct: float = 0.08
     breakout_confidence_boost: float = 0.06
     exit_on_supertrend_flip: bool = True
     cpr_narrow_width_pct: float = 0.35
@@ -28,6 +45,9 @@ class StrategyParams:
     credit_min_confidence: float = 0.58
     credit_profit_target_pct: float = 0.50
     credit_stop_loss_pct: float = 0.60
+    enable_profit_trail: bool = True
+    profit_trail_arm_rupees_per_lot: float = 500.0
+    profit_trail_giveback_pct: float = 0.25
 
 
 def _bool(name: str, default: bool) -> bool:
@@ -53,13 +73,31 @@ def _float(name: str, default: float) -> float:
 
 @lru_cache(maxsize=1)
 def get_strategy_params() -> StrategyParams:
-    load_dotenv(ENV_PATH, override=True)
+    if not os.getenv("PYTEST_CURRENT_TEST"):
+        load_dotenv(ENV_PATH, override=False)
     return StrategyParams(
+        ema_fast_period=_int("EMA_FAST_PERIOD", 8),
+        ema_slow_period=_int("EMA_SLOW_PERIOD", 20),
+        auto_intelligent_routing=_bool("AUTO_INTELLIGENT_ROUTING", True),
+        auto_include_apex=_bool("AUTO_INCLUDE_APEX", True),
+        auto_trend_buy_first=_bool("AUTO_TREND_BUY_FIRST", True),
+        auto_credit_sideways_only=_bool("AUTO_CREDIT_SIDEWAYS_ONLY", False),
+        apex_supertrend_period=_int("APEX_SUPERTREND_PERIOD", 7),
+        apex_supertrend_multiplier=_float("APEX_SUPERTREND_MULTIPLIER", 3.0),
+        apex_max_trades_per_day=_int("APEX_MAX_TRADES_PER_DAY", 3),
+        apex_use_hedged_spreads=_bool("APEX_USE_HEDGED_SPREADS", True),
+        require_ema_cross_for_credit=_bool("REQUIRE_EMA_CROSS_FOR_CREDIT", True),
+        exit_credit_on_ema_cross_flip=_bool("EXIT_CREDIT_ON_EMA_CROSS_FLIP", True),
+        credit_iron_condor_without_cross=_bool("CREDIT_IRON_CONDOR_WITHOUT_CROSS", False),
         supertrend_period=_int("SUPERTREND_PERIOD", 10),
         supertrend_multiplier=_float("SUPERTREND_MULTIPLIER", 3.0),
         breakout_lookback=_int("BREAKOUT_LOOKBACK", 20),
         require_supertrend_align=_bool("REQUIRE_SUPERTREND_ALIGN", True),
         require_breakout_tag=_bool("REQUIRE_BREAKOUT_TAG", False),
+        entry_confirmation_bars=_int("ENTRY_CONFIRMATION_BARS", 2),
+        min_directional_ema_spread_pct=_float("MIN_DIRECTIONAL_EMA_SPREAD_PCT", 0.015),
+        max_cpr_entry_extension_pct=_float("MAX_CPR_ENTRY_EXTENSION_PCT", 0.0),
+        max_sideways_ema_spread_pct=_float("MAX_SIDEWAYS_EMA_SPREAD_PCT", 0.08),
         breakout_confidence_boost=_float("BREAKOUT_CONFIDENCE_BOOST", 0.06),
         exit_on_supertrend_flip=_bool("EXIT_ON_SUPERTREND_FLIP", True),
         cpr_narrow_width_pct=_float("CPR_NARROW_WIDTH_PCT", 0.35),
@@ -70,6 +108,9 @@ def get_strategy_params() -> StrategyParams:
         credit_min_confidence=_float("CPR_CREDIT_MIN_CONFIDENCE", 0.58),
         credit_profit_target_pct=_float("CREDIT_PROFIT_TARGET_PCT", 0.50),
         credit_stop_loss_pct=_float("CREDIT_STOP_LOSS_PCT", 0.60),
+        enable_profit_trail=_bool("ENABLE_PROFIT_TRAIL", True),
+        profit_trail_arm_rupees_per_lot=_float("PROFIT_TRAIL_ARM_RUPEES_PER_LOT", 500.0),
+        profit_trail_giveback_pct=_float("PROFIT_TRAIL_GIVEBACK_PCT", 0.25),
     )
 
 
@@ -77,15 +118,74 @@ def strategy_tuning_summary() -> dict[str, object]:
     """Active tuning values for dashboard / API (edit .env, then restart)."""
     from index_ai.strategy_router import strategy_style
 
+    from index_ai.config import candle_interval_minutes, candle_interval_int, bars_for_minutes
+
     p = get_strategy_params()
     style = strategy_style()
+    iv = candle_interval_minutes()
+    iv_int = candle_interval_int()
+    confirm_min = p.entry_confirmation_bars * iv_int
+    breakout_min = p.breakout_lookback * iv_int
     return {
         "strategy_style": style,
+        "candle_interval_minutes": iv,
+        "candle_bar_note": (
+            f"All EMA/CPR/Supertrend signals use {iv}m spot bars "
+            f"({p.entry_confirmation_bars} bars ≈ {confirm_min} min confirm, "
+            f"breakout lookback {p.breakout_lookback} bars ≈ {breakout_min} min)."
+        ),
         "strategy_style_note": {
-            "AUTO": "Credit when CPR regime is clear; else buy call/put with Supertrend.",
-            "CREDIT": "Only hedged iron condor / credit spreads.",
+            "AUTO": (
+                "Autopilot: trending days → long premium (calls/puts); sideways → iron condor; "
+                "optional Apex on R1/S1 when AUTO_INCLUDE_APEX=true."
+                if p.auto_trend_buy_first and p.auto_credit_sideways_only
+                else (
+                    "Autopilot: Apex on R1/S1 breakout + ST; else EMA/CPR credit; else buy."
+                    if p.auto_intelligent_routing and p.auto_include_apex
+                    else (
+                        "Intelligent switch: EMA cross → directional credit; "
+                        "sideways CPR → iron condor; aligned trend → CPR credit or buy."
+                        if p.auto_intelligent_routing
+                        else "Fixed rules from REQUIRE_EMA_CROSS_FOR_CREDIT / CPR credit."
+                    )
+                )
+            ),
+            "CREDIT": "Only hedged credit (EMA cross when REQUIRE_EMA_CROSS_FOR_CREDIT=true).",
             "BUY": "Only long premium (calls/puts).",
+            "APEX": (
+                "Pivot R1/S1 + Supertrend (7,3): sell ATM put above R1, ATM call below S1. "
+                + ("Hedged spreads by default." if p.apex_use_hedged_spreads else "Naked ATM sell.")
+            ),
         }.get(style, ""),
+        "auto_intelligent_routing": p.auto_intelligent_routing,
+        "auto_include_apex": p.auto_include_apex,
+        "auto_trend_buy_first": p.auto_trend_buy_first,
+        "auto_credit_sideways_only": p.auto_credit_sideways_only,
+        "apex_supertrend_period": p.apex_supertrend_period,
+        "apex_supertrend_multiplier": p.apex_supertrend_multiplier,
+        "apex_max_trades_per_day": p.apex_max_trades_per_day,
+        "apex_use_hedged_spreads": p.apex_use_hedged_spreads,
+        "apex_note": (
+            f"R1/S1 pivots + ST {p.apex_supertrend_period}/{p.apex_supertrend_multiplier}, "
+            f"max {p.apex_max_trades_per_day} trades/index/day, no entry after 15:00 IST."
+        ),
+        "ema_fast_period": p.ema_fast_period,
+        "ema_slow_period": p.ema_slow_period,
+        "require_ema_cross_for_credit": p.require_ema_cross_for_credit,
+        "exit_credit_on_ema_cross_flip": p.exit_credit_on_ema_cross_flip,
+        "credit_iron_condor_without_cross": p.credit_iron_condor_without_cross,
+        "ema_cross_note": (
+            f"Spot {iv}m chart — EMA {p.ema_fast_period}/{p.ema_slow_period}. "
+            + (
+                "AUTO intelligently picks cross / range / trend credit each scan."
+                if p.auto_intelligent_routing
+                else (
+                    "Credit entries only on fresh cross; exits when alignment flips."
+                    if p.require_ema_cross_for_credit
+                    else "CPR regime drives credit (legacy)."
+                )
+            )
+        ),
         "enable_credit_strategies": p.enable_credit_strategies,
         "cpr_narrow_width_pct": p.cpr_narrow_width_pct,
         "cpr_wide_width_pct": p.cpr_wide_width_pct,
@@ -98,12 +198,41 @@ def strategy_tuning_summary() -> dict[str, object]:
         "credit_min_confidence": p.credit_min_confidence,
         "credit_profit_target_pct": p.credit_profit_target_pct,
         "credit_stop_loss_pct": p.credit_stop_loss_pct,
+        "enable_profit_trail": p.enable_profit_trail,
+        "profit_trail_arm_rupees_per_lot": p.profit_trail_arm_rupees_per_lot,
+        "profit_trail_giveback_pct": p.profit_trail_giveback_pct,
+        "profit_trail_note": (
+            "No fixed profit cap when enabled — MTM trails peak profit; "
+            f"arms after ₹{p.profit_trail_arm_rupees_per_lot:,.0f}×lots, "
+            f"exits on {p.profit_trail_giveback_pct:.0%} giveback from peak."
+        ),
         "require_supertrend_align": p.require_supertrend_align,
         "require_breakout_tag": p.require_breakout_tag,
+        "breakout_lookback": p.breakout_lookback,
+        "entry_confirmation_bars": p.entry_confirmation_bars,
+        "min_directional_ema_spread_pct": p.min_directional_ema_spread_pct,
+        "max_cpr_entry_extension_pct": p.max_cpr_entry_extension_pct,
+        "max_sideways_ema_spread_pct": p.max_sideways_ema_spread_pct,
         "supertrend_period": p.supertrend_period,
         "supertrend_multiplier": p.supertrend_multiplier,
         "env_keys": [
+            "CANDLE_INTERVAL_MINUTES",
             "STRATEGY_STYLE",
+            "APEX_SUPERTREND_PERIOD",
+            "APEX_SUPERTREND_MULTIPLIER",
+            "APEX_MAX_TRADES_PER_DAY",
+            "APEX_USE_HEDGED_SPREADS",
+            "APEX_ENTRIES_START",
+            "APEX_NO_ENTRY_AFTER",
+            "AUTO_INTELLIGENT_ROUTING",
+            "AUTO_INCLUDE_APEX",
+            "AUTO_TREND_BUY_FIRST",
+            "AUTO_CREDIT_SIDEWAYS_ONLY",
+            "EMA_FAST_PERIOD",
+            "EMA_SLOW_PERIOD",
+            "REQUIRE_EMA_CROSS_FOR_CREDIT",
+            "EXIT_CREDIT_ON_EMA_CROSS_FLIP",
+            "CREDIT_IRON_CONDOR_WITHOUT_CROSS",
             "ENABLE_CREDIT_STRATEGIES",
             "CPR_NARROW_WIDTH_PCT",
             "CPR_WIDE_WIDTH_PCT",
@@ -112,8 +241,16 @@ def strategy_tuning_summary() -> dict[str, object]:
             "CREDIT_SHORT_STRIKE_STEPS",
             "CREDIT_PROFIT_TARGET_PCT",
             "CREDIT_STOP_LOSS_PCT",
+            "ENABLE_PROFIT_TRAIL",
+            "PROFIT_TRAIL_ARM_RUPEES_PER_LOT",
+            "PROFIT_TRAIL_GIVEBACK_PCT",
             "REQUIRE_SUPERTREND_ALIGN",
             "REQUIRE_BREAKOUT_TAG",
+            "BREAKOUT_LOOKBACK",
+            "ENTRY_CONFIRMATION_BARS",
+            "MIN_DIRECTIONAL_EMA_SPREAD_PCT",
+            "MAX_CPR_ENTRY_EXTENSION_PCT",
+            "MAX_SIDEWAYS_EMA_SPREAD_PCT",
             "SUPERTREND_PERIOD",
             "SUPERTREND_MULTIPLIER",
         ],

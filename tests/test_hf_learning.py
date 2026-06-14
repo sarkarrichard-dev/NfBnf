@@ -39,7 +39,9 @@ def test_parse_finbert_style_result() -> None:
     assert parsed["positive_prob"] > 0.8
 
 
-def test_score_setup_hf_without_token() -> None:
+def test_score_setup_hf_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("index_ai.hf_learning._hf_token", lambda: "")
+    monkeypatch.delenv("HF_USE_LOCAL", raising=False)
     result = score_setup_hf(
         {"action": "BUY_CALL", "confidence": 0.7, "reason": "test", "price": 1, "tc": 1, "bc": 1, "ema_fast": 1, "ema_slow": 0},
         {},

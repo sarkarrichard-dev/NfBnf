@@ -21,6 +21,10 @@ def _direction_for_action(action: str, transaction_type: str) -> int:
         return -1 if tx == "SELL" else 1
     if action == "SELL_IRON_CONDOR":
         return 0
+    if action == "SELL_ATM_PUT":
+        return 1 if tx == "SELL" else -1
+    if action == "SELL_ATM_CALL":
+        return -1 if tx == "SELL" else 1
     return 1
 
 
@@ -48,7 +52,9 @@ def init_trail_meta(
     else:
         initial_stop = entry_index_price + initial
 
-    return {
+    from index_ai.profit_trail import attach_profit_trail_meta
+
+    meta = {
         "entry_index_price": entry_index_price,
         "anchor_index_price": entry_index_price,
         "stop_index_price": initial_stop,
@@ -61,6 +67,7 @@ def init_trail_meta(
         "supertrend_direction": int(supertrend_direction),
         "supertrend_stop": float(supertrend_stop or 0),
     }
+    return attach_profit_trail_meta(meta)
 
 
 def check_supertrend_exit(
@@ -205,10 +212,20 @@ def evaluate_open_trade(
 
     st_hit, st_reason = check_supertrend_exit(updated, current_index_price, fresh_supertrend)
     trail_hit = bool(updated.get("hit"))
-    should_exit = trail_hit or st_hit
+    mtm = option.get("mtm_pnl")
+    profit_hit = False
+    profit_reason: str | None = None
+    if mtm is not None:
+        from index_ai.profit_trail import evaluate_profit_trail
+
+        updated, profit_hit, profit_reason = evaluate_profit_trail(updated, float(mtm))
+
+    should_exit = trail_hit or st_hit or profit_hit
 
     armed = updated.get("trail_armed")
-    if st_hit and st_reason:
+    if profit_hit and profit_reason:
+        exit_msg = profit_reason
+    elif st_hit and st_reason:
         exit_msg = st_reason
     elif armed:
         dist = instrument.trail_distance_points
@@ -229,4 +246,5 @@ def evaluate_open_trade(
         "should_exit": should_exit,
         "exit_reason": exit_msg if should_exit else None,
         "supertrend_exit": st_hit,
+        "profit_trail_exit": profit_hit,
     }

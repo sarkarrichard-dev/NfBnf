@@ -6,7 +6,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from index_ai.dhan import DhanClient
-from index_ai.learning import format_trade_for_ui, option_leg_fields, recent_trades
+from index_ai.learning import (
+    expand_trades_to_log_rows,
+    format_trade_for_ui,
+    option_leg_fields,
+    recent_trades,
+)
 from index_ai.mtm import enrich_open_trades_mtm
 from index_ai.market_clock import format_ist_display, now_ist_iso
 from index_ai.risk_policy import policy_summary
@@ -23,14 +28,25 @@ def _parse_created_at(value: str) -> datetime:
 
 
 def _period_stats(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    from index_ai.learning import is_live_trade
+
     closed = [t for t in trades if t.get("pnl") is not None]
+    open_raw = [t for t in trades if t.get("pnl") is None]
+    paper_open = sum(1 for t in open_raw if not is_live_trade(t))
+    live_open = sum(
+        1
+        for t in open_raw
+        if is_live_trade(t) and str(t.get("status") or "").upper() == "LIVE_TRADED"
+    )
     wins = [t for t in closed if float(t["pnl"]) > 0]
     losses = [t for t in closed if float(t["pnl"]) < 0]
     total_pnl = sum(float(t["pnl"]) for t in closed)
     return {
         "trades": len(trades),
         "closed": len(closed),
-        "open": len(trades) - len(closed),
+        "open": len(open_raw),
+        "paper_open": paper_open,
+        "live_open": live_open,
         "wins": len(wins),
         "losses": len(losses),
         "win_rate": round(len(wins) / len(closed), 3) if closed else None,
@@ -55,6 +71,68 @@ def _count_by(trades: list[dict[str, Any]], field: str) -> dict[str, int]:
         key = str(t.get(field) or "—")
         counts[key] += 1
     return dict(sorted(counts.items(), key=lambda x: -x[1]))
+
+
+def _row_realized_pnl(row: dict[str, Any]) -> float | None:
+    for key in ("leg_pnl", "spread_pnl"):
+        if row.get(key) is not None:
+            return float(row[key])
+    if not row.get("is_open") and row.get("display_pnl") is not None:
+        return float(row["display_pnl"])
+    return None
+
+
+def _row_open_mtm(row: dict[str, Any]) -> float | None:
+    if not row.get("is_open"):
+        return None
+    if row.get("leg_mtm") is not None:
+        return float(row["leg_mtm"])
+    if row.get("display_pnl") is not None and int(row.get("leg_index") or 0) == 0:
+        return float(row["display_pnl"])
+    return None
+
+
+def build_pnl_index_groups(log_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for row in log_rows:
+        instrument = str(row.get("instrument") or "UNKNOWN").upper()
+        group = groups.setdefault(
+            instrument,
+            {
+                "instrument": instrument,
+                "leg_rows": 0,
+                "open_legs": 0,
+                "closed_legs": 0,
+                "realized_pnl": 0.0,
+                "open_mtm": 0.0,
+            },
+        )
+        group["leg_rows"] += 1
+        if row.get("is_open"):
+            group["open_legs"] += 1
+        else:
+            group["closed_legs"] += 1
+        realized = _row_realized_pnl(row)
+        if realized is not None:
+            group["realized_pnl"] += realized
+        mtm = _row_open_mtm(row)
+        if mtm is not None:
+            group["open_mtm"] += mtm
+
+    preferred = {"NIFTY": 0, "BANKNIFTY": 1, "SENSEX": 2}
+    out = []
+    for group in groups.values():
+        realized = round(float(group["realized_pnl"]), 2)
+        open_mtm = round(float(group["open_mtm"]), 2)
+        out.append(
+            {
+                **group,
+                "realized_pnl": realized,
+                "open_mtm": open_mtm,
+                "total_pnl": round(realized + open_mtm, 2),
+            }
+        )
+    return sorted(out, key=lambda g: (preferred.get(str(g["instrument"]), 99), str(g["instrument"])))
 
 
 def _filter_period(trades: list[dict[str, Any]], start: datetime, end: datetime) -> list[dict[str, Any]]:
@@ -85,10 +163,24 @@ def _series_bucket(trades: list[dict[str, Any]], bucket: str) -> list[dict[str, 
     return series
 
 
-def build_analytics(limit: int = 500, client: DhanClient | None = None) -> dict[str, Any]:
+def build_analytics(
+    limit: int = 500,
+    client: DhanClient | None = None,
+    *,
+    enrich_mtm: bool = True,
+) -> dict[str, Any]:
+    if client is not None:
+        from index_ai.dhan_orders import sync_open_live_trades
+
+        sync_open_live_trades(client)
+    from index_ai.learning import repair_rejected_journal_prices
+
+    repair_rejected_journal_prices()
     raw = recent_trades(limit=limit)
-    raw = enrich_open_trades_mtm(raw, client)
+    if enrich_mtm:
+        raw = enrich_open_trades_mtm(raw, client)
     rows = [format_trade_for_ui(t) for t in raw]
+    log_rows = expand_trades_to_log_rows(rows)
     now = datetime.now(IST)
     start_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start_week = start_today - timedelta(days=start_today.weekday())
@@ -114,6 +206,10 @@ def build_analytics(limit: int = 500, client: DhanClient | None = None) -> dict[
     week_trades = _filter_period(raw, start_week, tomorrow)
     month_trades = _filter_period(raw, start_month, tomorrow)
 
+    live_rows = [r for r in rows if r.get("is_live")]
+    live_open = [r for r in live_rows if r.get("is_open") and r.get("status") == "LIVE_TRADED"]
+    live_closed = [r for r in live_rows if not r.get("is_open")]
+
     return {
         "policy": policy_summary(),
         "timezone": "Asia/Kolkata",
@@ -131,4 +227,21 @@ def build_analytics(limit: int = 500, client: DhanClient | None = None) -> dict[
         "weekly_series": _series_bucket(raw, "week")[:12],
         "monthly_series": _series_bucket(raw, "month")[:12],
         "trades": rows,
+        "log_rows": log_rows,
+        "pnl_by_index": build_pnl_index_groups(log_rows),
+        "live_trades": live_rows[:40],
+        "live_log_rows": expand_trades_to_log_rows(live_rows[:40]),
+        "live_summary": {
+            "total": len(live_rows),
+            "open": len(live_open),
+            "closed": len(live_closed),
+            "realized_pnl": round(
+                sum(float(r["pnl"]) for r in live_closed if r.get("pnl") is not None),
+                2,
+            ),
+            "open_mtm": round(
+                sum(float(r["mtm_pnl"]) for r in live_open if r.get("mtm_pnl") is not None),
+                2,
+            ),
+        },
     }

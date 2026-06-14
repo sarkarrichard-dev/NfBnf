@@ -27,8 +27,8 @@ def parse_dhan_error_payload(data: dict[str, Any]) -> str | None:
         return "Invalid date format (DH-812). Use YYYY-MM-DD HH:MM:SS in IST."
     if code == "DH-813":
         return (
-            "Invalid securityId (DH-813). Set NIFTY_SECURITY_ID / BANKNIFTY_SECURITY_ID "
-            "in .env from Dhan's instrument master."
+            "Invalid securityId (DH-813). Set NIFTY_SECURITY_ID / BANKNIFTY_SECURITY_ID / "
+            "SENSEX_SECURITY_ID in .env from Dhan's instrument master."
         )
     if code in {"DH-814", "DH-904"}:
         return (
@@ -37,6 +37,17 @@ def parse_dhan_error_payload(data: dict[str, Any]) -> str | None:
         )
     if code == "806":
         return "Data API not subscribed (DH-806). Enable Data API on Dhan Web."
+    if "invalid ip" in msg.lower():
+        return (
+            "Dhan Trading API: Invalid IP — your public IP is not whitelisted for order placement. "
+            "Charts and option chain work without this; only POST /orders needs a static IP on "
+            "web.dhan.co → Access DhanHQ APIs. Use Check setup on the dashboard for your current IP."
+        )
+    if code == "DH-905" and "missing required" in msg.lower():
+        return (
+            f"{code}: {msg} — check order quantity (full lot size, e.g. 65 for NIFTY), "
+            "product type (MARGIN for short F&O legs), and DHAN_CLIENT_ID."
+        )
     if msg:
         return f"{code}: {msg}" if code else msg
     return None

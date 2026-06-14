@@ -31,6 +31,7 @@ FEATURE_NAMES: tuple[str, ...] = (
     "dist_bc_pct",
     "pcr",
     "oi_conf_adj",
+    "oi_bias_score",
     "hour_ist",
 )
 
@@ -68,6 +69,9 @@ def extract_features(
         except ValueError:
             pass
 
+    from index_ai.oi_learning import oi_bias_feature
+
+    bias = str(opt.get("chain_bias") or opt.get("oi_bias") or "")
     return {
         "confidence": float(signal.get("confidence") or 0),
         "is_call": 1.0 if "CALL" in action.upper() else 0.0,
@@ -77,6 +81,7 @@ def extract_features(
         "dist_bc_pct": round(dist_bc, 6),
         "pcr": float(opt.get("chain_pcr") or opt.get("pcr") or 1.0),
         "oi_conf_adj": float(opt.get("oi_confidence_adjustment") or 0.0),
+        "oi_bias_score": oi_bias_feature(bias),
         "hour_ist": hour,
     }
 

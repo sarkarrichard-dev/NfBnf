@@ -192,6 +192,7 @@ def choose_option_from_chain_with_oi(
         return _leg_oi(leg) + _leg_volume(leg) * 0.1
 
     strike, leg = max(candidates, key=lambda item: score(item[1]))
+    oi_adj = oi_confidence_adjustment(signal.action, oi)
     return {
         "instrument": instrument.key,
         "option_type": "CALL" if side == "ce" else "PUT",
@@ -205,4 +206,8 @@ def choose_option_from_chain_with_oi(
         "volume": _leg_volume(leg),
         "chain_pcr": oi.pcr,
         "chain_bias": oi.bias,
+        "oi_confidence_adjustment": oi_adj,
+        "oi_note": oi.note,
+        "total_call_oi": oi.total_call_oi,
+        "total_put_oi": oi.total_put_oi,
     }

@@ -92,6 +92,11 @@ def _ltp_from_chain(client: DhanClient, trade: dict[str, Any]) -> float | None:
     return float(ltp) if ltp is not None else None
 
 
+def effective_entry_ltp(option_or_leg: dict[str, Any]) -> float:
+    """Prefer broker fill price over chain LTP at entry."""
+    return float(option_or_leg.get("entry_ltp") or option_or_leg.get("ltp") or 0)
+
+
 def estimate_pnl_from_index_move(
     trade: dict[str, Any],
     current_index_price: float,
@@ -102,7 +107,7 @@ def estimate_pnl_from_index_move(
     signal = trade.get("signal") or {}
     option = trade.get("option") or {}
     entry_index = float(signal.get("price") or 0)
-    entry_ltp = float(option.get("ltp") or 0)
+    entry_ltp = effective_entry_ltp(option)
     if entry_index <= 0 or entry_ltp <= 0 or current_index_price <= 0:
         return None
     action = str(trade.get("action") or signal.get("action") or "")
@@ -152,7 +157,7 @@ def close_open_trade(
 
     option = trade.get("option") or {}
     mode = str(trade.get("mode") or "")
-    entry_ltp = float(option.get("ltp") or 0)
+    entry_ltp = effective_entry_ltp(option)
     qty = int(option.get("quantity") or 1)
     tx = str(option.get("transaction_type") or "BUY").upper()
     exit_side = "SELL" if tx == "BUY" else "BUY"
@@ -177,30 +182,32 @@ def close_open_trade(
 
     legs = list(option.get("legs") or [])
     if mode == "LIVE" and app_settings.risk.trading_mode == "LIVE" and client is not None:
-        if legs:
-            responses: list[dict[str, Any]] = []
-            base_id = uuid.uuid4().hex[:10]
-            for idx, leg in enumerate(legs):
-                leg_tx = str(leg.get("transaction_type") or "SELL").upper()
-                leg_exit = "BUY" if leg_tx == "SELL" else "SELL"
-                responses.append(
-                    client.place_market_order(
-                        security_id=int(leg["security_id"]),
-                        exchange_segment=str(leg["segment"]),
-                        transaction_type=leg_exit,
-                        quantity=int(leg.get("quantity") or qty),
-                        correlation_id=f"idxai-x-{base_id}-{idx}"[:30],
-                    )
+        from index_ai.dhan_orders import live_orders_enabled, place_live_exit_orders
+
+        if live_orders_enabled(app_settings):
+            from index_ai.execution_safety import validate_live_exit_allowed
+
+            exit_ok = validate_live_exit_allowed(trade, app_settings)
+            if not exit_ok.ok:
+                return {
+                    "status": "BLOCKED",
+                    "trade_id": trade_id,
+                    "reason": exit_ok.reason,
+                }
+            try:
+                broker_response = place_live_exit_orders(
+                    client,
+                    option,
+                    settings=app_settings,
+                    quantity=qty,
+                    trade=trade,
                 )
-            broker_response = {"legs": responses}
-        else:
-            broker_response = client.place_market_order(
-                security_id=int(option["security_id"]),
-                exchange_segment=str(option["segment"]),
-                transaction_type=exit_side,
-                quantity=qty,
-                correlation_id=f"idxai-x-{uuid.uuid4().hex[:12]}",
-            )
+            except Exception as exc:
+                return {
+                    "status": "LIVE_EXIT_FAILED",
+                    "trade_id": trade_id,
+                    "reason": str(exc),
+                }
 
     pnl: float
     if (
@@ -229,7 +236,7 @@ def close_open_trade(
                 exit_leg_ltp = float(leg.get("ltp") or 0)
             leg_pnls.append(
                 estimate_pnl_rupees(
-                    entry_ltp=float(leg.get("ltp") or 0),
+                    entry_ltp=effective_entry_ltp(leg),
                     exit_ltp=float(exit_leg_ltp),
                     quantity=int(leg.get("quantity") or qty),
                     transaction_type=str(leg.get("transaction_type") or "SELL"),

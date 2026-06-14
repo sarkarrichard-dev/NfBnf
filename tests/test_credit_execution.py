@@ -24,6 +24,8 @@ def _settings() -> AppSettings:
 
 
 def test_credit_plan_uses_credit_confidence_not_learned_buy_gate(monkeypatch) -> None:
+    monkeypatch.setattr("index_ai.market_clock.is_trading_entries_allowed", lambda: True)
+    monkeypatch.setattr("index_ai.market_clock.trading_window_message", lambda: "ok")
     monkeypatch.setattr(
         "index_ai.executor.learned_settings",
         lambda: {"effective_min_confidence": 0.65, "min_confidence_adjustment": 0.10},
@@ -56,8 +58,22 @@ def test_credit_plan_uses_credit_confidence_not_learned_buy_gate(monkeypatch) ->
         "security_id": 1,
         "segment": "NSE_FNO",
         "legs": [
-            {"transaction_type": "SELL", "security_id": 1, "segment": "NSE_FNO", "quantity": 65},
-            {"transaction_type": "BUY", "security_id": 2, "segment": "NSE_FNO", "quantity": 65},
+            {
+                "transaction_type": "SELL",
+                "option_type": "PUT",
+                "strike": 23900,
+                "security_id": 1,
+                "segment": "NSE_FNO",
+                "quantity": 65,
+            },
+            {
+                "transaction_type": "BUY",
+                "option_type": "PUT",
+                "strike": 23850,
+                "security_id": 2,
+                "segment": "NSE_FNO",
+                "quantity": 65,
+            },
         ],
     }
     plan = build_execution_plan(

@@ -21,22 +21,49 @@ class HardcodedRiskPolicy:
 
 HARDCODED_RISK = HardcodedRiskPolicy()
 
+# Per NSE lot (dashboard lots-per-trade multiplies these for the session).
+DAILY_LOSS_RUPEES_PER_LOT = HARDCODED_RISK.max_daily_loss_rupees
+
+
+def effective_risk_limits() -> dict[str, int | float | None]:
+    from index_ai.trade_lots import get_lots_per_trade
+
+    lots = get_lots_per_trade()
+    p = HARDCODED_RISK
+    profit_cap = p.max_profit_cap_rupees
+    return {
+        "lots_per_trade": lots,
+        "daily_loss_rupees_per_lot": DAILY_LOSS_RUPEES_PER_LOT,
+        "max_daily_loss_rupees": DAILY_LOSS_RUPEES_PER_LOT * lots,
+        "max_profit_cap_rupees": (profit_cap * lots) if profit_cap is not None else None,
+        "max_consecutive_losing_trades": p.max_losing_trades_per_day,
+    }
+
 
 def policy_summary() -> dict[str, str | int | float | None]:
     from index_ai.instruments import instruments
+    from index_ai.trade_lots import get_lots_per_trade, lots_settings_summary
 
     p = HARDCODED_RISK
+    limits = effective_risk_limits()
     lots = {key: inst.lot_size for key, inst in instruments().items()}
+    trade_lots = lots_settings_summary()
     return {
-        "lots_per_trade": p.lots_per_trade,
+        "lots_per_trade": get_lots_per_trade(),
+        "lots_min": trade_lots["min_lots"],
+        "lots_max": trade_lots["max_lots"],
+        "order_quantities": {k: v["order_quantity"] for k, v in trade_lots["per_index"].items()},
         "index_lot_sizes": lots,
         "buy_options": p.allow_option_buying,
         "sell_options": p.allow_option_selling,
         "max_losing_trades_per_day": p.max_losing_trades_per_day,
-        "max_daily_loss_rupees": p.max_daily_loss_rupees,
+        "max_consecutive_losing_trades": p.max_losing_trades_per_day,
+        "daily_loss_rupees_per_lot": limits["daily_loss_rupees_per_lot"],
+        "max_daily_loss_rupees": limits["max_daily_loss_rupees"],
         "trailing_stop_index_points": p.trailing_stop_index_points,
         "trailing_mode": "NIFTY: 100pt initial → arm after +25pt → 40pt trail; BANKNIFTY: 200 / +50 / 80",
         "min_confidence": p.min_confidence,
-        "max_profit_cap_rupees": p.max_profit_cap_rupees,
+        "max_profit_cap_rupees": limits["max_profit_cap_rupees"],
         "default_transaction": p.default_option_transaction,
+        "risk_scales_with_lots": True,
     }

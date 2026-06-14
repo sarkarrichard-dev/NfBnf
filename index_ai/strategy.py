@@ -22,6 +22,9 @@ class StrategySignal:
     tc: float
     ema_fast: float
     ema_slow: float
+    ema_cross: str = ""
+    ema_aligned: str = ""
+    strategy_mode: str = ""
     supertrend_direction: int = 0
     supertrend_stop: float = 0.0
     breakout_tag: str = ""
@@ -30,6 +33,8 @@ class StrategySignal:
     cpr_regime: str = ""
     cpr_virgin: bool = False
     recommended_structure: str = ""
+    ema_spread_pct: float = 0.0
+    entry_quality: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -41,10 +46,17 @@ def copy_signal(signal: StrategySignal, **updates: Any) -> StrategySignal:
     return StrategySignal(**data)
 
 
-def add_indicators(candles: pd.DataFrame, fast: int = 9, slow: int = 21) -> pd.DataFrame:
+def add_indicators(
+    candles: pd.DataFrame,
+    fast: int | None = None,
+    slow: int | None = None,
+) -> pd.DataFrame:
+    params = get_strategy_params()
+    f = int(fast if fast is not None else params.ema_fast_period)
+    s = int(slow if slow is not None else params.ema_slow_period)
     df = candles.copy()
-    df["ema_fast"] = df["close"].ewm(span=fast, adjust=False).mean()
-    df["ema_slow"] = df["close"].ewm(span=slow, adjust=False).mean()
+    df["ema_fast"] = df["close"].ewm(span=f, adjust=False).mean()
+    df["ema_slow"] = df["close"].ewm(span=s, adjust=False).mean()
     return df
 
 
@@ -58,18 +70,113 @@ def previous_day_cpr(previous_day: pd.DataFrame) -> tuple[float, float, float]:
     return pivot, min(bc, tc), max(bc, tc)
 
 
-def cpr_ema_signal(today: pd.DataFrame, previous_day: pd.DataFrame) -> StrategySignal:
-    if len(today) < 21:
-        raise ValueError("Need at least 21 intraday candles for EMA signal.")
-    df = add_indicators(today)
+def _ema_spread_pct(price: float, ema_fast: float, ema_slow: float) -> float:
+    return abs(ema_fast - ema_slow) / max(abs(price), 1.0) * 100.0
+
+
+def _confirmed_direction(df: pd.DataFrame, *, bars: int, cpr_level: float, bullish: bool) -> bool:
+    lookback = max(1, int(bars))
+    recent = df.tail(lookback)
+    if len(recent) < lookback:
+        return False
+    if bullish:
+        return bool(((recent["close"] > cpr_level) & (recent["ema_fast"] > recent["ema_slow"])).all())
+    return bool(((recent["close"] < cpr_level) & (recent["ema_fast"] < recent["ema_slow"])).all())
+
+
+def _no_trade_signal(
+    *,
+    reason: str,
+    price: float,
+    pivot: float,
+    bc: float,
+    tc: float,
+    ema_fast: float,
+    ema_slow: float,
+    ema_spread_pct: float,
+    entry_quality: str,
+) -> StrategySignal:
+    return StrategySignal(
+        action="NO_TRADE",
+        reason=reason,
+        confidence=0.0,
+        price=price,
+        pivot=pivot,
+        bc=bc,
+        tc=tc,
+        ema_fast=ema_fast,
+        ema_slow=ema_slow,
+        ema_spread_pct=round(ema_spread_pct, 4),
+        entry_quality=entry_quality,
+    )
+
+
+def cpr_ema_signal(
+    today: pd.DataFrame,
+    previous_day: pd.DataFrame,
+    *,
+    params: StrategyParams | None = None,
+) -> StrategySignal:
+    cfg = params or get_strategy_params()
+    confirm_bars = max(1, int(cfg.entry_confirmation_bars))
+    min_bars = max(cfg.ema_slow_period + 1, confirm_bars)
+    if len(today) < min_bars:
+        raise ValueError(f"Need at least {min_bars} intraday candles for EMA signal.")
+    df = add_indicators(today, fast=cfg.ema_fast_period, slow=cfg.ema_slow_period)
     row = df.iloc[-1]
     price = float(row["close"])
     ema_fast = float(row["ema_fast"])
     ema_slow = float(row["ema_slow"])
+    spread_pct = _ema_spread_pct(price, ema_fast, ema_slow)
     pivot, bc, tc = previous_day_cpr(previous_day)
+    min_spread = max(0.0, float(cfg.min_directional_ema_spread_pct))
+    max_extension = max(0.0, float(cfg.max_cpr_entry_extension_pct))
 
     if price > tc and ema_fast > ema_slow:
+        if spread_pct < min_spread:
+            return _no_trade_signal(
+                reason=(
+                    f"EMA spread {spread_pct:.3f}% is below quality gate "
+                    f"{min_spread:.3f}%."
+                ),
+                price=price,
+                pivot=pivot,
+                bc=bc,
+                tc=tc,
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                ema_spread_pct=spread_pct,
+                entry_quality="weak_ema_spread",
+            )
+        if not _confirmed_direction(df, bars=confirm_bars, cpr_level=tc, bullish=True):
+            return _no_trade_signal(
+                reason=f"Waiting for {confirm_bars} confirmed closes above CPR top with EMA alignment.",
+                price=price,
+                pivot=pivot,
+                bc=bc,
+                tc=tc,
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                ema_spread_pct=spread_pct,
+                entry_quality="unconfirmed_cpr_break",
+            )
         distance = min(1.0, abs(price - tc) / max(price * 0.004, 1.0))
+        extension_pct = (price - tc) / max(abs(price), 1.0) * 100.0
+        if max_extension and extension_pct > max_extension:
+            return _no_trade_signal(
+                reason=(
+                    f"Long setup is extended {extension_pct:.2f}% above CPR top "
+                    f"(gate {max_extension:.2f}%)."
+                ),
+                price=price,
+                pivot=pivot,
+                bc=bc,
+                tc=tc,
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                ema_spread_pct=spread_pct,
+                entry_quality="late_extended_entry",
+            )
         confidence = 0.55 + distance * 0.25
         return StrategySignal(
             action="BUY_CALL",
@@ -81,9 +188,54 @@ def cpr_ema_signal(today: pd.DataFrame, previous_day: pd.DataFrame) -> StrategyS
             tc=tc,
             ema_fast=ema_fast,
             ema_slow=ema_slow,
+            ema_spread_pct=round(spread_pct, 4),
+            entry_quality="confirmed_directional",
         )
     if price < bc and ema_fast < ema_slow:
+        if spread_pct < min_spread:
+            return _no_trade_signal(
+                reason=(
+                    f"EMA spread {spread_pct:.3f}% is below quality gate "
+                    f"{min_spread:.3f}%."
+                ),
+                price=price,
+                pivot=pivot,
+                bc=bc,
+                tc=tc,
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                ema_spread_pct=spread_pct,
+                entry_quality="weak_ema_spread",
+            )
+        if not _confirmed_direction(df, bars=confirm_bars, cpr_level=bc, bullish=False):
+            return _no_trade_signal(
+                reason=f"Waiting for {confirm_bars} confirmed closes below CPR bottom with EMA alignment.",
+                price=price,
+                pivot=pivot,
+                bc=bc,
+                tc=tc,
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                ema_spread_pct=spread_pct,
+                entry_quality="unconfirmed_cpr_break",
+            )
         distance = min(1.0, abs(price - bc) / max(price * 0.004, 1.0))
+        extension_pct = (bc - price) / max(abs(price), 1.0) * 100.0
+        if max_extension and extension_pct > max_extension:
+            return _no_trade_signal(
+                reason=(
+                    f"Short setup is extended {extension_pct:.2f}% below CPR bottom "
+                    f"(gate {max_extension:.2f}%)."
+                ),
+                price=price,
+                pivot=pivot,
+                bc=bc,
+                tc=tc,
+                ema_fast=ema_fast,
+                ema_slow=ema_slow,
+                ema_spread_pct=spread_pct,
+                entry_quality="late_extended_entry",
+            )
         confidence = 0.55 + distance * 0.25
         return StrategySignal(
             action="BUY_PUT",
@@ -95,6 +247,8 @@ def cpr_ema_signal(today: pd.DataFrame, previous_day: pd.DataFrame) -> StrategyS
             tc=tc,
             ema_fast=ema_fast,
             ema_slow=ema_slow,
+            ema_spread_pct=round(spread_pct, 4),
+            entry_quality="confirmed_directional",
         )
     return StrategySignal(
         action="NO_TRADE",
@@ -106,6 +260,8 @@ def cpr_ema_signal(today: pd.DataFrame, previous_day: pd.DataFrame) -> StrategyS
         tc=tc,
         ema_fast=ema_fast,
         ema_slow=ema_slow,
+        ema_spread_pct=round(spread_pct, 4),
+        entry_quality="not_aligned",
     )
 
 
@@ -143,7 +299,7 @@ def intraday_strategy_signal(
 ) -> StrategySignal:
     """CPR+EMA core, filtered by Supertrend and Break Res / Break Sup (AK Roxx style)."""
     cfg = params or get_strategy_params()
-    base = cpr_ema_signal(today, previous_day)
+    base = cpr_ema_signal(today, previous_day, params=cfg)
     st, br = _chart_context(today, cfg)
 
     if base.action == "NO_TRADE":

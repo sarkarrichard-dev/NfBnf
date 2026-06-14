@@ -1,33 +1,41 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
 import pandas as pd
 import uvicorn
-from fastapi import Body, FastAPI, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
 
 from index_ai.analytics import build_analytics
-from index_ai.config import DASHBOARD_DIR, MEMORY_DIR, set_trading_mode, settings
+from index_ai.reports import build_report, export_filename, report_to_csv
+from index_ai.config import DASHBOARD_DIR, MEMORY_DIR, candle_interval_minutes, set_trading_mode, settings
 from index_ai.risk import kill_switch_state
 from index_ai.risk_policy import HARDCODED_RISK, policy_summary
 from index_ai.strategy_params import strategy_tuning_summary
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.dhan_auth import (
+    auto_refresh_dhan_token,
     auth_setup_checklist,
     check_dhan_health,
+    generate_access_token_via_totp,
     generate_consent,
     jwt_token_status,
+    oauth_redirect_urls,
+    parse_oauth_callback_value,
     reconcile_env_with_jwt,
     renew_access_token,
     save_token_from_user_input,
+    token_renew_status,
     verify_access_token,
 )
 from index_ai.executor import build_execution_plan, execute_plan
@@ -42,6 +50,7 @@ from index_ai.learning import (
     record_feedback,
     record_trade_outcome,
     trades_summary,
+    update_learning,
     update_trade_trail_meta,
 )
 from index_ai.chart_live import fetch_supertrend_snapshot
@@ -49,7 +58,15 @@ from index_ai.trailing import evaluate_open_trade
 from index_ai.heatmap import build_heatmap
 from index_ai.planner import plan_instrument
 from index_ai.market_clock import format_ist_display, market_status, now_ist_iso
-from index_ai.scanner import clear_auth_block, scanner_status, start_scanner, stop_scanner
+from index_ai.scanner import (
+    bootstrap_scanner,
+    clear_auth_block,
+    queue_bootstrap_scanner,
+    schedule_boot_auto_start,
+    scanner_status,
+    stop_scanner,
+)
+from index_ai.trade_lots import adjust_lots_per_trade, lots_settings_summary, set_lots_per_trade
 from index_ai.exit import close_open_trade
 
 
@@ -57,49 +74,151 @@ from index_ai.exit import close_open_trade
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from index_ai.learning import reconcile_all_trade_lots
 
+    async def _auto_renew_loop() -> None:
+        from index_ai.dhan_auth import _auto_renew_poll_seconds, _auto_renew_enabled
+
+        while True:
+            await asyncio.sleep(_auto_renew_poll_seconds())
+            if not _auto_renew_enabled():
+                continue
+            cfg = settings()
+            if cfg.dhan.ready:
+                auto_refresh_dhan_token(cfg.dhan, reason="background_poll")
+
     init_db()
     reconcile_all_trade_lots()
+    from index_ai.learning import repair_closed_trade_prices
+
+    repair_closed_trade_prices()
+    cfg = settings()
+    from index_ai.dhan_auth import auto_refresh_dhan_token, jwt_token_status, totp_credentials_configured
+
+    if cfg.dhan.ready:
+        jwt = jwt_token_status(cfg.dhan.access_token) if cfg.dhan.access_token else {}
+        if jwt.get("expired") and totp_credentials_configured():
+            auto_refresh_dhan_token(cfg.dhan, force=True, reason="startup_expired_totp")
+        else:
+            auto_refresh_dhan_token(cfg.dhan, reason="startup")
+    elif totp_credentials_configured():
+        auto_refresh_dhan_token(cfg.dhan, force=True, reason="startup_totp")
+    async def _candle_cache_loop() -> None:
+        from index_ai.candle_cache import sync_all_configured
+        from index_ai.dhan import DhanClient
+        from index_ai.market_clock import is_market_open
+
+        while True:
+            await asyncio.sleep(1800)
+            if not is_market_open():
+                continue
+            cfg = settings()
+            if not cfg.dhan.ready:
+                continue
+            try:
+                sync_all_configured(DhanClient(cfg.dhan), interval=candle_interval_minutes())
+            except Exception:
+                pass
+
+    boot_scanner_task = asyncio.create_task(schedule_boot_auto_start())
+    renew_task = asyncio.create_task(_auto_renew_loop())
+    cache_task = asyncio.create_task(_candle_cache_loop())
+    if cfg.dhan.ready:
+        try:
+            from index_ai.candle_cache import ensure_active_interval_cache, sync_all_configured
+            from index_ai.dhan import DhanClient
+
+            dhan_client = DhanClient(cfg.dhan)
+            ensure_active_interval_cache(dhan_client)
+            sync_all_configured(dhan_client, interval=candle_interval_minutes())
+        except Exception:
+            pass
     yield
+    renew_task.cancel()
+    boot_scanner_task.cancel()
+    cache_task.cancel()
+    for task in (renew_task, boot_scanner_task, cache_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    await stop_scanner()
 
 
-app = FastAPI(title="Index Options AI", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Index Options AI", version="0.2.0", lifespan=lifespan)
 
+# Exposed on /api/status so the dashboard can detect a stale server process.
+API_CAPABILITIES: dict[str, Any] = {
+    "backtest_dhan": True,
+    "candle_cache": True,
+    "build": "2026-06-07",
+}
 HEALTH_APP_ID = "index-options-ai"
+API_FEATURES = (
+    "learning_optimize",
+    "oi_heatmap",
+    "profit_trail",
+    "trade_lots",
+    "live_polling",
+    "dhan_account",
+)
 
 
 @app.get("/api/health", include_in_schema=False)
 async def health() -> dict[str, Any]:
     """Lightweight probe so the dashboard can detect the correct server on port 8000."""
-    return {"ok": True, "app": HEALTH_APP_ID, "version": app.version}
+    return {
+        "ok": True,
+        "app": HEALTH_APP_ID,
+        "version": app.version,
+        "features": list(API_FEATURES),
+    }
 
 
-def _dhan_oauth_redirect(token_id: str | None) -> RedirectResponse:
-    if not token_id or not str(token_id).strip():
-        detail = quote("Missing tokenId in redirect URL.")
+def _oauth_token_from_request(request: Request, token_id: str | None) -> str | None:
+    for key in ("tokenId", "tokenid", "token_id"):
+        raw = request.query_params.get(key)
+        if raw and str(raw).strip():
+            return str(raw).strip()
+    if token_id and str(token_id).strip():
+        return str(token_id).strip()
+    return None
+
+
+def _dhan_oauth_redirect(request: Request, token_id: str | None) -> RedirectResponse:
+    raw = _oauth_token_from_request(request, token_id)
+    parsed = parse_oauth_callback_value(raw)
+    if not parsed:
+        detail = quote(
+            "Missing tokenId in redirect URL. Register redirect URL on Dhan as: "
+            + oauth_redirect_urls()[0]
+        )
         return RedirectResponse(url=f"/?dhan_auth=error&detail={detail}", status_code=302)
     try:
         reconcile_env_with_jwt()
-        save_token_from_user_input(settings().dhan, str(token_id).strip())
+        save_token_from_user_input(settings().dhan, parsed)
         clear_auth_block()
+        queue_bootstrap_scanner()
         return RedirectResponse(url="/?dhan_auth=success", status_code=302)
     except Exception as exc:
-        return RedirectResponse(url=f"/?dhan_auth=error&detail={quote(str(exc))}", status_code=302)
+        detail = quote(str(exc)[:500])
+        return RedirectResponse(url=f"/?dhan_auth=error&detail={detail}", status_code=302)
 
 
 @app.get("/dhan/oauth/callback", include_in_schema=False)
 async def dhan_oauth_callback(
+    request: Request,
     token_id: str | None = Query(None, alias="tokenId"),
 ) -> RedirectResponse:
     """Dhan OAuth redirect target — exchanges tokenId and opens the dashboard."""
-    return _dhan_oauth_redirect(token_id)
+    return _dhan_oauth_redirect(request, token_id)
 
 
 @app.get("/callback", include_in_schema=False)
 async def dhan_oauth_callback_short(
+    request: Request,
     token_id: str | None = Query(None, alias="tokenId"),
 ) -> RedirectResponse:
     """Alias when redirect URL is http://127.0.0.1:8000/callback"""
-    return _dhan_oauth_redirect(token_id)
+    return _dhan_oauth_redirect(request, token_id)
 
 
 def _dhan_setup_message() -> str:
@@ -157,9 +276,9 @@ def _trading_gates(cfg: Any) -> dict[str, Any]:
         {
             "title": "Kill switch (Live only)",
             "detail": (
-                f"In Live mode, stops after {cfg.risk.max_losing_trades_per_day} losing trades or "
-                f"₹{cfg.risk.max_daily_loss_rupees:,.0f} daily loss. "
-                "Paper trading is not blocked by the kill switch."
+                f"In Live mode, stops after {cfg.risk.max_losing_trades_per_day} consecutive losing "
+                f"trades or ₹{cfg.risk.max_daily_loss_rupees:,.0f} daily loss "
+                f"(₹6,000 × lots per trade). Paper is not blocked."
             ),
         }
     )
@@ -183,8 +302,12 @@ def _trading_gates(cfg: Any) -> dict[str, Any]:
         and cfg.risk.allow_live_trading
         and not ks["active"]
     )
+    from index_ai.dhan_network import dhan_order_ip_whitelist_hint, fetch_public_ip
+
+    ip_hint = dhan_order_ip_whitelist_hint(fetch_public_ip())
     return {
         "can_send_live_orders": can_send_live,
+        "dhan_order_ip_whitelist": ip_hint,
         "trading_mode": cfg.risk.trading_mode,
         "allow_live_trading_env": cfg.risk.allow_live_trading,
         "kill_switch": ks,
@@ -204,7 +327,9 @@ async def status() -> dict[str, Any]:
         "dhan_token": jwt_token_status(cfg.dhan.access_token) if cfg.dhan.access_token else None,
         "dhan_app_credentials_ready": cfg.dhan.app_credentials_ready,
         "dhan_can_generate_consent": cfg.dhan.can_generate_consent,
-        "dhan_token_expiry": cfg.dhan.token_expiry,
+        "dhan_token_expiry": format_ist_display(cfg.dhan.token_expiry)
+        if cfg.dhan.token_expiry
+        else None,
         "trading_mode": cfg.risk.trading_mode,
         "live_allowed": cfg.risk.allow_live_trading,
         "trading_gates": _trading_gates(cfg),
@@ -221,34 +346,235 @@ async def status() -> dict[str, Any]:
         "market": market_status(),
         "timezone": "Asia/Kolkata",
         "dhan_health": check_dhan_health(cfg.dhan) if cfg.dhan.ready else None,
+        "token_renew": token_renew_status(),
+        "dhan_account_hint": (
+            "GET /api/dhan/account for live funds and trade book"
+            if cfg.dhan.ready
+            else None
+        ),
+        "api_capabilities": API_CAPABILITIES,
     }
 
 
 @app.get("/api/analytics", include_in_schema=False)
-async def analytics() -> dict[str, Any]:
+async def analytics(enrich_mtm: bool = Query(True, description="Fetch live LTP for open legs")) -> dict[str, Any]:
+    cfg = settings()
+    client = DhanClient(cfg.dhan) if cfg.dhan.ready and enrich_mtm else None
+    return build_analytics(client=client, enrich_mtm=enrich_mtm)
+
+
+@app.get("/api/trades/cleanup/preview", include_in_schema=False)
+async def trades_cleanup_preview() -> dict[str, Any]:
+    from index_ai.trade_cleanup import scan_trade_cleanup
+
+    return scan_trade_cleanup()
+
+
+@app.post("/api/trades/cleanup", include_in_schema=False)
+async def trades_cleanup(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    from index_ai.trade_cleanup import run_trade_cleanup
+
+    dry_run = bool(payload.get("dry_run"))
+    ids = payload.get("trade_ids")
+    trade_ids = [str(x) for x in ids] if isinstance(ids, list) else None
+    if not dry_run and not payload.get("confirm"):
+        raise HTTPException(
+            status_code=400,
+            detail="Set confirm=true to delete trades.",
+        )
+    if trade_ids:
+        return run_trade_cleanup(trade_ids=trade_ids, dry_run=dry_run)
+    return run_trade_cleanup(dry_run=dry_run)
+
+
+@app.get("/api/trades/recent", include_in_schema=False)
+async def trades_recent(limit: int = Query(80, ge=1, le=200)) -> dict[str, Any]:
+    """Fast journal poll — no Dhan LTP calls (use /api/trades/live-mtm for open MTM)."""
+    from index_ai.learning import expand_trades_to_log_rows, repair_rejected_journal_prices
+
+    repair_rejected_journal_prices()
+    raw = recent_trades(limit=limit)
+    ui_rows = [format_trade_for_ui(t) for t in raw]
+    return {
+        "rows": ui_rows,
+        "log_rows": expand_trades_to_log_rows(ui_rows),
+        "count": len(raw),
+        "updated_at_ist": format_ist_display(now_ist_iso()),
+    }
+
+
+@app.get("/api/reports/export", include_in_schema=False)
+async def export_report(
+    period: str = Query("today", description="today | week | month | all | custom"),
+    from_date: str | None = Query(None, alias="from"),
+    to_date: str | None = Query(None, alias="to"),
+) -> Response:
+    """Download CSV: PnL summary + order rows for the selected IST period."""
     cfg = settings()
     client = DhanClient(cfg.dhan) if cfg.dhan.ready else None
-    return build_analytics(client=client)
+    try:
+        report = build_report(
+            period,
+            from_date=from_date,
+            to_date=to_date,
+            client=client,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    csv_text = report_to_csv(report)
+    filename = export_filename(report)
+    return Response(
+        content=csv_text.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/trades/live-mtm", include_in_schema=False)
-async def trades_live_mtm() -> dict[str, Any]:
-    """Lightweight poll for open-trade MTM (dashboard refresh)."""
+async def trades_live_mtm(sync_broker: bool = Query(False)) -> dict[str, Any]:
+    """Fast MTM poll for open trades (paper + live). Use sync_broker=true only occasionally."""
     cfg = settings()
     if not cfg.dhan.ready:
         return {"error": _dhan_setup_message(), "trades": []}
-    from index_ai.learning import open_trades
+    from index_ai.dhan_orders import sync_open_live_trades
+    from index_ai.learning import expand_trades_to_log_rows, open_trades
     from index_ai.mtm import enrich_open_trades_mtm
 
     client = DhanClient(cfg.dhan)
-    enriched = enrich_open_trades_mtm(open_trades(), client)
+    if sync_broker:
+        sync_open_live_trades(client)
+    enriched = enrich_open_trades_mtm(open_trades(), client, persist=False)
     rows = [format_trade_for_ui(t) for t in enriched]
     open_mtm = sum(float(r["mtm_pnl"]) for r in rows if r.get("mtm_pnl") is not None)
     return {
         "trades": rows,
+        "log_rows": expand_trades_to_log_rows(rows),
         "open_mtm_rupees": round(open_mtm, 2),
         "updated_at_ist": format_ist_display(now_ist_iso()),
     }
+
+
+@app.get("/api/dhan/account", include_in_schema=False)
+async def dhan_account_snapshot() -> dict[str, Any]:
+    """Live Dhan portal data: fund limits, today's trade book, open positions."""
+    cfg = settings()
+    if not cfg.dhan.ready:
+        raise HTTPException(status_code=400, detail=_dhan_setup_message())
+    from index_ai.dhan import DhanClient
+    from index_ai.dhan_portfolio import fetch_dhan_account_snapshot
+
+    client = DhanClient(cfg.dhan)
+    from index_ai.dhan_orders import sync_open_live_trades
+    from index_ai.learning import open_trades_for_mode
+
+    journal_synced = sync_open_live_trades(client)
+    snapshot = fetch_dhan_account_snapshot(client)
+    snapshot["journal_sync_updated"] = journal_synced
+    live_open = len(open_trades_for_mode("LIVE"))
+    if snapshot.get("positions_count") and not snapshot.get("tradebook_count"):
+        snapshot["positions_note"] = (
+            "Positions include carryforward from prior sessions. "
+            "Trade book below is today’s fills only — empty means no algo fills today."
+        )
+    if live_open and snapshot.get("positions_count") == 0:
+        snapshot["journal_broker_mismatch"] = (
+            f"Journal has {live_open} open live row(s) but Dhan reports no net positions — "
+            "sync marked phantoms rejected; refresh analytics."
+        )
+    elif not live_open and snapshot.get("positions_count"):
+        snapshot["journal_broker_mismatch"] = (
+            "Dhan shows open positions not tied to an open algo journal spread — "
+            "often orphan legs from a partial live entry. Square off on Dhan if unintended."
+        )
+    if snapshot.get("errors") and not snapshot.get("ok"):
+        snapshot["error"] = "; ".join(snapshot["errors"])
+    return snapshot
+
+
+@app.get("/api/dhan/funds", include_in_schema=False)
+async def dhan_funds() -> dict[str, Any]:
+    cfg = settings()
+    if not cfg.dhan.ready:
+        raise HTTPException(status_code=400, detail=_dhan_setup_message())
+    from index_ai.dhan import DhanClient
+    from index_ai.dhan_portfolio import normalize_fund_limits
+    from index_ai.market_clock import format_ist_display, now_ist_iso
+
+    client = DhanClient(cfg.dhan)
+    funds = normalize_fund_limits(client.get_fund_limits())
+    return {
+        "funds": funds,
+        "updated_at_ist": format_ist_display(now_ist_iso()),
+    }
+
+
+@app.get("/api/dhan/tradebook", include_in_schema=False)
+async def dhan_tradebook() -> dict[str, Any]:
+    cfg = settings()
+    if not cfg.dhan.ready:
+        raise HTTPException(status_code=400, detail=_dhan_setup_message())
+    from index_ai.dhan import DhanClient
+    from index_ai.dhan_portfolio import format_trade_book_row
+    from index_ai.market_clock import format_ist_display, now_ist_iso
+
+    client = DhanClient(cfg.dhan)
+    rows = [format_trade_book_row(r) for r in client.list_today_trades()]
+    rows.sort(
+        key=lambda r: str(r.get("exchange_time") or r.get("create_time") or ""),
+        reverse=True,
+    )
+    return {
+        "trades": rows,
+        "count": len(rows),
+        "updated_at_ist": format_ist_display(now_ist_iso()),
+    }
+
+
+@app.post("/api/trades/sync-broker", include_in_schema=False)
+async def sync_broker_orders() -> dict[str, Any]:
+    """Poll Dhan order book and update LIVE_SENT / rejected journal rows."""
+    cfg = settings()
+    if not cfg.dhan.ready:
+        raise HTTPException(status_code=400, detail=_dhan_setup_message())
+    from index_ai.dhan_orders import sync_open_live_trades
+    from index_ai.learning import live_trades_for_broker_sync, recent_trades
+
+    client = DhanClient(cfg.dhan)
+    updated = sync_open_live_trades(client)
+    rows = [format_trade_for_ui(t) for t in recent_trades(limit=80) if is_live_trade_ui(t)]
+    return {
+        "updated": updated,
+        "live_trades": rows,
+        "pending_sync": len(live_trades_for_broker_sync()),
+    }
+
+
+def is_live_trade_ui(trade: dict[str, Any]) -> bool:
+    from index_ai.learning import is_live_trade
+
+    return is_live_trade(trade)
+
+
+@app.get("/api/settings/lots", include_in_schema=False)
+async def get_lots_settings() -> dict[str, Any]:
+    return lots_settings_summary()
+
+
+@app.post("/api/settings/lots", include_in_schema=False)
+async def update_lots_settings(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Set lots per trade (1–10) or adjust with delta (+1 / -1). Re-syncs open journal quantities."""
+    from index_ai.learning import reconcile_all_trade_lots
+
+    if "delta" in payload:
+        summary = adjust_lots_per_trade(int(payload.get("delta") or 0))
+    else:
+        raw = payload.get("lots")
+        if raw is None:
+            raise HTTPException(status_code=400, detail="Provide lots (integer) or delta (+1 / -1).")
+        summary = set_lots_per_trade(int(raw))
+    summary["reconcile"] = reconcile_all_trade_lots()
+    summary["policy"] = policy_summary()
+    return summary
 
 
 @app.post("/api/trading/mode", include_in_schema=False)
@@ -257,19 +583,34 @@ async def trading_mode(payload: dict[str, Any] = Body(default_factory=dict)) -> 
         mode = set_trading_mode(str(payload.get("mode") or "PAPER"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from index_ai.learning import open_trades_for_mode
+
     cfg = settings()
+    paper_open = len(open_trades_for_mode("PAPER"))
+    live_open = len(open_trades_for_mode("LIVE"))
     return {
         "trading_mode": mode,
         "live_orders_enabled": cfg.risk.allow_live_trading,
         "trading_gates": _trading_gates(cfg),
         "kill_switch": kill_switch_state(cfg.risk),
+        "open_trades_paper": paper_open,
+        "open_trades_live": live_open,
+        "note": (
+            f"{paper_open} paper open position(s) do not block live scanner entries."
+            if mode == "LIVE" and paper_open
+            else None
+        ),
     }
 
 
 @app.get("/api/auth/setup", include_in_schema=False)
 async def auth_setup() -> dict[str, Any]:
     """Which .env fields are set for the Dhan API-key login flow (no secrets returned)."""
-    return auth_setup_checklist(settings().dhan)
+    from index_ai.dhan_network import dhan_order_ip_whitelist_hint, fetch_public_ip
+
+    out = auth_setup_checklist(settings().dhan)
+    out["order_ip_whitelist"] = dhan_order_ip_whitelist_hint(fetch_public_ip())
+    return out
 
 
 @app.post("/api/auth/generate-consent", include_in_schema=False)
@@ -286,6 +627,7 @@ async def auth_consume_consent(payload: dict[str, Any] = Body(default_factory=di
         reconcile_env_with_jwt()
         result = save_token_from_user_input(settings().dhan, str(payload.get("token_id") or ""))
         clear_auth_block()
+        queue_bootstrap_scanner()
         cfg = settings()
         health = check_dhan_health(cfg.dhan)
         return {**result, "health": health, "jwt": jwt_token_status(cfg.dhan.access_token)}
@@ -310,6 +652,7 @@ async def auth_health(payload: dict[str, Any] = Body(default_factory=dict)) -> d
         try:
             save_token_from_user_input(settings().dhan, token_raw)
             clear_auth_block()
+            queue_bootstrap_scanner()
         except Exception as exc:
             return {
                 "ok": False,
@@ -324,13 +667,109 @@ async def auth_health(payload: dict[str, Any] = Body(default_factory=dict)) -> d
 
 @app.post("/api/auth/renew-token", include_in_schema=False)
 async def auth_renew_token() -> dict[str, Any]:
+    cfg = settings()
     try:
-        result = renew_access_token(settings().dhan)
+        result = renew_access_token(cfg.dhan)
+    except Exception as renew_exc:
+        from index_ai.dhan_auth import totp_credentials_configured
+
+        if not totp_credentials_configured():
+            raise HTTPException(status_code=400, detail=str(renew_exc)) from renew_exc
+        try:
+            result = generate_access_token_via_totp(cfg.dhan)
+        except Exception as totp_exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{renew_exc} TOTP fallback failed: {totp_exc}",
+            ) from totp_exc
+    clear_auth_block()
+    queue_bootstrap_scanner()
+    cfg = settings()
+    return {**result, "health": check_dhan_health(cfg.dhan), "jwt": jwt_token_status(cfg.dhan.access_token)}
+
+
+@app.post("/api/auth/totp-login", include_in_schema=False)
+async def auth_totp_login() -> dict[str, Any]:
+    """Mint a fresh WEB access token using DHAN_PIN + DHAN_TOTP_SECRET (no browser)."""
+    try:
+        result = generate_access_token_via_totp(settings().dhan)
         clear_auth_block()
+        queue_bootstrap_scanner()
         cfg = settings()
         return {**result, "health": check_dhan_health(cfg.dhan), "jwt": jwt_token_status(cfg.dhan.access_token)}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/research/ping", include_in_schema=False)
+async def research_ping() -> dict[str, Any]:
+    """Lightweight probe — dashboard uses this to detect a stale server process."""
+    return {"ok": True, "capabilities": API_CAPABILITIES}
+
+
+@app.post("/api/research/backtest-dhan", include_in_schema=False)
+async def research_backtest_dhan(
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """
+    Replay strategy on cached / Dhan intraday candles. Cache enables lookbacks > 5 days.
+
+    pnl_mode: option_proxy (default) | spot
+    """
+    cfg = settings()
+    if not cfg.dhan.ready:
+        raise HTTPException(status_code=400, detail=_dhan_setup_message())
+    health = check_dhan_health(cfg.dhan, use_cache=True)
+    if not health.get("charts_ok"):
+        raise HTTPException(
+            status_code=400,
+            detail="Dhan Data API / intraday charts required for backtest. "
+            + "; ".join(health.get("actions") or health.get("issues") or ["Enable Data API on Dhan Web."]),
+        )
+    instrument = str(payload.get("instrument") or payload.get("index") or "NIFTY").strip().upper()
+    lookback = int(payload.get("days") or payload.get("lookback_days") or 5)
+    interval = str(payload.get("interval") or candle_interval_minutes())
+    use_cache = str(payload.get("use_cache", "true")).strip().lower() not in {"0", "false", "no"}
+    refresh_cache = str(payload.get("refresh_cache", "false")).strip().lower() in {"1", "true", "yes"}
+    pnl_mode = str(payload.get("pnl_mode") or "option_proxy")
+    from index_ai.backtest import run_dhan_intraday_backtest
+
+    client = DhanClient(cfg.dhan)
+    try:
+        return run_dhan_intraday_backtest(
+            client,
+            cfg,
+            instrument_key=instrument,
+            lookback_days=lookback,
+            interval=interval,
+            use_cache=use_cache,
+            refresh_cache=refresh_cache,
+            pnl_mode=pnl_mode,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/research/sync-candle-cache", include_in_schema=False)
+async def research_sync_candle_cache() -> dict[str, Any]:
+    """Pull latest Dhan intraday window into memory/candles for all configured indices."""
+    cfg = settings()
+    if not cfg.dhan.ready:
+        raise HTTPException(status_code=400, detail=_dhan_setup_message())
+    from index_ai.backtest import sync_candle_cache
+
+    client = DhanClient(cfg.dhan)
+    try:
+        return sync_candle_cache(client)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/research/candle-cache", include_in_schema=False)
+async def research_candle_cache_status() -> dict[str, Any]:
+    from index_ai.candle_cache import cache_status
+
+    return cache_status()
 
 
 @app.get("/api/heatmap", include_in_schema=False)
@@ -347,6 +786,20 @@ async def heatmap() -> dict[str, Any]:
 @app.get("/api/learning", include_in_schema=False)
 async def learning_status_api() -> dict[str, Any]:
     return learning_report()
+
+
+@app.api_route("/api/learning/optimize", methods=["GET", "POST"], include_in_schema=False)
+async def learning_optimize_api() -> dict[str, Any]:
+    """Recompute learning + OI/strategy insights from closed trades and journal."""
+    from index_ai.oi_learning import analyze_oi_outcomes
+
+    learned = update_learning()
+    return {
+        "learned": learned,
+        "oi_insights": analyze_oi_outcomes(),
+        "strategy_tuning": strategy_tuning_summary(),
+        "message": "Learning and OI insights refreshed from trade history.",
+    }
 
 
 @app.post("/api/learning/hf-sync", include_in_schema=False)
@@ -420,10 +873,11 @@ async def auto_start(payload: dict[str, Any] = Body(default_factory=dict)) -> di
         if actions:
             detail += " — " + " ".join(actions[:2])
         raise HTTPException(status_code=400, detail=detail)
-    try:
-        return await start_scanner()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = await bootstrap_scanner(respect_disable_flag=False)
+    if not result.get("started"):
+        detail = str(result.get("message") or result.get("reason") or "Could not start scanner.")
+        raise HTTPException(status_code=400, detail=detail)
+    return result.get("status") or scanner_status()
 
 
 @app.post("/api/auto/stop", include_in_schema=False)
@@ -448,7 +902,7 @@ async def live_plan(payload: dict[str, Any] = Body(default_factory=dict)) -> dic
             app_settings=cfg,
             instrument_key=instrument_key,
             lookback_days=int(payload.get("lookback_days") or 10),
-            interval=str(payload.get("interval") or "5"),
+            interval=str(payload.get("interval") or candle_interval_minutes()),
         )
     except httpx.HTTPStatusError as exc:
         raise HTTPException(
@@ -509,9 +963,9 @@ async def execute(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
     client = DhanClient(cfg.dhan)
     instrument = get_instrument(str(payload.get("instrument") or "NIFTY"))
     signal_payload = payload.get("signal") or {}
-    from index_ai.strategy import StrategySignal
+    from index_ai.execution_safety import signal_from_payload
 
-    signal = StrategySignal(**signal_payload)
+    signal = signal_from_payload(signal_payload)
     option = payload.get("option")
     if option and payload.get("transaction_type"):
         option = {**option, "transaction_type": str(payload["transaction_type"]).upper()}
@@ -532,7 +986,9 @@ async def check_trailing_stops(payload: dict[str, Any] = Body(default_factory=di
         raise HTTPException(status_code=400, detail=_dhan_setup_message())
     client = DhanClient(cfg.dhan)
     results: list[dict[str, Any]] = []
-    for trade in open_trades():
+    from index_ai.learning import open_trades_for_mode
+
+    for trade in open_trades_for_mode(cfg.risk.trading_mode):
         instrument_key = str(trade.get("instrument") or payload.get("instrument") or "NIFTY")
         if payload.get("instrument") and instrument_key != payload.get("instrument"):
             continue
@@ -585,9 +1041,39 @@ async def feedback(payload: dict[str, Any] = Body(default_factory=dict)) -> dict
 
 @app.post("/api/outcome", include_in_schema=False)
 async def outcome(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    trade_id = str(payload.get("trade_id") or "").strip()
+    if not trade_id:
+        raise HTTPException(status_code=400, detail="trade_id is required")
+    pnl_override = payload.get("pnl")
+    cfg = settings()
+    from index_ai.learning import _row_to_trade, connect
+
+    with connect() as db:
+        row = db.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found")
+    trade = _row_to_trade(row)
+    if trade.get("pnl") is not None and pnl_override is None:
+        raise HTTPException(status_code=400, detail="Trade already closed")
+
+    if trade.get("pnl") is None and pnl_override is None and cfg.dhan.ready:
+        try:
+            from index_ai.exit import close_open_trade
+
+            client = DhanClient(cfg.dhan)
+            result = close_open_trade(
+                trade,
+                client=client,
+                app_settings=cfg,
+                reason=str(payload.get("note") or "Manual close from dashboard"),
+            )
+            return {"close": result, "learned": result.get("learned")}
+        except Exception:
+            pass
+
     learned = record_trade_outcome(
-        trade_id=str(payload.get("trade_id") or ""),
-        pnl=float(payload.get("pnl") or 0),
+        trade_id=trade_id,
+        pnl=float(pnl_override or 0),
         note=payload.get("note"),
     )
     return {"learned": learned}
@@ -598,7 +1084,14 @@ async def favicon() -> RedirectResponse:
     return RedirectResponse("/favicon.svg")
 
 
-if DASHBOARD_DIR.is_dir():
+@app.get("/v2", include_in_schema=False)
+@app.get("/v2/", include_in_schema=False)
+async def dashboard_v2_redirect() -> RedirectResponse:
+    """Legacy URL — React dashboard is now at /."""
+    return RedirectResponse("/")
+
+
+if (DASHBOARD_DIR / "index.html").is_file():
     app.mount("/", StaticFiles(directory=str(DASHBOARD_DIR), html=True), name="dashboard")
 
 

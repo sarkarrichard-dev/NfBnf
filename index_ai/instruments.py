@@ -10,12 +10,14 @@ _log = logging.getLogger(__name__)
 NSE_MARKET_LOT: dict[str, int] = {
     "NIFTY": 65,
     "BANKNIFTY": 30,
+    "SENSEX": 20,
 }
 
 # Pre-revision lots still common in old .env files — map to current NSE values.
 _LEGACY_LOT_SIZE: dict[str, frozenset[int]] = {
     "NIFTY": frozenset({75}),
     "BANKNIFTY": frozenset({35}),
+    "SENSEX": frozenset({10}),
 }
 
 
@@ -100,6 +102,19 @@ def instruments() -> dict[str, IndexInstrument]:
             trail_distance_points=80.0,
             initial_stop_points=200.0,
         ),
+        "SENSEX": IndexInstrument(
+            key="SENSEX",
+            label="SENSEX",
+            underlying_security_id=_int_env("SENSEX_SECURITY_ID", 51),
+            underlying_segment="IDX_I",
+            instrument_type="INDEX",
+            option_segment="BSE_FNO",
+            strike_step=100,
+            lot_size=market_lot_size("SENSEX"),
+            trail_activation_points=50.0,
+            trail_distance_points=80.0,
+            initial_stop_points=200.0,
+        ),
     }
 
 
@@ -107,7 +122,7 @@ def get_instrument(key: str) -> IndexInstrument:
     lookup = instruments()
     normalized = key.strip().upper()
     if normalized not in lookup:
-        raise ValueError("Only NIFTY and BANKNIFTY are supported.")
+        raise ValueError(f"Unknown index: {key}. Supported: {', '.join(lookup)}.")
     return lookup[normalized]
 
 

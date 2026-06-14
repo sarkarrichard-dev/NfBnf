@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from index_ai.config import RiskSettings
-from index_ai.learning import today_losing_trades_count, today_realized_pnl
-from index_ai.option_structures import CREDIT_ACTIONS
+from index_ai.learning import today_live_consecutive_loss_streak, today_live_realized_pnl
+from index_ai.risk_policy import DAILY_LOSS_RUPEES_PER_LOT, effective_risk_limits
+from index_ai.credit_spread import CREDIT_ACTIONS
+from index_ai.premium_sell import is_premium_sell_action
 
 
 def risk_settings_dict(risk: RiskSettings) -> dict[str, Any]:
@@ -22,21 +24,24 @@ def risk_settings_dict(risk: RiskSettings) -> dict[str, Any]:
 
 
 def kill_switch_state(risk: RiskSettings) -> dict[str, Any]:
-    """Daily kill switch for LIVE only: 3 closed losses or daily loss budget."""
-    realized = today_realized_pnl()
-    losses = today_losing_trades_count()
-    loss_limit = abs(risk.max_daily_loss_rupees)
+    """Daily kill switch for LIVE only: 3 consecutive losses or scaled daily loss budget."""
+    limits = effective_risk_limits()
+    realized = today_live_realized_pnl()
+    streak = today_live_consecutive_loss_streak()
+    loss_limit = abs(float(limits["max_daily_loss_rupees"]))
+    streak_limit = int(limits["max_consecutive_losing_trades"] or risk.max_losing_trades_per_day)
     loss_budget_hit = realized <= -loss_limit
-    loss_streak_hit = losses >= risk.max_losing_trades_per_day
+    loss_streak_hit = streak >= streak_limit
     triggered = loss_budget_hit or loss_streak_hit
     reasons: list[str] = []
     if loss_budget_hit:
         reasons.append(
-            f"Daily loss ₹{abs(realized):,.0f} reached limit ₹{loss_limit:,.0f}."
+            f"Daily loss ₹{abs(realized):,.0f} reached limit ₹{loss_limit:,.0f} "
+            f"({int(limits['lots_per_trade'])} lot(s) × ₹{DAILY_LOSS_RUPEES_PER_LOT:,.0f})."
         )
     if loss_streak_hit:
         reasons.append(
-            f"{losses} losing trades today (limit {risk.max_losing_trades_per_day})."
+            f"{streak} consecutive losing trades today (limit {streak_limit})."
         )
     live_only = risk.trading_mode == "LIVE"
     return {
@@ -46,10 +51,25 @@ def kill_switch_state(risk: RiskSettings) -> dict[str, Any]:
         "applies_when": "LIVE",
         "reasons": reasons,
         "today_realized_pnl": realized,
-        "today_losing_trades": losses,
+        "today_consecutive_loss_streak": streak,
+        "today_losing_trades": streak,
         "max_daily_loss_rupees": loss_limit,
-        "max_losing_trades_per_day": risk.max_losing_trades_per_day,
+        "daily_loss_rupees_per_lot": DAILY_LOSS_RUPEES_PER_LOT,
+        "lots_per_trade": limits["lots_per_trade"],
+        "max_losing_trades_per_day": streak_limit,
+        "max_consecutive_losing_trades": streak_limit,
     }
+
+
+def _needs_apex_session_gates(signal_action: str, strategy_mode: str = "") -> bool:
+    from index_ai.strategy_router import strategy_style
+
+    mode = str(strategy_mode or "")
+    if strategy_style() == "APEX":
+        return True
+    if mode.startswith("apex"):
+        return True
+    return is_premium_sell_action(signal_action)
 
 
 def check_execution_gates(
@@ -59,7 +79,15 @@ def check_execution_gates(
     transaction_type: str,
     confidence: float,
     min_confidence: float,
+    strategy_mode: str = "",
 ) -> tuple[bool, str]:
+    from index_ai.market_clock import is_trading_entries_allowed, trading_window_message
+
+    if risk.trading_mode == "LIVE" and not risk.allow_live_trading:
+        return False, "Live mode is blocked by ALLOW_LIVE_TRADING=false."
+
+    if not is_trading_entries_allowed():
+        return False, trading_window_message()
     if risk.trading_mode == "LIVE":
         ks = kill_switch_state(risk)
         if ks["active"]:
@@ -68,10 +96,19 @@ def check_execution_gates(
     if signal_action == "NO_TRADE":
         return False, "No trade setup."
 
-    if signal_action in CREDIT_ACTIONS:
+    if signal_action in CREDIT_ACTIONS or is_premium_sell_action(signal_action):
         if not risk.allow_option_selling:
-            return False, "Hedged credit structures require option selling to be enabled."
+            return False, "Option selling structures require allow_option_selling."
         tx = "SELL"
+
+    if _needs_apex_session_gates(signal_action, strategy_mode):
+        from index_ai.apex_risk import (
+            apex_entry_window_message,
+            is_apex_entry_window,
+        )
+
+        if not is_apex_entry_window():
+            return False, apex_entry_window_message()
 
     if confidence < min_confidence:
         return False, "Confidence is below risk gate."
@@ -81,8 +118,5 @@ def check_execution_gates(
         return False, "Option buying is disabled."
     if tx == "SELL" and not risk.allow_option_selling:
         return False, "Option selling is disabled."
-
-    if risk.trading_mode == "LIVE" and not risk.allow_live_trading:
-        return False, "Live mode is blocked by ALLOW_LIVE_TRADING=false."
 
     return True, "Plan passed risk gates."

@@ -16,7 +16,7 @@ def test_status_starts_in_safe_paper_mode() -> None:
     assert data["live_allowed"] is False
     assert data["policy"]["max_losing_trades_per_day"] == 3
     assert data["policy"]["max_profit_cap_rupees"] is None
-    assert {item["key"] for item in data["symbols"]} == {"NIFTY", "BANKNIFTY"}
+    assert {item["key"] for item in data["symbols"]} == {"NIFTY", "BANKNIFTY", "SENSEX"}
     assert data["timezone"] == "Asia/Kolkata"
     assert "market" in data
     assert data["market"]["timezone"] == "Asia/Kolkata"

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = ROOT / ".env"
 MEMORY_DIR = ROOT / "memory"
 DB_PATH = MEMORY_DIR / "trade_memory.sqlite"
-DASHBOARD_DIR = ROOT / "dashboard"
+DASHBOARD_DIR = ROOT / "dashboard" / "dist"
 
 
 @dataclass(frozen=True)
@@ -77,14 +77,39 @@ def _float(name: str, default: float) -> float:
         return default
 
 
+def _load_env() -> None:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    load_dotenv(ENV_PATH, override=True)
+
+
+VALID_CANDLE_INTERVALS = frozenset({"1", "5", "15", "25", "60"})
+
+
+def candle_interval_minutes() -> str:
+    """Dhan intraday chart interval (minutes). Default 1m spot chart for EMA/CPR/strategies."""
+    _load_env()
+    raw = os.getenv("CANDLE_INTERVAL_MINUTES", "1").strip()
+    return raw if raw in VALID_CANDLE_INTERVALS else "1"
+
+
+def candle_interval_int() -> int:
+    return max(1, int(candle_interval_minutes()))
+
+
+def bars_for_minutes(minutes: int) -> int:
+    """Convert a time window to bar count at the active chart interval."""
+    return max(1, round(float(minutes) / candle_interval_int()))
+
+
 def settings() -> AppSettings:
     repair_env_access_token_line()
-    load_dotenv(ENV_PATH, override=True)
+    _load_env()
     try:
         from index_ai.dhan_auth import reconcile_env_with_jwt
 
         reconcile_env_with_jwt()
-        load_dotenv(ENV_PATH, override=True)
+        _load_env()
     except Exception:
         pass
     return AppSettings(
@@ -102,21 +127,24 @@ def settings() -> AppSettings:
 
 
 def _build_risk_settings() -> RiskSettings:
+    from index_ai.risk_policy import effective_risk_limits
+
     mode = os.getenv("TRADING_MODE", "PAPER").strip().upper()
     if mode not in {"PAPER", "LIVE"}:
         mode = "PAPER"
     live_orders = mode == "LIVE"
     p = HARDCODED_RISK
+    limits = effective_risk_limits()
     return RiskSettings(
         trading_mode=mode,
         allow_live_trading=live_orders,
         allow_option_buying=p.allow_option_buying,
         allow_option_selling=p.allow_option_selling,
-        max_losing_trades_per_day=p.max_losing_trades_per_day,
-        max_daily_loss_rupees=p.max_daily_loss_rupees,
+        max_losing_trades_per_day=int(limits["max_consecutive_losing_trades"] or p.max_losing_trades_per_day),
+        max_daily_loss_rupees=float(limits["max_daily_loss_rupees"]),
         trailing_stop_index_points=p.trailing_stop_index_points,
         min_confidence=p.min_confidence,
-        max_profit_cap_rupees=p.max_profit_cap_rupees,
+        max_profit_cap_rupees=limits["max_profit_cap_rupees"],
     )
 
 
