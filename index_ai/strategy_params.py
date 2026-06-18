@@ -43,6 +43,9 @@ class StrategyParams:
     credit_wing_strikes: int = 2
     credit_short_strike_steps: int = 2
     credit_min_confidence: float = 0.58
+    credit_min_volume_ratio: float = 0.65
+    credit_volume_lookback_bars: int = 20
+    auto_buy_trending_only: bool = True
     credit_profit_target_pct: float = 0.50
     credit_stop_loss_pct: float = 0.60
     enable_profit_trail: bool = True
@@ -106,6 +109,9 @@ def get_strategy_params() -> StrategyParams:
         credit_wing_strikes=_int("CREDIT_WING_STRIKES", 2),
         credit_short_strike_steps=_int("CREDIT_SHORT_STRIKE_STEPS", 2),
         credit_min_confidence=_float("CPR_CREDIT_MIN_CONFIDENCE", 0.58),
+        credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.65),
+        credit_volume_lookback_bars=_int("CREDIT_VOLUME_LOOKBACK_BARS", 20),
+        auto_buy_trending_only=_bool("AUTO_BUY_TRENDING_ONLY", True),
         credit_profit_target_pct=_float("CREDIT_PROFIT_TARGET_PCT", 0.50),
         credit_stop_loss_pct=_float("CREDIT_STOP_LOSS_PCT", 0.60),
         enable_profit_trail=_bool("ENABLE_PROFIT_TRAIL", True),
@@ -136,17 +142,22 @@ def strategy_tuning_summary() -> dict[str, object]:
         ),
         "strategy_style_note": {
             "AUTO": (
-                "Autopilot: trending days → long premium (calls/puts); sideways → iron condor; "
-                "optional Apex on R1/S1 when AUTO_INCLUDE_APEX=true."
-                if p.auto_trend_buy_first and p.auto_credit_sideways_only
+                "Trending CPR → long premium (calls/puts) only; sideways → no buying. "
+                "Credit spreads on trend + range via 1m CPR, EMA cross, and volume."
+                if p.auto_buy_trending_only and not p.auto_credit_sideways_only
                 else (
-                    "Autopilot: Apex on R1/S1 breakout + ST; else EMA/CPR credit; else buy."
-                    if p.auto_intelligent_routing and p.auto_include_apex
+                    "Autopilot: trending days → long premium (calls/puts); sideways → iron condor; "
+                    "optional Apex on R1/S1 when AUTO_INCLUDE_APEX=true."
+                    if p.auto_trend_buy_first and p.auto_credit_sideways_only
                     else (
-                        "Intelligent switch: EMA cross → directional credit; "
-                        "sideways CPR → iron condor; aligned trend → CPR credit or buy."
-                        if p.auto_intelligent_routing
-                        else "Fixed rules from REQUIRE_EMA_CROSS_FOR_CREDIT / CPR credit."
+                        "Autopilot: Apex on R1/S1 breakout + ST; else EMA/CPR credit; else buy."
+                        if p.auto_intelligent_routing and p.auto_include_apex
+                        else (
+                            "Intelligent switch: EMA cross → directional credit; "
+                            "sideways CPR → iron condor; aligned trend → CPR credit or buy."
+                            if p.auto_intelligent_routing
+                            else "Fixed rules from REQUIRE_EMA_CROSS_FOR_CREDIT / CPR credit."
+                        )
                     )
                 )
             ),
@@ -161,6 +172,7 @@ def strategy_tuning_summary() -> dict[str, object]:
         "auto_include_apex": p.auto_include_apex,
         "auto_trend_buy_first": p.auto_trend_buy_first,
         "auto_credit_sideways_only": p.auto_credit_sideways_only,
+        "auto_buy_trending_only": p.auto_buy_trending_only,
         "apex_supertrend_period": p.apex_supertrend_period,
         "apex_supertrend_multiplier": p.apex_supertrend_multiplier,
         "apex_max_trades_per_day": p.apex_max_trades_per_day,
@@ -196,6 +208,8 @@ def strategy_tuning_summary() -> dict[str, object]:
         "credit_wing_strikes": p.credit_wing_strikes,
         "credit_short_strike_steps": p.credit_short_strike_steps,
         "credit_min_confidence": p.credit_min_confidence,
+        "credit_min_volume_ratio": p.credit_min_volume_ratio,
+        "credit_volume_lookback_bars": p.credit_volume_lookback_bars,
         "credit_profit_target_pct": p.credit_profit_target_pct,
         "credit_stop_loss_pct": p.credit_stop_loss_pct,
         "enable_profit_trail": p.enable_profit_trail,

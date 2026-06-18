@@ -33,6 +33,7 @@ export type LogRow = {
   status?: string
   display_status?: string
   mode?: string
+  entry_session_ok?: boolean
   is_live?: boolean
   expiry?: string
   broker_order_id?: string
@@ -55,6 +56,7 @@ export type TradeRow = {
   mtm_updated_at_ist?: string | null
   current_option_ltp?: number | null
   is_open?: boolean
+  entry_session_ok?: boolean
   is_live?: boolean
   status?: string
   display_status?: string
@@ -76,6 +78,11 @@ export type AnalyticsResponse = {
   trades?: TradeRow[]
   log_rows?: LogRow[]
   live_summary?: {
+    open?: number
+    realized_pnl?: number
+    open_mtm?: number
+  }
+  paper_summary?: {
     open?: number
     realized_pnl?: number
     open_mtm?: number

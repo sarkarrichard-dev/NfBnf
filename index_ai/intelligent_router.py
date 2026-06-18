@@ -17,7 +17,8 @@ from index_ai.cpr_regime import CprRegime
 from index_ai.pivot_points import classic_pivot_levels
 from index_ai.premium_sell import PREMIUM_SELL_ACTIONS
 from index_ai.strategy_mode import pick_auto_credit
-from index_ai.strategy_params import StrategyParams
+from index_ai.bar_volume import volume_confirms
+from index_ai.strategy_params import get_strategy_params
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ def choose_auto_engine(
         cross,
         ema_fast=params.ema_fast_period,
         ema_slow=params.ema_slow_period,
+        frame=frame,
     )
 
     if not params.auto_include_apex:
@@ -73,6 +75,21 @@ def choose_auto_engine(
     outside = _outside_pivot_range(close, previous_day)
 
     if apex_ready and outside:
+        volume_ok, stats = volume_confirms(
+            frame,
+            min_ratio=params.credit_min_volume_ratio,
+            lookback=params.credit_volume_lookback_bars,
+        )
+        if not volume_ok:
+            return AutoEngineChoice(
+                "wait",
+                None,
+                (
+                    f"AUTO: Apex breakout but 1m volume {stats.get('last_bar_volume', 0):,} "
+                    f"({float(stats.get('ratio') or 0):.2f}× avg) below gate — wait."
+                ),
+                "apex_wait",
+            )
         action = apex_action
         mode = "apex"
         reason = f"AUTO [Apex]: {apex.reason}"

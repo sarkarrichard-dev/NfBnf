@@ -3,7 +3,9 @@ from __future__ import annotations
 from index_ai.learning import connect, loss_guard_for_setup, record_trade
 
 
-def _closed_trade(instrument: str, action: str, pnl: float) -> None:
+def _closed_trade(instrument: str, action: str, pnl: float, *, suffix: str = "") -> None:
+    import time
+
     trade_id = record_trade(
         mode="PAPER",
         instrument=instrument,
@@ -19,6 +21,7 @@ def _closed_trade(instrument: str, action: str, pnl: float) -> None:
         signal={"action": action, "price": 24000, "confidence": 0.7},
         status="CLOSED",
     )
+    time.sleep(0.01)
     with connect() as db:
         db.execute("UPDATE trades SET pnl = ?, status = 'CLOSED' WHERE id = ?", (pnl, trade_id))
 

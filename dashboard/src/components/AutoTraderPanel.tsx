@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
+import { usePollMs } from '../hooks/usePageVisible'
 import { cn } from '../lib/cn'
 
 type HeatCell = {
@@ -35,8 +36,11 @@ type AutoStatus = {
   last_error?: string
   kill_switch?: { active?: boolean }
   indices_skipped?: string[]
+  position_mode?: string
+  open_trades_paper?: number
+  open_trades_live?: number
   events?: Array<Record<string, unknown>>
-  market?: { is_open?: boolean; phase?: string }
+  market?: { is_open?: boolean; phase?: string; message?: string }
 }
 
 function actionClass(action?: string): string {
@@ -48,17 +52,21 @@ function actionClass(action?: string): string {
 
 export function AutoTraderPanel() {
   const qc = useQueryClient()
+  const autoPoll = usePollMs(3_000)
 
   const auto = useQuery({
     queryKey: ['auto-status'],
     queryFn: () => api<AutoStatus>('/api/auto/status'),
-    refetchInterval: 2000,
+    refetchInterval: autoPoll,
   })
+
+  const running = !!auto.data?.running
+  const heatmapPoll = usePollMs(running ? 4_000 : 30_000)
 
   const heatmap = useQuery({
     queryKey: ['heatmap'],
     queryFn: () => api<Heatmap>('/api/heatmap'),
-    refetchInterval: 2000,
+    refetchInterval: heatmapPoll,
   })
 
   const start = useMutation({
@@ -81,13 +89,16 @@ export function AutoTraderPanel() {
   })
 
   const status = auto.data
-  const running = !!status?.running
+  const mode = (status?.position_mode || 'PAPER').toUpperCase()
+  const openJournal =
+    mode === 'LIVE' ? status?.open_trades_live : status?.open_trades_paper
   const parts = [
     running ? 'Scanner running' : 'Scanner stopped',
-    status?.market?.is_open ? 'Market open' : 'Market closed',
+    `${mode} mode`,
+    status?.market?.is_open ? 'Market open' : status?.market?.message || 'Market closed',
     status?.cycles != null ? `${status.cycles} cycles` : null,
-    status?.executions != null ? `${status.executions} executions` : null,
-    status?.open_trades != null ? `${status.open_trades} open` : null,
+    status?.executions != null ? `${status.executions} algo entries` : null,
+    openJournal != null ? `${openJournal} open in journal` : null,
     status?.auth_blocked ? 'Dhan token expired' : null,
     status?.last_error ? `⚠ ${status.last_error}` : null,
   ].filter(Boolean)
@@ -135,17 +146,17 @@ export function AutoTraderPanel() {
       {heatmap.data?.error ? (
         <p className="text-sm text-red-300">{heatmap.data.error}</p>
       ) : !cells.length ? (
-        <p className="text-sm text-slate-500">No heatmap data.</p>
+        <p className="text-sm text-slate-500">No heatmap data — start scanner or wait for market.</p>
       ) : (
         <>
           <p className="text-xs text-slate-500">
             {summary.executable ?? 0} executable · {summary.credit_signals ?? 0} credit ·{' '}
             {summary.bullish_signals ?? 0} buy call · {summary.bearish_signals ?? 0} buy put
           </p>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {cells.map((c, i) => (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {cells.map((c) => (
               <article
-                key={i}
+                key={c.instrument || c.action}
                 className={cn(
                   'rounded-lg border p-3 text-xs',
                   actionClass(c.action),
@@ -171,7 +182,7 @@ export function AutoTraderPanel() {
         </>
       )}
 
-      <details open className="rounded-lg border border-slate-800">
+      <details className="rounded-lg border border-slate-800">
         <summary className="cursor-pointer px-3 py-2 text-xs text-slate-400">Scanner log</summary>
         <pre className="max-h-40 overflow-auto px-3 pb-3 text-[11px] text-slate-500">
           {(status?.events || [])

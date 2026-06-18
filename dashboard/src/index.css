@@ -2,15 +2,44 @@
 
 :root {
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --fx-bg: #050810;
+  --fx-cyan: rgba(34, 211, 238, 0.45);
+  --fx-violet: rgba(139, 92, 246, 0.35);
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: linear-gradient(180deg, #0b1117 0%, #0d141d 100%);
-  color: #e5edf7;
+  color: #e8f4ff;
+  background-color: var(--fx-bg);
+  background-image:
+    radial-gradient(ellipse 90% 55% at 50% -25%, rgba(34, 211, 238, 0.14), transparent 55%),
+    radial-gradient(ellipse 55% 45% at 100% 0%, rgba(139, 92, 246, 0.1), transparent 50%),
+    radial-gradient(ellipse 45% 35% at 0% 100%, rgba(16, 185, 129, 0.07), transparent 45%),
+    linear-gradient(180deg, #060a12 0%, #050810 40%, #030508 100%);
+  background-attachment: fixed;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 75%);
 }
 
 #root {
   min-height: 100vh;
+  position: relative;
+  z-index: 0;
+}
+
+::selection {
+  background: rgba(34, 211, 238, 0.25);
+  color: #fff;
 }

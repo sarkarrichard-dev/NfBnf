@@ -271,6 +271,15 @@ def validate_execution_plan(
     if action == "NO_TRADE":
         return SafetyCheck(False, "No trade action.", "no_trade")
 
+    from index_ai.market_clock import is_entry_session_timestamp, now_ist, trading_window_message
+
+    if not is_entry_session_timestamp(now_ist()):
+        return SafetyCheck(
+            False,
+            f"Entries blocked — {trading_window_message(now_ist())}",
+            "market_closed",
+        )
+
     if option is None:
         return SafetyCheck(False, "No option selected.", "no_option")
 

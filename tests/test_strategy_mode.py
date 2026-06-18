@@ -62,6 +62,7 @@ def test_auto_blocks_bear_call_when_ema_bull_vs_bear_cpr() -> None:
 def test_route_auto_intelligent_iron_condor(monkeypatch) -> None:
     monkeypatch.setenv("STRATEGY_STYLE", "AUTO")
     monkeypatch.setenv("AUTO_INTELLIGENT_ROUTING", "true")
+    monkeypatch.setenv("EMA_SLOW_PERIOD", "20")
     reload_strategy_params()
     today, previous = _sideways_frames()
     signal, regime = route_intraday_signal(today, previous, allow_option_selling=True)

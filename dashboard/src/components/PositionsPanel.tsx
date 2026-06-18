@@ -1,16 +1,14 @@
 import { useMemo } from 'react'
 import { cn } from '../lib/cn'
 import {
-  formatPrice,
-  legDisplayName,
-  legPctChange,
   legPnlValue,
   money,
   openLegRows,
   pnlClass,
-  signedQty,
 } from '../lib/pnl'
+import { fx } from '../lib/theme'
 import type { LogRow, PeriodKey, PositionsFilter, TradeRow } from '../types/analytics'
+import { PositionRow } from './PositionRow'
 
 type Props = {
   logRows: LogRow[]
@@ -51,6 +49,12 @@ export function PositionsPanel({
     [visible],
   )
 
+  const filterCounts = useMemo(() => {
+    const profit = allOpen.filter((r) => (legPnlValue(r) ?? 0) > 0).length
+    const loss = allOpen.filter((r) => (legPnlValue(r) ?? 0) < 0).length
+    return { all: allOpen.length, profit, loss }
+  }, [allOpen])
+
   const filters: { id: PositionsFilter; label: string }[] = [
     {
       id: 'all',
@@ -67,35 +71,32 @@ export function PositionsPanel({
   ]
 
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+    <section className={cn(fx.panel, 'p-4')}>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold text-slate-100">Today&apos;s positions</h2>
-          <p className="mt-1 text-xs text-slate-400">
+          <h2 className="text-base font-semibold text-cyan-50/95">Today&apos;s positions</h2>
+          <p className="mt-1 text-xs text-cyan-200/45">
             Live MTM from Dhan option LTP
             {mtmUpdatedAt ? ` · ${mtmUpdatedAt}` : ''}
           </p>
         </div>
         <div className="flex flex-wrap gap-4 text-sm">
           <div className="text-right">
-            <span className="block text-xs text-slate-400">P&amp;L</span>
+            <span className="block text-xs text-cyan-200/45">P&amp;L</span>
             <strong className={cn('text-lg tabular-nums', pnlClass(totalPnl))}>
               {money(totalPnl)}
             </strong>
           </div>
           <div className="text-right">
-            <span className="block text-xs text-slate-400">Open legs</span>
-            <strong className="text-lg text-slate-100">{allOpen.length}</strong>
+            <span className="block text-xs text-cyan-200/45">Open legs</span>
+            <strong className="text-lg text-cyan-50">{allOpen.length}</strong>
           </div>
         </div>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Position filters">
         {filters.map((f) => {
-          const count =
-            f.id === 'all'
-              ? allOpen.length
-              : allOpen.filter((r) => passesFilter(r, f.id)).length
+          const count = filterCounts[f.id]
           const label = count ? `${f.label} [${count}]` : f.label
           return (
             <button
@@ -105,8 +106,8 @@ export function PositionsPanel({
               className={cn(
                 'rounded-full border px-3 py-1 text-xs transition',
                 filter === f.id
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                  : 'border-slate-700 bg-slate-950 text-slate-400 hover:text-slate-200',
+                  ? 'border-cyan-400/40 bg-cyan-400/10 text-cyan-100 shadow-[0_0_10px_-4px_rgba(34,211,238,0.5)]'
+                  : 'border-slate-700/60 bg-black/20 text-slate-400 hover:border-cyan-500/30 hover:text-cyan-100',
               )}
             >
               {label}
@@ -115,10 +116,10 @@ export function PositionsPanel({
         })}
       </div>
 
-      <div className="max-h-80 overflow-auto rounded-lg border border-slate-800">
+      <div className="max-h-80 overflow-auto rounded-lg border border-cyan-500/15 bg-black/25">
         <table className="min-w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-slate-950/95 text-xs text-slate-400">
-            <tr className="border-b border-slate-800">
+          <thead className="sticky top-0 z-10 bg-slate-950/95 text-xs text-cyan-200/50">
+            <tr className="border-b border-cyan-500/10">
               <th className="px-3 py-2 text-left font-medium">B/S</th>
               <th className="px-3 py-2 text-left font-medium">Name</th>
               <th className="px-3 py-2 text-left font-medium">Mode</th>
@@ -143,56 +144,9 @@ export function PositionsPanel({
                 </td>
               </tr>
             ) : (
-              visible.map((row) => {
-                const key = `${row.trade_id}:${row.leg_index ?? 0}`
-                const isBuy = row.side !== 'Sell'
-                const qty = signedQty(row)
-                const pnl = legPnlValue(row)
-                const pct = legPctChange(row)
-                return (
-                  <tr
-                    key={key}
-                    className="border-b border-slate-800/70 bg-emerald-500/[0.03] text-slate-200"
-                  >
-                    <td className="px-3 py-2">
-                      <span
-                        className={cn(
-                          'inline-flex h-6 w-6 items-center justify-center rounded text-[11px] font-bold',
-                          isBuy
-                            ? 'border border-emerald-500/35 bg-emerald-500/15 text-emerald-300'
-                            : 'border border-red-500/35 bg-red-500/15 text-red-300',
-                        )}
-                        title={isBuy ? 'Buy' : 'Sell'}
-                      >
-                        {isBuy ? 'B' : 'S'}
-                      </span>
-                    </td>
-                    <td className="max-w-xs px-3 py-2 text-slate-100">{legDisplayName(row)}</td>
-                    <td className="px-3 py-2">
-                      <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300">
-                        {row.mode || '—'}
-                      </span>
-                    </td>
-                    <td
-                      className={cn(
-                        'px-3 py-2 text-right tabular-nums font-semibold',
-                        qty >= 0 ? 'text-emerald-400' : 'text-red-400',
-                      )}
-                    >
-                      {qty >= 0 ? '+' : ''}
-                      {qty}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatPrice(row.avg_entry)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{formatPrice(row.mark_price)}</td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums font-semibold', pnlClass(pnl))}>
-                      {pnl != null ? money(pnl) : '—'}
-                    </td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums', pnlClass(pnl))}>
-                      {pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '—'}
-                    </td>
-                  </tr>
-                )
-              })
+              visible.map((row) => (
+                <PositionRow key={`${row.trade_id}:${row.leg_index ?? 0}`} row={row} />
+              ))
             )}
           </tbody>
           {visible.length > 0 ? (

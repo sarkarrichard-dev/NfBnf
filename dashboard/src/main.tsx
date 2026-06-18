@@ -1,24 +1,26 @@
-import { StrictMode } from 'react'
+import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import './index.css'
-import App from './App.tsx'
+import { queryClient } from './lib/queryClient'
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 500,
-      retry: 1,
-      refetchOnWindowFocus: true,
-    },
-  },
-})
+const App = lazy(() => import('./App.tsx'))
+
+function LoadingShell() {
+  return (
+    <main className="mx-auto flex min-h-screen max-w-lg items-center justify-center px-4">
+      <p className="text-sm text-slate-400">Loading dashboard…</p>
+    </main>
+  )
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      <Suspense fallback={<LoadingShell />}>
+        <App />
+      </Suspense>
       <Toaster richColors position="top-right" />
     </QueryClientProvider>
   </StrictMode>,

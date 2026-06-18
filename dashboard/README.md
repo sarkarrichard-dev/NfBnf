@@ -1,22 +1,35 @@
-# React dashboard (Index Options AI)
+# Index Options AI — Dashboard
 
-Single UI served at `http://127.0.0.1:8000/` after build.
+Single polished React UI served at **`http://127.0.0.1:8000/`** when you run `Start Index Options AI.cmd`.
+
+There is no separate dev URL in normal use — the algo server serves the built app from `dashboard/dist/`.
 
 ## Stack
 
 React + TypeScript + Vite + Tailwind v4 + TanStack Query
 
-## Development
+## Normal use
+
+1. Double-click **`Start Index Options AI.cmd`**
+2. Press **Enter** (default: Start) — builds the dashboard if needed, starts the server, opens the browser once
+
+## Optional: UI development only
+
+If you are editing React source and want hot reload:
 
 ```powershell
+# Terminal 1 — algo server
+python -m index_ai.server
+
+# Terminal 2 — Vite dev (proxies /api to :8000)
 cd dashboard
 npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173` (proxies `/api/*` to port 8000).
+Use `http://127.0.0.1:5173` only while developing UI components. For trading, always use **`http://127.0.0.1:8000`**.
 
-## Production build (required before starting the algo server)
+## Manual build
 
 ```powershell
 cd dashboard
@@ -24,11 +37,4 @@ npm install
 npm run build
 ```
 
-Output goes to `dashboard/dist/`. FastAPI serves that folder at `/`.
-
-## Features
-
-- Today's positions (Dhan-style P&L table, 1.5s MTM refresh)
-- Trade log grouped by index
-- Execution (Paper/Live, lots)
-- Dhan account, auth, auto scanner, backtest, learning panels
+Output: `dashboard/dist/` (served by FastAPI at `/`).

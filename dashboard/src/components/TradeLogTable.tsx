@@ -8,6 +8,7 @@ import {
   pnlClass,
   rowOpenMtm,
 } from '../lib/pnl'
+import { fx } from '../lib/theme'
 import type { LogRow, PeriodKey, TradeRow } from '../types/analytics'
 
 type Props = {
@@ -45,9 +46,9 @@ export function TradeLogTable({ logRows, trades, period, mtmUpdatedAt }: Props) 
   if (!rows.length) {
     const tradeCount = trades.length
     return (
-      <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-        <h2 className="mb-2 text-base font-semibold text-slate-100">Trade log</h2>
-        <p className="text-sm text-slate-500">
+      <section className={cn(fx.panel, 'p-4')}>
+        <h2 className="mb-2 text-base font-semibold text-cyan-50/95">Trade log</h2>
+        <p className="text-sm text-cyan-200/45">
           {tradeCount > 0
             ? 'Loading leg details…'
             : 'No trades in this period.'}
@@ -57,17 +58,17 @@ export function TradeLogTable({ logRows, trades, period, mtmUpdatedAt }: Props) 
   }
 
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+    <section className={cn(fx.panel, 'p-4')}>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-base font-semibold text-slate-100">Trade log</h2>
-        <p className="text-xs text-slate-500">
+        <h2 className="text-base font-semibold text-cyan-50/95">Trade log</h2>
+        <p className="text-xs text-cyan-200/45">
           One row per option leg
           {mtmUpdatedAt ? ` · MTM ${mtmUpdatedAt}` : ''}
         </p>
       </div>
-      <div className="max-h-[28rem] overflow-auto rounded-lg border border-slate-800">
+      <div className="max-h-[28rem] overflow-auto rounded-lg border border-cyan-500/15 bg-black/25">
         <table className="min-w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-slate-950/95 text-xs text-slate-400">
+          <thead className="sticky top-0 z-10 bg-slate-950/95 text-xs text-cyan-200/50">
             <tr className="border-b border-slate-800">
               <th className="px-2 py-2 text-left font-medium">Open</th>
               <th className="px-2 py-2 text-left font-medium">Close</th>

@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
+import { usePollMs } from '../hooks/usePageVisible'
 import {
   mergeLogRows,
   mergeTradesLiveMtm,
@@ -13,23 +14,24 @@ import type {
   LiveMtmResponse,
 } from '../types/analytics'
 
-const ANALYTICS_MS = 12_000
-const JOURNAL_MS = 8_000
+const ANALYTICS_MS = 20_000
+const JOURNAL_MS = 10_000
 const MTM_MS = 1_500
 
 export function useDashboardData() {
+  const analyticsPoll = usePollMs(ANALYTICS_MS)
+  const journalPoll = usePollMs(JOURNAL_MS)
+
   const analyticsQuery = useQuery({
     queryKey: ['analytics'],
     queryFn: () => api<AnalyticsResponse>('/api/analytics?enrich_mtm=false'),
-    refetchInterval: ANALYTICS_MS,
-    refetchIntervalInBackground: true,
+    refetchInterval: analyticsPoll,
   })
 
   const journalQuery = useQuery({
     queryKey: ['journal'],
     queryFn: () => api<JournalResponse>('/api/trades/recent?limit=80'),
-    refetchInterval: JOURNAL_MS,
-    refetchIntervalInBackground: true,
+    refetchInterval: journalPoll,
   })
 
   const hasOpen = useMemo(() => {
@@ -37,11 +39,12 @@ export function useDashboardData() {
     return rows.some((t) => t.is_open)
   }, [journalQuery.data?.rows, analyticsQuery.data?.trades])
 
+  const mtmPoll = usePollMs(MTM_MS, hasOpen)
+
   const mtmQuery = useQuery({
     queryKey: ['live-mtm'],
     queryFn: () => api<LiveMtmResponse>('/api/trades/live-mtm'),
-    refetchInterval: hasOpen ? MTM_MS : false,
-    refetchIntervalInBackground: true,
+    refetchInterval: mtmPoll,
     enabled: hasOpen,
   })
 
@@ -93,9 +96,10 @@ export function useDashboardData() {
     mtmUpdatedAt: mtmQuery.data?.updated_at_ist,
     journalUpdatedAt: journalQuery.data?.updated_at_ist,
     statsUpdatedAt: analyticsQuery.data?.generated_at_ist,
-    isLoading: analyticsQuery.isLoading,
+    isLoading: analyticsQuery.isLoading && !analyticsQuery.data,
     isError: analyticsQuery.isError,
     error: analyticsQuery.error,
     hasOpen,
+    isFetching: analyticsQuery.isFetching || journalQuery.isFetching || mtmQuery.isFetching,
   }
 }

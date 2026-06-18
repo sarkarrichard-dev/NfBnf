@@ -28,6 +28,7 @@ from index_ai.market_clock import (
     now_ist_iso,
     today_ist_date,
 )
+from index_ai.strategy_router import trade_lane
 from index_ai.chart_live import fetch_supertrend_snapshot
 from index_ai.planner import plan_instrument
 from index_ai.risk import kill_switch_state
@@ -39,7 +40,7 @@ from index_ai.position_exits import (
 )
 from index_ai.trailing import evaluate_open_trade
 
-_log = logging.getLogger(__name__)
+_log_py = logging.getLogger(__name__)
 
 SCAN_INTERVAL_SECONDS = 90
 COOLDOWN_MINUTES = 20
@@ -88,6 +89,10 @@ def _friendly_error(exc: BaseException) -> str:
 def _log(event: str, **fields: Any) -> None:
     entry = {"at": now_ist_iso(), "at_ist": market_status()["now_ist"], "event": event, **fields}
     _state.events.appendleft(entry)
+    if fields:
+        _log_py.info("%s | %s", event, " · ".join(f"{k}={v}" for k, v in fields.items()))
+    else:
+        _log_py.info("%s", event)
 
 
 def scanner_status() -> dict[str, Any]:
@@ -120,11 +125,15 @@ def scanner_status() -> dict[str, Any]:
     }
 
 
-def _has_open_trade(instrument_key: str, *, mode: str) -> bool:
-    return any(
-        str(t.get("instrument") or "") == instrument_key
-        for t in open_trades_for_mode(mode)
-    )
+def _has_open_trade(instrument_key: str, *, mode: str, lane: str | None = None) -> bool:
+    for t in open_trades_for_mode(mode):
+        if str(t.get("instrument") or "") != instrument_key:
+            continue
+        if lane is None:
+            return True
+        if trade_lane(str(t.get("action") or "")) == lane:
+            return True
+    return False
 
 
 def _recent_same_action(instrument_key: str, action: str, *, mode: str = "PAPER") -> bool:
@@ -363,6 +372,8 @@ async def _scan_index(
         return
 
     signal_data = result.get("signal") or {}
+    buy_data = result.get("buy_signal") or {}
+    sell_data = result.get("sell_signal") or {}
     action = str(signal_data.get("action") or "NO_TRADE")
     plan_data = result.get("plan") or {}
 
@@ -371,6 +382,8 @@ async def _scan_index(
         "scan",
         instrument=instrument_key,
         action=action,
+        buy_action=buy_data.get("action"),
+        sell_action=sell_data.get("action"),
         confidence=signal_data.get("confidence"),
         cpr_regime=cpr.get("day_bias"),
         cpr_width_class=cpr.get("width_class"),
@@ -381,7 +394,34 @@ async def _scan_index(
     active_mode = cfg.risk.trading_mode
     await _apply_strategy_exits_for_index(client, cfg, instrument_key, action, cpr, signal_data)
 
-    if action == "NO_TRADE" or not plan_data.get("allowed"):
+    opportunities = list(result.get("opportunities") or [])
+    if not opportunities and action != "NO_TRADE" and plan_data.get("allowed"):
+        opportunities = [
+            {
+                "lane": trade_lane(action),
+                "signal": signal_data,
+                "option": result.get("option"),
+                "plan": plan_data,
+            }
+        ]
+
+    if not opportunities:
+        if action == "NO_TRADE":
+            _log(
+                "no_trade",
+                instrument=instrument_key,
+                cpr_regime=cpr.get("day_bias"),
+                buy_reason=str(buy_data.get("reason") or "")[:200],
+                sell_reason=str(sell_data.get("reason") or "")[:200],
+                strategy_mode=signal_data.get("strategy_mode"),
+            )
+        elif not plan_data.get("allowed"):
+            _log(
+                "plan_blocked",
+                instrument=instrument_key,
+                action=action,
+                reason=str(plan_data.get("reason") or "")[:400],
+            )
         return
 
     if not allow_entries:
@@ -393,70 +433,84 @@ async def _scan_index(
         )
         return
 
-    if _has_open_trade(instrument_key, mode=active_mode):
-        _log(
-            "skip_open_position",
-            instrument=instrument_key,
-            action=action,
-            mode=active_mode,
-        )
-        return
-
-    if _recent_same_action(instrument_key, action, mode=active_mode):
-        _log("skip_cooldown", instrument=instrument_key, action=action)
-        return
-
     from index_ai.executor import ExecutionPlan
+    from index_ai.market_clock import is_entry_session_timestamp, now_ist, trading_window_message
 
-    if not plan_data.get("allowed"):
+    if not is_entry_session_timestamp(now_ist()):
         _log(
-            "execute_blocked",
+            "skip_entry_window",
             instrument=instrument_key,
             action=action,
-            reason=str(plan_data.get("reason") or "plan not allowed")[:400],
+            reason=trading_window_message(now_ist()),
         )
         return
 
-    plan = ExecutionPlan(
-        allowed=True,
-        mode=str(plan_data.get("mode") or cfg.risk.trading_mode),
-        reason=str(plan_data.get("reason") or ""),
-        option=result.get("option"),
-        signal=signal_data,
-    )
-    exec_result = execute_plan(plan, cfg, client)
-    if exec_result.get("trade_id"):
-        _state.executions += 1
-        _state.last_error = None
-        _state.last_execute_block = None
-        _log(
-            "executed",
-            instrument=instrument_key,
-            trade_id=exec_result.get("trade_id"),
-            status=exec_result.get("status"),
-            action=action,
+    for opp in opportunities:
+        opp_signal = opp.get("signal") or {}
+        opp_action = str(opp_signal.get("action") or "NO_TRADE")
+        opp_plan = opp.get("plan") or {}
+        lane = str(opp.get("lane") or trade_lane(opp_action))
+
+        if opp_action == "NO_TRADE" or not opp_plan.get("allowed"):
+            continue
+
+        if _has_open_trade(instrument_key, mode=active_mode, lane=lane):
+            _log(
+                "skip_open_position",
+                instrument=instrument_key,
+                action=opp_action,
+                lane=lane,
+                mode=active_mode,
+            )
+            continue
+
+        if _recent_same_action(instrument_key, opp_action, mode=active_mode):
+            _log("skip_cooldown", instrument=instrument_key, action=opp_action, lane=lane)
+            continue
+
+        plan = ExecutionPlan(
+            allowed=True,
+            mode=str(opp_plan.get("mode") or cfg.risk.trading_mode),
+            reason=str(opp_plan.get("reason") or ""),
+            option=opp.get("option"),
+            signal=opp_signal,
         )
-    else:
-        reason = str(
-            exec_result.get("reason")
-            or exec_result.get("status")
-            or "Execution returned no trade_id"
-        )
-        _state.last_error = reason[:400]
-        _state.last_execute_block = {
-            "instrument": instrument_key,
-            "action": action,
-            "status": exec_result.get("status"),
-            "reason": reason[:400],
-            "at_ist": market_status()["now_ist"],
-        }
-        _log(
-            "execute_blocked",
-            instrument=instrument_key,
-            action=action,
-            status=exec_result.get("status"),
-            reason=reason,
-        )
+        exec_result = execute_plan(plan, cfg, client)
+        if exec_result.get("trade_id"):
+            _state.executions += 1
+            _state.last_error = None
+            _state.last_execute_block = None
+            _log(
+                "executed",
+                instrument=instrument_key,
+                trade_id=exec_result.get("trade_id"),
+                status=exec_result.get("status"),
+                action=opp_action,
+                lane=lane,
+            )
+        else:
+            reason = str(
+                exec_result.get("reason")
+                or exec_result.get("status")
+                or "Execution returned no trade_id"
+            )
+            _state.last_error = reason[:400]
+            _state.last_execute_block = {
+                "instrument": instrument_key,
+                "action": opp_action,
+                "lane": lane,
+                "status": exec_result.get("status"),
+                "reason": reason[:400],
+                "at_ist": market_status()["now_ist"],
+            }
+            _log(
+                "execute_blocked",
+                instrument=instrument_key,
+                action=opp_action,
+                lane=lane,
+                status=exec_result.get("status"),
+                reason=reason,
+            )
 
 
 async def _run_loop() -> None:

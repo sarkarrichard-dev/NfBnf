@@ -4,8 +4,20 @@ from __future__ import annotations
 
 from typing import Any
 
+import pandas as pd
+
+from index_ai.bar_volume import volume_confirms
 from index_ai.cpr_regime import CprRegime
 from index_ai.ema_cross import credit_action_for_cross
+from index_ai.strategy_params import get_strategy_params
+
+
+def _volume_wait_reason(stats: dict[str, Any], *, min_ratio: float) -> str:
+    return (
+        f"AUTO: 1m bar volume {stats.get('last_bar_volume', 0):,} is "
+        f"{float(stats.get('ratio') or 0):.2f}× recent avg "
+        f"(need ≥{min_ratio:.2f}×) — wait for participation."
+    )
 
 
 def pick_auto_credit(
@@ -14,17 +26,37 @@ def pick_auto_credit(
     *,
     ema_fast: int,
     ema_slow: int,
+    frame: pd.DataFrame | None = None,
 ) -> tuple[str | None, str, str]:
     """
     Choose hedged credit for AUTO (intelligent switching).
 
+    Uses CPR regime + 1m EMA cross/alignment + bar volume vs recent average.
     Returns (action, reason, strategy_mode).
-    strategy_mode: ema_cross | cpr_sideways | cpr_trend | conflict | wait
     """
+    params = get_strategy_params()
     aligned = str(cross.get("aligned") or "")
     ema_bull = aligned == "bull"
     ema_bear = aligned == "bear"
     bias = regime.day_bias
+
+    def _gate_volume(action: str | None, reason: str, mode: str) -> tuple[str | None, str, str]:
+        if not action:
+            return action, reason, mode
+        ok, stats = volume_confirms(
+            frame,
+            min_ratio=params.credit_min_volume_ratio,
+            lookback=params.credit_volume_lookback_bars,
+        )
+        if ok:
+            vol_note = ""
+            if stats.get("ready"):
+                vol_note = (
+                    f" 1m vol {stats['last_bar_volume']:,} "
+                    f"({stats['ratio']:.2f}× avg {stats['avg_bar_volume']:,})."
+                )
+            return action, f"{reason}{vol_note}", mode
+        return None, _volume_wait_reason(stats, min_ratio=params.credit_min_volume_ratio), "wait"
 
     cross_action = credit_action_for_cross(cross)
     if cross_action:
@@ -41,10 +73,10 @@ def pick_auto_credit(
                 "conflict",
             )
         label = "bullish" if cross_action == "SELL_BULL_PUT_SPREAD" else "bearish"
-        return (
+        return _gate_volume(
             cross_action,
             (
-                f"AUTO [EMA cross]: {ema_fast}/{ema_slow} {label} cross on spot. "
+                f"AUTO [EMA cross]: {ema_fast}/{ema_slow} {label} cross on 1m spot. "
                 f"{regime.note}"
             ),
             "ema_cross",
@@ -60,26 +92,26 @@ def pick_auto_credit(
                 ),
                 "wait",
             )
-        return (
+        return _gate_volume(
             "SELL_IRON_CONDOR",
             f"AUTO [range]: Sideways CPR — iron condor (EMA {aligned or 'flat'}). {regime.note}",
             "cpr_sideways",
         )
 
     if bias == "TRENDING_BULL" and ema_bull:
-        return (
+        return _gate_volume(
             "SELL_BULL_PUT_SPREAD",
             (
-                f"AUTO [trend]: Bullish CPR + EMA {ema_fast}/{ema_slow} aligned — "
+                f"AUTO [trend]: Bullish CPR + EMA {ema_fast}/{ema_slow} aligned on 1m — "
                 "bull put spread."
             ),
             "cpr_trend",
         )
     if bias == "TRENDING_BEAR" and ema_bear:
-        return (
+        return _gate_volume(
             "SELL_BEAR_CALL_SPREAD",
             (
-                f"AUTO [trend]: Bearish CPR + EMA {ema_fast}/{ema_slow} aligned — "
+                f"AUTO [trend]: Bearish CPR + EMA {ema_fast}/{ema_slow} aligned on 1m — "
                 "bear call spread."
             ),
             "cpr_trend",
@@ -90,7 +122,7 @@ def pick_auto_credit(
             None,
             (
                 f"AUTO: CPR {bias} but EMA {aligned or 'flat'} not aligned — "
-                "no credit (buy rules may apply)."
+                "no credit (trend buy rules may apply)."
             ),
             "conflict",
         )

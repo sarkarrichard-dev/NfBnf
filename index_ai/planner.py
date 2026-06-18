@@ -8,22 +8,11 @@ from index_ai.candles import latest_two_sessions, prepare_intraday_signal_frames
 from index_ai.config import AppSettings, candle_interval_minutes
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.dhan_errors import classify_http_error
-from index_ai.executor import build_execution_plan
 from index_ai.instruments import configured_index_keys, get_instrument
-from index_ai.options_oi import (
-    analyze_option_chain,
-    apply_oi_to_signal,
-    choose_option_from_chain_with_oi,
-)
-from index_ai.risk_policy import HARDCODED_RISK
-from index_ai.credit_spread import CREDIT_ACTIONS
-from index_ai.option_structures import build_atm_short_option, build_credit_structure
-from index_ai.premium_sell import PREMIUM_SELL_ACTIONS
-from index_ai.strategy import StrategySignal, copy_signal
+from index_ai.options_oi import analyze_option_chain
 from index_ai.options_expiry import pick_nearest_expiry
-from index_ai.strategy_router import route_intraday_signal
-from index_ai.trade_lots import stamp_option_quantities
-from index_ai.capital_required import compute_capital_required
+from index_ai.plan_builder import build_opportunity
+from index_ai.strategy_router import evaluate_dual_opportunities
 
 INDEX_KEYS = configured_index_keys()
 
@@ -36,7 +25,7 @@ def plan_instrument(
     lookback_days: int = 5,
     interval: str | None = None,
 ) -> dict[str, Any]:
-    """CPR+EMA + Dhan option-chain OI for NIFTY / BANKNIFTY (no order placed)."""
+    """Dual-lane plan: candlestick buy + CPR sell (each with option chain + gates)."""
     instrument = get_instrument(instrument_key)
     if instrument.underlying_security_id is None:
         return {
@@ -61,12 +50,14 @@ def plan_instrument(
         candles,
         min_ema_bars=sp.ema_slow_period + 2,
     )
-    signal, cpr_regime = route_intraday_signal(
+    dual = evaluate_dual_opportunities(
         ema_frame,
         previous,
         allow_option_selling=app_settings.risk.allow_option_selling,
         allow_option_buying=app_settings.risk.allow_option_buying,
     )
+    signal = dual.primary
+    cpr_regime = dual.regime
 
     oi_context: dict[str, Any] | None = None
     oi_fetch_error: str | None = None
@@ -91,94 +82,48 @@ def plan_instrument(
     except Exception as exc:
         oi_fetch_error = str(classify_http_error(exc, f"{instrument_key} option chain"))
 
-    if signal.action != "NO_TRADE" and chain and oi:
-        from index_ai.strategy_params import get_strategy_params
-
-        sp = get_strategy_params()
-        if signal.action in PREMIUM_SELL_ACTIONS:
-            try:
-                work_signal = signal
-                if sp.apex_use_hedged_spreads:
-                    from index_ai.apex_pivot_trend import map_apex_to_hedged_credit
-
-                    hedged = map_apex_to_hedged_credit(signal.action)
-                    if hedged:
-                        work_signal = copy_signal(
-                            signal,
-                            action=hedged,
-                            reason=f"{signal.reason} (hedged spread for defined risk).",
-                        )
-                        option = build_credit_structure(chain, work_signal, instrument, cpr_regime)
-                    else:
-                        option = None
-                else:
-                    option = build_atm_short_option(chain, signal, instrument)
-                if option:
-                    option = {
-                        **option,
-                        "expiry": expiry,
-                        "chain_pcr": oi.pcr,
-                        "chain_bias": oi.bias,
-                        "oi_note": oi.note,
-                    }
-            except Exception as exc:
-                signal = copy_signal(
-                    signal,
-                    action="NO_TRADE",
-                    reason=f"Apex option build failed: {exc}",
-                    confidence=0.0,
-                )
-        elif signal.action in CREDIT_ACTIONS:
-            try:
-                option = build_credit_structure(chain, signal, instrument, cpr_regime)
-                if option:
-                    option = {
-                        **option,
-                        "expiry": expiry,
-                        "chain_pcr": oi.pcr,
-                        "chain_bias": oi.bias,
-                        "oi_note": oi.note,
-                    }
-            except Exception as exc:
-                signal = copy_signal(
-                    signal,
-                    action="NO_TRADE",
-                    reason=f"Credit structure build failed: {exc}",
-                    confidence=0.0,
-                )
-        else:
-            signal = apply_oi_to_signal(signal, oi)
-            if signal.confidence < HARDCODED_RISK.min_confidence:
-                signal = copy_signal(
-                    signal,
-                    action="NO_TRADE",
-                    reason=(
-                        f"OI-filtered: confidence {signal.confidence} below gate after OI adjustment."
-                    ),
-                    confidence=0.0,
-                )
-            else:
-                option = choose_option_from_chain_with_oi(
-                    chain,
-                    signal,
-                    instrument,
-                    oi,
-                    transaction_type=HARDCODED_RISK.default_option_transaction,
-                )
-                if option and expiry:
-                    option = {**option, "expiry": expiry}
-
-    if option:
-        option = stamp_option_quantities(option, instrument)
-
-    capital = compute_capital_required(option, instrument) if option else None
-
-    plan = build_execution_plan(
+    buy_opp = build_opportunity(
         app_settings=app_settings,
         instrument=instrument,
-        signal=signal,
-        option=option,
+        signal=dual.buy,
+        chain=chain,
+        oi=oi,
+        expiry=expiry,
+        cpr_regime=cpr_regime,
+        lane="buy",
     )
+    sell_opp = build_opportunity(
+        app_settings=app_settings,
+        instrument=instrument,
+        signal=dual.sell,
+        chain=chain,
+        oi=oi,
+        expiry=expiry,
+        cpr_regime=cpr_regime,
+        lane="sell",
+    )
+
+    opportunities: list[dict[str, Any]] = []
+    for opp in (buy_opp, sell_opp):
+        if opp and opp.get("plan", {}).get("allowed"):
+            opportunities.append(opp)
+
+    option = None
+    capital = None
+    plan: dict[str, Any] = {
+        "allowed": False,
+        "reason": "No option selected.",
+        "mode": app_settings.risk.trading_mode,
+    }
+    for opp in (buy_opp, sell_opp):
+        if not opp:
+            continue
+        if opp.get("signal", {}).get("action") == signal.action:
+            plan = opp.get("plan") or plan
+            option = opp.get("option")
+            capital = opp.get("capital_required")
+            break
+
     today_session, _ = latest_two_sessions(candles)
     from index_ai.session_snapshot import spot_session_metrics
 
@@ -191,13 +136,18 @@ def plan_instrument(
         "instrument": instrument.__dict__,
         "instrument_key": instrument_key,
         "signal": signal.to_dict(),
+        "buy_signal": dual.buy.to_dict(),
+        "sell_signal": dual.sell.to_dict(),
+        "buy_opportunity": buy_opp,
+        "sell_opportunity": sell_opp,
+        "opportunities": opportunities,
         "cpr_regime": cpr_regime.to_dict(),
         "oi": oi_context,
         "oi_fetch_error": oi_fetch_error,
         "expiry": expiry,
         "option": option,
         "capital_required": capital,
-        "plan": plan.__dict__,
+        "plan": plan if isinstance(plan, dict) else {},
         "candles_used": {
             "today_session": len(today_session),
             "ema_bars": len(ema_frame),

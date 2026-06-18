@@ -1,0 +1,137 @@
+"""Long premium — candlestick patterns at candle S/R (CPR is context only)."""
+
+from __future__ import annotations
+
+import pandas as pd
+
+from index_ai.candlestick_patterns import detect_candlestick_setup
+from index_ai.cpr_regime import CprRegime
+from index_ai.strategy import (
+    StrategySignal,
+    add_indicators,
+    previous_day_cpr,
+)
+from index_ai.strategy_params import StrategyParams, get_strategy_params
+from index_ai.supertrend import supertrend_snapshot
+
+
+def evaluate_buy_signal(
+    frame: pd.DataFrame,
+    previous_day: pd.DataFrame,
+    regime: CprRegime,
+    *,
+    params: StrategyParams | None = None,
+) -> StrategySignal:
+    """
+    Option buying from OHLC patterns + candle support/resistance.
+
+    CPR regime is attached for dashboard context but does NOT block mid-day
+    trending patterns that develop from candle structure.
+    """
+    cfg = params or get_strategy_params()
+    pattern_lb = min(int(cfg.breakout_lookback), 30)
+    min_bars = max(5, pattern_lb + 3, 15)
+    if len(frame) < min_bars:
+        raise ValueError(f"Need at least {min_bars} intraday candles for buy signal.")
+
+    df = add_indicators(frame, fast=cfg.ema_fast_period, slow=cfg.ema_slow_period)
+    row = df.iloc[-1]
+    price = float(row["close"])
+    ema_fast = float(row["ema_fast"])
+    ema_slow = float(row["ema_slow"])
+    pivot, bc, tc = previous_day_cpr(previous_day)
+
+    setup = detect_candlestick_setup(
+        df,
+        sr_lookback=max(20, cfg.breakout_lookback),
+        trend_lookback=15,
+        breakout_lookback=cfg.breakout_lookback,
+    )
+    st = supertrend_snapshot(
+        df,
+        period=cfg.supertrend_period,
+        multiplier=cfg.supertrend_multiplier,
+    )
+
+    base_fields = dict(
+        price=price,
+        pivot=pivot,
+        bc=bc,
+        tc=tc,
+        ema_fast=ema_fast,
+        ema_slow=ema_slow,
+        cpr_width_pct=regime.width_pct,
+        cpr_width_class=regime.width_class,
+        cpr_regime=regime.day_bias,
+        cpr_virgin=regime.virgin_cpr,
+        strategy_mode="candlestick_buy",
+        supertrend_direction=int(st["direction"]) if st.get("ready") else 0,
+        supertrend_stop=float(st["stop"]) if st.get("ready") else 0.0,
+        breakout_tag=str((setup.get("breakout") or {}).get("breakout_tag") or ""),
+    )
+
+    if not setup.get("ready"):
+        return StrategySignal(
+            action="NO_TRADE",
+            reason="No candlestick pattern at support/resistance this bar.",
+            confidence=0.0,
+            entry_quality="no_pattern",
+            **base_fields,
+        )
+
+    direction = str(setup.get("direction") or "none")
+    conf = 0.58
+    if setup.get("pattern") in {"bullish_engulfing", "bearish_engulfing"}:
+        conf = 0.68
+    if setup.get("pattern") in {"breakout_resistance", "breakdown_support"}:
+        conf = 0.72
+    if setup.get("intraday_trend") in {"UP", "DOWN"}:
+        conf = min(0.78, conf + 0.04)
+
+    if direction == "bull":
+        if cfg.require_supertrend_align and st.get("ready") and st["direction"] != 1:
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=f"{setup['reason']} — Supertrend bearish, long skipped.",
+                confidence=0.0,
+                entry_quality="st_filter",
+                ema_spread_pct=0.0,
+                **base_fields,
+            )
+        if ema_fast < ema_slow:
+            conf = max(0.55, conf - 0.05)
+        return StrategySignal(
+            action="BUY_CALL",
+            reason=f"Buy: {setup['reason']}. CPR context: {regime.day_bias}.",
+            confidence=round(conf, 3),
+            entry_quality=str(setup.get("pattern") or "candlestick"),
+            **base_fields,
+        )
+
+    if direction == "bear":
+        if cfg.require_supertrend_align and st.get("ready") and st["direction"] != -1:
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=f"{setup['reason']} — Supertrend bullish, short skipped.",
+                confidence=0.0,
+                entry_quality="st_filter",
+                ema_spread_pct=0.0,
+                **base_fields,
+            )
+        if ema_fast > ema_slow:
+            conf = max(0.55, conf - 0.05)
+        return StrategySignal(
+            action="BUY_PUT",
+            reason=f"Buy: {setup['reason']}. CPR context: {regime.day_bias}.",
+            confidence=round(conf, 3),
+            entry_quality=str(setup.get("pattern") or "candlestick"),
+            **base_fields,
+        )
+
+    return StrategySignal(
+        action="NO_TRADE",
+        reason="Candlestick scan inconclusive.",
+        confidence=0.0,
+        entry_quality="no_direction",
+        **base_fields,
+    )

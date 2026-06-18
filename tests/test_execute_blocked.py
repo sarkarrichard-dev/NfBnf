@@ -67,6 +67,7 @@ def test_execute_live_blocked_when_allow_live_false(monkeypatch) -> None:
 
     monkeypatch.setattr("index_ai.config.settings", fake_settings)
     monkeypatch.setattr("index_ai.risk.kill_switch_state", lambda r: {"active": False, "reasons": []})
+    monkeypatch.setattr("index_ai.market_clock.is_entry_session_timestamp", lambda when=None: True)
 
     result = execute_plan(plan, cfg, MagicMock())
     assert result["status"] == "BLOCKED"

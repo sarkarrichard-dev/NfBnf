@@ -1,3 +1,4 @@
+import { istDayBoundsMs, istMonthStartMs, istWeekStartMs } from './ist'
 import type { LogRow, PeriodKey, PeriodStats, TradeRow } from '../types/analytics'
 
 export function money(v?: number | null): string {
@@ -138,29 +139,27 @@ export function tradesForPeriod(
   trades: TradeRow[],
   period: PeriodKey,
 ): TradeRow[] {
-  if (period === 'all') return trades
-  const now = new Date()
-  let startMs = 0
-  if (period === 'today') {
-    const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-    ist.setHours(0, 0, 0, 0)
-    startMs = ist.getTime()
-  } else if (period === 'week') {
-    const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-    const day = ist.getDay()
-    const diff = day === 0 ? 6 : day - 1
-    ist.setDate(ist.getDate() - diff)
-    ist.setHours(0, 0, 0, 0)
-    startMs = ist.getTime()
-  } else if (period === 'month') {
-    const ist = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
-    ist.setDate(1)
-    ist.setHours(0, 0, 0, 0)
-    startMs = ist.getTime()
+  if (period === 'all') {
+    return trades.filter((t) => t.entry_session_ok !== false)
   }
+
+  let startMs = 0
+  let endMs = Number.POSITIVE_INFINITY
+  if (period === 'today') {
+    const bounds = istDayBoundsMs()
+    startMs = bounds.start
+    endMs = bounds.end
+  } else if (period === 'week') {
+    startMs = istWeekStartMs()
+  } else if (period === 'month') {
+    startMs = istMonthStartMs()
+  }
+
   return trades.filter((t) => {
-    const ts = new Date(String(t.created_at || '').replace('Z', '+00:00')).getTime()
-    return ts >= startMs
+    if (t.entry_session_ok === false) return false
+    const ts = Date.parse(String(t.created_at || '').replace('Z', '+00:00'))
+    if (Number.isNaN(ts)) return false
+    return ts >= startMs && ts < endMs
   })
 }
 

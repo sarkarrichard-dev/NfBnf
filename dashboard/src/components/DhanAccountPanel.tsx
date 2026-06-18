@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
-import { RefreshCw } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
+import { usePollMs } from '../hooks/usePageVisible'
 import { money, pnlClass } from '../lib/pnl'
 import { cn } from '../lib/cn'
 
@@ -37,35 +37,62 @@ type DhanAccount = {
   updated_at_ist?: string
 }
 
-export function DhanAccountPanel() {
-  const { data, refetch, isFetching, error } = useQuery({
+type Props = {
+  tradingMode?: string
+}
+
+export function DhanAccountPanel({ tradingMode }: Props) {
+  const qc = useQueryClient()
+  const accountPoll = usePollMs(60_000)
+  const isPaper = (tradingMode || 'PAPER').toUpperCase() !== 'LIVE'
+
+  const { data, isFetching, error } = useQuery({
     queryKey: ['dhan-account'],
     queryFn: () => api<DhanAccount>('/api/dhan/account'),
-    refetchInterval: 45_000,
+    refetchInterval: accountPoll,
     retry: 1,
   })
 
+  const refreshWithSync = async () => {
+    const fresh = await api<DhanAccount>('/api/dhan/account?sync_broker=true')
+    qc.setQueryData(['dhan-account'], fresh)
+  }
+
+  const brokerMismatch = data?.journal_broker_mismatch
   const errMsg =
     data?.error ||
     data?.errors?.join(' · ') ||
-    data?.journal_broker_mismatch ||
     (error instanceof Error ? error.message : null)
 
   const funds = data?.funds || {}
 
   return (
     <div className="space-y-4">
+      {isPaper ? (
+        <p className="rounded-lg border border-amber-500/25 bg-amber-950/20 px-3 py-2 text-xs leading-relaxed text-amber-100/90">
+          <strong>Paper mode</strong> — algo trades go to the journal (Positions / Trade log left).
+          This panel mirrors your <strong>real Dhan broker</strong> account only. Manual or live
+          fills here are not paper journal entries.
+        </p>
+      ) : (
+        <p className="text-xs text-cyan-200/45">
+          Live mode — broker account and algo journal should match when the scanner places orders.
+        </p>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-slate-500">
-          Fund limits and trade book from Dhan
+          Real Dhan funds &amp; fills (broker)
           {data?.updated_at_ist ? ` · ${data.updated_at_ist}` : ''}
         </p>
         <button
           type="button"
-          onClick={() => void refetch()}
+          onClick={() => refreshWithSync()}
           className="inline-flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-xs text-slate-300"
         >
-          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
+          <span className={isFetching ? 'inline-block animate-spin' : ''} aria-hidden>
+            ↻
+          </span>
           Refresh
         </button>
       </div>
@@ -73,6 +100,12 @@ export function DhanAccountPanel() {
       {errMsg ? (
         <p className="rounded border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
           {errMsg}
+        </p>
+      ) : null}
+
+      {brokerMismatch && !isPaper ? (
+        <p className="rounded border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+          {brokerMismatch}
         </p>
       ) : null}
 
@@ -93,7 +126,7 @@ export function DhanAccountPanel() {
       </div>
 
       <MiniTable
-        title="Open positions (Dhan)"
+        title="Broker open positions (not paper journal)"
         headers={['Symbol', 'Segment', 'Qty', 'Realized', 'Unrealized']}
         rows={(data?.positions || []).map((p) => [
           p.leg_label || p.trading_symbol || '—',
@@ -106,7 +139,7 @@ export function DhanAccountPanel() {
       />
 
       <MiniTable
-        title="Trade book today"
+        title="Broker trade book today"
         headers={['Time', 'Leg', 'Qty', 'Price', 'Product', 'Order ID']}
         rows={(data?.tradebook || []).map((t) => [
           t.exchange_time_ist || t.create_time_ist || '—',
@@ -119,7 +152,7 @@ export function DhanAccountPanel() {
         empty="No executed trades today on Dhan."
         footer={
           data?.tradebook_count != null
-            ? `${data.tradebook_count} fill(s) today${data.positions_note ? ` · ${data.positions_note}` : ''}`
+            ? `${data.tradebook_count} broker fill(s) today${data.positions_note ? ` · ${data.positions_note}` : ''}`
             : undefined
         }
       />

@@ -1,18 +1,8 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from index_ai.cpr_regime import analyze_cpr_regime
-from index_ai.strategy_params import reload_strategy_params
-
-
-@pytest.fixture(autouse=True)
-def _reset_strategy_params() -> None:
-    reload_strategy_params()
-    yield
-    reload_strategy_params()
-
 
 def test_wide_cpr_classifies_sideways_bias() -> None:
     previous = pd.DataFrame(

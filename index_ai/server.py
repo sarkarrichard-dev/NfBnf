@@ -319,6 +319,20 @@ def _trading_gates(cfg: Any) -> dict[str, Any]:
     }
 
 
+@app.get("/api/ops/status", include_in_schema=False)
+async def ops_status() -> dict[str, Any]:
+    from index_ai.ops_status import build_ops_status
+
+    return build_ops_status()
+
+
+@app.get("/api/ops/scan-preview", include_in_schema=False)
+async def ops_scan_preview(instrument: str = Query("NIFTY")) -> dict[str, Any]:
+    from index_ai.ops_status import preview_scan
+
+    return preview_scan(instrument)
+
+
 @app.get("/api/status", include_in_schema=False)
 async def status() -> dict[str, Any]:
     cfg = settings()
@@ -455,7 +469,7 @@ async def trades_live_mtm(sync_broker: bool = Query(False)) -> dict[str, Any]:
 
 
 @app.get("/api/dhan/account", include_in_schema=False)
-async def dhan_account_snapshot() -> dict[str, Any]:
+async def dhan_account_snapshot(sync_broker: bool = Query(False)) -> dict[str, Any]:
     """Live Dhan portal data: fund limits, today's trade book, open positions."""
     cfg = settings()
     if not cfg.dhan.ready:
@@ -467,7 +481,7 @@ async def dhan_account_snapshot() -> dict[str, Any]:
     from index_ai.dhan_orders import sync_open_live_trades
     from index_ai.learning import open_trades_for_mode
 
-    journal_synced = sync_open_live_trades(client)
+    journal_synced = sync_open_live_trades(client) if sync_broker else 0
     snapshot = fetch_dhan_account_snapshot(client)
     snapshot["journal_sync_updated"] = journal_synced
     live_open = len(open_trades_for_mode("LIVE"))
@@ -959,6 +973,14 @@ async def analyze(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
 
 @app.post("/api/execute", include_in_schema=False)
 async def execute(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    from index_ai.market_clock import is_entry_session_timestamp, now_ist, trading_window_message
+
+    if not is_entry_session_timestamp(now_ist()):
+        return {
+            "status": "BLOCKED",
+            "reason": f"Entries blocked — {trading_window_message(now_ist())}",
+            "safety_code": "market_closed",
+        }
     cfg = settings()
     client = DhanClient(cfg.dhan)
     instrument = get_instrument(str(payload.get("instrument") or "NIFTY"))
@@ -1093,10 +1115,60 @@ async def dashboard_v2_redirect() -> RedirectResponse:
 
 if (DASHBOARD_DIR / "index.html").is_file():
     app.mount("/", StaticFiles(directory=str(DASHBOARD_DIR), html=True), name="dashboard")
+else:
+    @app.get("/", include_in_schema=False)
+    async def dashboard_missing() -> Response:
+        html = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Index Options AI</title>
+<style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem;color:#e2e8f0;background:#0f172a}
+a{color:#38bdf8}code{background:#1e293b;padding:.2rem .4rem;border-radius:.25rem}</style></head>
+<body><h1>Dashboard not built</h1>
+<p>Run <code>Start Index Options AI.cmd</code> and choose <strong>Start</strong>, or:</p>
+<pre>cd dashboard\nnpm install\nnpm run build</pre>
+<p>Then open <a href="/">this page</a> again.</p></body></html>"""
+        return Response(content=html, media_type="text/html")
+
+
+def configure_server_logging() -> Path:
+    """Console + memory/server.log (Windows-friendly, unbuffered)."""
+    import logging
+    import sys
+
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = MEMORY_DIR / "server.log"
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    root = logging.getLogger()
+    if not root.handlers:
+        root.setLevel(logging.INFO)
+        fh = logging.FileHandler(log_path, encoding="utf-8")
+        fh.setFormatter(fmt)
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setFormatter(fmt)
+        root.addHandler(fh)
+        root.addHandler(sh)
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        lg.handlers = []
+        lg.propagate = True
+    return log_path
 
 
 def run() -> None:
-    uvicorn.run("index_ai.server:app", host="127.0.0.1", port=8000, reload=False)
+    log_path = configure_server_logging()
+    import logging
+
+    logging.getLogger(__name__).info("Index Options AI — dashboard http://127.0.0.1:8000/ log=%s", log_path)
+    uvicorn.run(
+        "index_ai.server:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=False,
+        use_colors=False,
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from index_ai.config import DB_PATH, MEMORY_DIR
-from index_ai.market_clock import format_ist_display, now_ist_iso, today_ist_date
+from index_ai.market_clock import format_ist_display, is_entry_session_timestamp, now_ist_iso, parse_ist_datetime, today_ist_date
 
 
 def now_utc() -> str:
@@ -22,7 +22,8 @@ _schema_initialized = False
 def init_db() -> None:
     global _schema_initialized
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
+        db.execute("PRAGMA journal_mode=WAL")
         db.executescript(
             """
             CREATE TABLE IF NOT EXISTS trades (
@@ -61,7 +62,8 @@ def init_db() -> None:
 def connect() -> Iterator[sqlite3.Connection]:
     if not _schema_initialized:
         init_db()
-    db = sqlite3.connect(DB_PATH)
+    db = sqlite3.connect(DB_PATH, timeout=30)
+    db.execute("PRAGMA journal_mode=WAL")
     db.row_factory = sqlite3.Row
     try:
         yield db
@@ -550,6 +552,7 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
                 "broker_order_id": leg.get("broker_order_id"),
                 "broker_status_line": ui.get("broker_status_line") if idx == 0 else None,
                 "mtm_updated_at_ist": ui.get("mtm_updated_at_ist") if is_open else None,
+                "entry_session_ok": ui.get("entry_session_ok"),
                 "row_class": (
                     "row-open"
                     if is_open
@@ -696,10 +699,13 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
     opt_type = leg["option_type"]
     created = trade.get("created_at")
     closed_at = option.get("closed_at")
+    created_dt = parse_ist_datetime(str(created) if created else None)
+    entry_session_ok = bool(created_dt and is_entry_session_timestamp(created_dt))
     return {
         "id": trade.get("id"),
         "created_at": created,
         "created_at_ist": format_ist_display(str(created) if created else None),
+        "entry_session_ok": entry_session_ok,
         "closed_at": closed_at,
         "closed_at_ist": format_ist_display(str(closed_at)) if closed_at else None,
         "instrument": trade.get("instrument") or option.get("instrument"),
@@ -1287,11 +1293,15 @@ def record_trade_outcome(trade_id: str, pnl: float, note: str | None = None) -> 
                 (pnl, "CLOSED", trade_id),
             )
         if cur.rowcount == 0:
-            return update_learning()
-        db.execute(
-            "INSERT INTO feedback (trade_id, rating, note, created_at) VALUES (?, ?, ?, ?)",
-            (trade_id, rating, note or f"Outcome PnL: {pnl}", now_utc()),
-        )
+            db.execute(
+                "INSERT INTO feedback (trade_id, rating, note, created_at) VALUES (?, ?, ?, ?)",
+                (trade_id, rating, note or f"Outcome PnL: {pnl}", now_utc()),
+            )
+        else:
+            db.execute(
+                "INSERT INTO feedback (trade_id, rating, note, created_at) VALUES (?, ?, ?, ?)",
+                (trade_id, rating, note or f"Outcome PnL: {pnl}", now_utc()),
+            )
     return update_learning()
 
 

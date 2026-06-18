@@ -1,14 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
+import { usePollMs } from '../hooks/usePageVisible'
 import { pctRate } from '../lib/pnl'
 
 export function LearningPanel() {
   const qc = useQueryClient()
+  const learningPoll = usePollMs(60_000)
+
   const { data } = useQuery({
     queryKey: ['learning'],
     queryFn: () => api<Record<string, unknown>>('/api/learning'),
-    refetchInterval: 30_000,
+    refetchInterval: learningPoll,
   })
 
   const optimize = useMutation({

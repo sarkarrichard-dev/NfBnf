@@ -135,6 +135,18 @@ def build_pnl_index_groups(log_rows: list[dict[str, Any]]) -> list[dict[str, Any
     return sorted(out, key=lambda g: (preferred.get(str(g["instrument"]), 99), str(g["instrument"])))
 
 
+def _filter_session_entries(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Exclude off-hours / weekend journal rows from session stats."""
+    from index_ai.market_clock import is_entry_session_timestamp
+
+    out: list[dict[str, Any]] = []
+    for t in trades:
+        ts = _parse_created_at(str(t.get("created_at") or ""))
+        if is_entry_session_timestamp(ts):
+            out.append(t)
+    return out
+
+
 def _filter_period(trades: list[dict[str, Any]], start: datetime, end: datetime) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for t in trades:
@@ -177,6 +189,7 @@ def build_analytics(
 
     repair_rejected_journal_prices()
     raw = recent_trades(limit=limit)
+    session_raw = _filter_session_entries(raw)
     if enrich_mtm:
         raw = enrich_open_trades_mtm(raw, client)
     rows = [format_trade_for_ui(t) for t in raw]
@@ -202,13 +215,16 @@ def build_analytics(
         if r.get("is_open") and _parse_created_at(str(r.get("created_at") or "")) < start_today
     )
 
-    today_trades = _filter_period(raw, start_today, tomorrow)
-    week_trades = _filter_period(raw, start_week, tomorrow)
-    month_trades = _filter_period(raw, start_month, tomorrow)
+    today_trades = _filter_period(session_raw, start_today, tomorrow)
+    week_trades = _filter_period(session_raw, start_week, tomorrow)
+    month_trades = _filter_period(session_raw, start_month, tomorrow)
 
     live_rows = [r for r in rows if r.get("is_live")]
     live_open = [r for r in live_rows if r.get("is_open") and r.get("status") == "LIVE_TRADED"]
     live_closed = [r for r in live_rows if not r.get("is_open")]
+    paper_rows = [r for r in rows if r.get("is_paper")]
+    paper_open = [r for r in paper_rows if r.get("is_open")]
+    paper_closed = [r for r in paper_rows if not r.get("is_open")]
 
     return {
         "policy": policy_summary(),
@@ -219,13 +235,13 @@ def build_analytics(
         "today_open_mtm_rupees": round(today_open_mtm, 2),
         "open_positions": open_count,
         "stale_open_positions": stale_open_count,
-        "overview": _period_stats(raw),
+        "overview": _period_stats(session_raw),
         "today": _period_stats(today_trades),
         "week": _period_stats(week_trades),
         "month": _period_stats(month_trades),
-        "daily_series": _series_bucket(raw, "day")[:31],
-        "weekly_series": _series_bucket(raw, "week")[:12],
-        "monthly_series": _series_bucket(raw, "month")[:12],
+        "daily_series": _series_bucket(session_raw, "day")[:31],
+        "weekly_series": _series_bucket(session_raw, "week")[:12],
+        "monthly_series": _series_bucket(session_raw, "month")[:12],
         "trades": rows,
         "log_rows": log_rows,
         "pnl_by_index": build_pnl_index_groups(log_rows),
@@ -241,6 +257,19 @@ def build_analytics(
             ),
             "open_mtm": round(
                 sum(float(r["mtm_pnl"]) for r in live_open if r.get("mtm_pnl") is not None),
+                2,
+            ),
+        },
+        "paper_summary": {
+            "total": len(paper_rows),
+            "open": len(paper_open),
+            "closed": len(paper_closed),
+            "realized_pnl": round(
+                sum(float(r["pnl"]) for r in paper_closed if r.get("pnl") is not None),
+                2,
+            ),
+            "open_mtm": round(
+                sum(float(r["mtm_pnl"]) for r in paper_open if r.get("mtm_pnl") is not None),
                 2,
             ),
         },

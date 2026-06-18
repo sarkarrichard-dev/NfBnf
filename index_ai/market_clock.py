@@ -161,6 +161,11 @@ def is_trading_entries_allowed(when: datetime | None = None) -> bool:
     return times["entries_start"] <= t < times["entries_end"]
 
 
+def is_entry_session_timestamp(when: datetime | None = None) -> bool:
+    """True when a new trade entry is allowed (IST weekday + entry window)."""
+    return is_trading_entries_allowed(when)
+
+
 def is_square_off_window(when: datetime | None = None) -> bool:
     """From 15:15 IST — close all open algo positions (until session end)."""
     dt = when or now_ist()

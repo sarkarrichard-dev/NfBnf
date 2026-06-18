@@ -14,7 +14,7 @@ from index_ai.learning import (
     format_trade_for_ui,
     update_learning,
 )
-from index_ai.market_clock import format_ist_display, parse_ist_datetime
+from index_ai.market_clock import format_ist_display, is_entry_session_timestamp, parse_ist_datetime
 
 
 DUPLICATE_WINDOW_MINUTES = 120
@@ -148,11 +148,29 @@ def scan_trade_cleanup(*, limit: int = 500) -> dict[str, Any]:
                     group_key=f"test:{tid}",
                 )
             )
+            continue
 
+        created_dt = parse_ist_datetime(str(trade.get("created_at") or ""))
+        if created_dt and not is_entry_session_timestamp(created_dt):
+            candidates.append(
+                CleanupCandidate(
+                    trade_id=tid,
+                    reason="off_session",
+                    detail=(
+                        "Opened outside IST entry window (weekend or off-hours): "
+                        f"{format_ist_display(str(trade.get('created_at')))}"
+                    ),
+                    keep=False,
+                    group_key=f"off_session:{tid}",
+                )
+            )
+            continue
+
+    flagged_ids = {c.trade_id for c in candidates}
     by_key: dict[str, list[dict[str, Any]]] = {}
     for trade in trades:
         tid = str(trade.get("id") or "")
-        if _is_test_trade_id(tid):
+        if _is_test_trade_id(tid) or tid in flagged_ids:
             continue
         if _is_incomplete_directional(trade):
             candidates.append(
@@ -242,6 +260,7 @@ def scan_trade_cleanup(*, limit: int = 500) -> dict[str, Any]:
             f"Found {len(remove_ids)} trade(s) to remove "
             f"({by_reason.get('duplicate', 0)} duplicate, "
             f"{by_reason.get('incomplete', 0)} incomplete, "
+            f"{by_reason.get('off_session', 0)} off-session, "
             f"{by_reason.get('test', 0)} test)."
             if remove_ids
             else "No duplicate or junk trades found."
