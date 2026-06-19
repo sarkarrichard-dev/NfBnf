@@ -16,7 +16,7 @@ class StrategyParams:
     ema_fast_period: int = 8
     ema_slow_period: int = 20
     auto_intelligent_routing: bool = True
-    auto_include_apex: bool = True
+    auto_include_apex: bool = False
     auto_trend_buy_first: bool = True
     auto_credit_sideways_only: bool = False
     apex_supertrend_period: int = 7
@@ -82,7 +82,7 @@ def get_strategy_params() -> StrategyParams:
         ema_fast_period=_int("EMA_FAST_PERIOD", 8),
         ema_slow_period=_int("EMA_SLOW_PERIOD", 20),
         auto_intelligent_routing=_bool("AUTO_INTELLIGENT_ROUTING", True),
-        auto_include_apex=_bool("AUTO_INCLUDE_APEX", True),
+        auto_include_apex=_bool("AUTO_INCLUDE_APEX", False),
         auto_trend_buy_first=_bool("AUTO_TREND_BUY_FIRST", True),
         auto_credit_sideways_only=_bool("AUTO_CREDIT_SIDEWAYS_ONLY", False),
         apex_supertrend_period=_int("APEX_SUPERTREND_PERIOD", 7),

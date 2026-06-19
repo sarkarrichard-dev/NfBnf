@@ -16,6 +16,7 @@ type Props = {
   trades: TradeRow[]
   period: PeriodKey
   mtmUpdatedAt?: string
+  hideTitle?: boolean
 }
 
 const INDEX_ORDER: Record<string, number> = { NIFTY: 0, BANKNIFTY: 1, SENSEX: 2 }
@@ -35,7 +36,7 @@ function groupByIndex(rows: LogRow[]) {
     .map(([instrument, groupRows]) => ({ instrument, rows: groupRows }))
 }
 
-export function TradeLogTable({ logRows, trades, period, mtmUpdatedAt }: Props) {
+export function TradeLogTable({ logRows, trades, period, mtmUpdatedAt, hideTitle }: Props) {
   const rows = useMemo(
     () => logRowsForPeriod(logRows, trades, period),
     [logRows, trades, period],
@@ -59,13 +60,20 @@ export function TradeLogTable({ logRows, trades, period, mtmUpdatedAt }: Props) 
 
   return (
     <section className={cn(fx.panel, 'p-4')}>
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-base font-semibold text-cyan-50/95">Trade log</h2>
-        <p className="text-xs text-cyan-200/45">
-          One row per option leg
+      {!hideTitle ? (
+        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-base font-semibold text-cyan-50/95">Trade log</h2>
+          <p className="text-xs text-cyan-200/45">
+            One row per option leg
+            {mtmUpdatedAt ? ` · MTM ${mtmUpdatedAt}` : ''}
+          </p>
+        </div>
+      ) : (
+        <p className="mb-3 text-xs text-cyan-200/45">
+          Closed and open legs in this period
           {mtmUpdatedAt ? ` · MTM ${mtmUpdatedAt}` : ''}
         </p>
-      </div>
+      )}
       <div className="max-h-[28rem] overflow-auto rounded-lg border border-cyan-500/15 bg-black/25">
         <table className="min-w-full text-sm">
           <thead className="sticky top-0 z-10 bg-slate-950/95 text-xs text-cyan-200/50">

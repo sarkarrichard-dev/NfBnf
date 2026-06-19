@@ -182,19 +182,6 @@ export function AutoTraderPanel() {
         </>
       )}
 
-      <details className="rounded-lg border border-slate-800">
-        <summary className="cursor-pointer px-3 py-2 text-xs text-slate-400">Scanner log</summary>
-        <pre className="max-h-40 overflow-auto px-3 pb-3 text-[11px] text-slate-500">
-          {(status?.events || [])
-            .slice(0, 25)
-            .map((e) =>
-              [e.at_ist, e.event, e.instrument, e.action, e.trade_id]
-                .filter(Boolean)
-                .join(' · '),
-            )
-            .join('\n') || '—'}
-        </pre>
-      </details>
     </div>
   )
 }

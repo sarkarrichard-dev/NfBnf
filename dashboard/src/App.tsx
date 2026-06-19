@@ -4,13 +4,12 @@ import { CollapsibleSection } from './components/CollapsibleSection'
 import { OperationsPanel } from './components/OperationsPanel'
 import { ExecutionPanel } from './components/ExecutionPanel'
 import { Header } from './components/Header'
-import { PositionsPanel } from './components/PositionsPanel'
+import { JournalPanel } from './components/JournalPanel'
 import { StatsOverview } from './components/StatsRail'
-import { TradeLogTable } from './components/TradeLogTable'
 import { useDashboardData } from './hooks/useDashboardData'
 import { usePollMs } from './hooks/usePageVisible'
 import { api } from './lib/api'
-import type { PeriodKey, PositionsFilter } from './types/analytics'
+import type { PeriodKey } from './types/analytics'
 
 const DhanAccountPanel = lazy(() =>
   import('./components/DhanAccountPanel').then((m) => ({ default: m.DhanAccountPanel })),
@@ -59,7 +58,6 @@ function PanelFallback() {
 
 function App() {
   const [period, setPeriod] = useState<PeriodKey>('today')
-  const [positionsFilter, setPositionsFilter] = useState<PositionsFilter>('all')
   const statusPoll = usePollMs(20_000)
 
   const status = useQuery({
@@ -135,15 +133,7 @@ function App() {
 
       <div className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
         <div className="space-y-6">
-          <PositionsPanel
-            logRows={dashboard.logRows}
-            trades={dashboard.trades}
-            period={period}
-            filter={positionsFilter}
-            onFilterChange={setPositionsFilter}
-            mtmUpdatedAt={dashboard.mtmUpdatedAt}
-          />
-          <TradeLogTable
+          <JournalPanel
             logRows={dashboard.logRows}
             trades={dashboard.trades}
             period={period}
