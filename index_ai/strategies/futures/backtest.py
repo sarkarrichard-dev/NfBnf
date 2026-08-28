@@ -48,6 +48,17 @@ def replay_futures_session(
     )
     orb_hi = float(bars5_today.loc[orb_mask.to_numpy(), "high"].max()) if orb_mask.any() else 0.0
     orb_lo = float(bars5_today.loc[orb_mask.to_numpy(), "low"].min()) if orb_mask.any() else 0.0
+    orb_range_pct = (orb_hi - orb_lo) / max(orb_lo, 1.0) * 100.0 if orb_hi > 0 else 0.0
+    day_range_ok = orb_range_pct >= cfg.min_orb_range_pct
+
+    # optional 5m Supertrend confirmation
+    st5_dir = None
+    if cfg.require_5m_st_aligned and len(bars5_today) >= cfg.st5_period + 2:
+        from index_ai.strategies.supertrend import compute_supertrend
+
+        st5_dir = compute_supertrend(
+            bars5_today, period=cfg.st5_period, multiplier=cfg.st5_mult
+        )["supertrend_direction"].to_numpy()
 
     # 15m trend, computed once: carry indicators across yesterday->today, then
     # read the direction of the last fully-closed 15m bar for each 5m timestamp.
@@ -161,9 +172,11 @@ def replay_futures_session(
                 pending = {"exit": True, "reason": "15m trend flip"}
             continue
 
-        in_window = cfg.entry_start <= ts.time() <= cfg.entry_end
+        in_window = cfg.entry_start <= ts.time() <= cfg.entry_window_end
         capped = cfg.max_trades_per_session and n_entries >= cfg.max_trades_per_session
-        if direction == FLAT or not in_window or capped or day_loss_pts >= cfg.daily_stop_pts:
+        st5_ok = st5_dir is None or (i < len(st5_dir) and int(st5_dir[i]) == direction)
+        if (direction == FLAT or not in_window or capped or not day_range_ok
+                or not st5_ok or day_loss_pts >= cfg.daily_stop_pts):
             continue
         if _entry_fires(i, direction):
             pending = {"dir": direction}

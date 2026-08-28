@@ -30,6 +30,13 @@ class FuturesConfig:
     orb_minutes: int = 45             # opening-range window for entry_mode="orb"
     max_trades_per_session: int = 0    # 0 = unlimited; 1-2 = only the best setup(s) of the day
 
+    # --- selectivity filters (all off / permissive by default) ---
+    entry_window_end: time = time(15, 0)   # no NEW entries after this (afternoon = reversals)
+    min_orb_range_pct: float = 0.0         # skip the day unless the opening range is >= this % wide
+    require_5m_st_aligned: bool = False    # 5m Supertrend must also agree with the 15m trend
+    st5_period: int = 10
+    st5_mult: float = 2.0
+
     # --- risk, index points ---
     initial_stop_pts: float = 40.0
     trail_activate_pts: float = 30.0
@@ -42,23 +49,30 @@ class FuturesConfig:
     square_off: time = time(15, 20)
 
 
-_BASE = FuturesConfig(key="NIFTY", lot_size=75)
+def _lot(key: str) -> int:
+    try:
+        from index_ai.instruments import market_lot_size
 
-PRESETS: dict[str, FuturesConfig] = {
-    "NIFTY": _BASE,
-    "BANKNIFTY": replace(
-        _BASE, key="BANKNIFTY", lot_size=15,
-        initial_stop_pts=130.0, trail_activate_pts=100.0, trail_pts=75.0, daily_stop_pts=380.0,
-    ),
-    "SENSEX": replace(
-        _BASE, key="SENSEX", lot_size=10, exchange="BSE",
-        initial_stop_pts=140.0, trail_activate_pts=110.0, trail_pts=80.0, daily_stop_pts=420.0,
-    ),
+        return market_lot_size(key)
+    except Exception:
+        return {"NIFTY": 65, "BANKNIFTY": 30, "SENSEX": 20}.get(key.upper(), 65)
+
+
+# risk (index points) is roughly proportional to each index's typical range
+_RISK: dict[str, dict[str, float]] = {
+    "NIFTY": {"initial_stop_pts": 45.0, "trail_activate_pts": 45.0, "trail_pts": 80.0,
+              "daily_stop_pts": 110.0},
+    "BANKNIFTY": {"initial_stop_pts": 120.0, "trail_activate_pts": 120.0, "trail_pts": 200.0,
+                  "daily_stop_pts": 300.0},
+    "SENSEX": {"initial_stop_pts": 220.0, "trail_activate_pts": 220.0, "trail_pts": 380.0,
+               "daily_stop_pts": 550.0},
 }
 
 
 def config_for(instrument_key: str) -> FuturesConfig:
-    return PRESETS.get(str(instrument_key).upper(), _BASE)
+    key = str(instrument_key).upper()
+    base = FuturesConfig(key=key, lot_size=_lot(key), exchange="BSE" if key == "SENSEX" else "NSE")
+    return replace(base, **_RISK.get(key, {}))
 
 
 def with_overrides(cfg: FuturesConfig, **kw: object) -> FuturesConfig:
