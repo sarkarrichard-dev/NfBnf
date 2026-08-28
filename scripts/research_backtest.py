@@ -89,8 +89,17 @@ def main() -> None:
     ap.add_argument("--sessions", type=int, default=0, help="most-recent N sessions (0 = all)")
     ap.add_argument("--stride", type=int, default=3,
                     help="evaluate the router every Nth bar (1 = every bar; 3 default for research)")
+    ap.add_argument("--hold-credit", action="store_true",
+                    help="hold credit spreads to a spot stop / session close instead of exiting on signal flip")
+    ap.add_argument("--cooldown", type=int, default=0,
+                    help="bars to wait after an exit before a new entry (anti-whipsaw)")
     ap.add_argument("--all", action="store_true", help="every style x SENSEX too, full history")
     args = ap.parse_args()
+
+    if args.hold_credit:
+        os.environ["EXIT_CREDIT_ON_SIGNAL_FLIP"] = "false"
+    if args.cooldown:
+        os.environ["REENTRY_COOLDOWN_BARS"] = str(args.cooldown)
 
     styles = ["AUTO", "BUY", "CREDIT", "APEX"] if args.all else [s.upper() for s in args.styles]
     instruments = (

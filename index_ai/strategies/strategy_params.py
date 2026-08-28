@@ -37,6 +37,9 @@ class StrategyParams:
     max_sideways_ema_spread_pct: float = 0.08
     breakout_confidence_boost: float = 0.06
     exit_on_supertrend_flip: bool = True
+    exit_credit_on_signal_flip: bool = True
+    reentry_cooldown_bars: int = 0
+    credit_spot_stop_pct: float = 0.012
     enforce_cost_economics: bool = True
     min_edge_to_cost_multiple: float = 1.5
     exit_buy_on_cloud_reentry: bool = False
@@ -112,6 +115,9 @@ def get_strategy_params() -> StrategyParams:
         max_sideways_ema_spread_pct=_float("MAX_SIDEWAYS_EMA_SPREAD_PCT", 0.08),
         breakout_confidence_boost=_float("BREAKOUT_CONFIDENCE_BOOST", 0.06),
         exit_on_supertrend_flip=_bool("EXIT_ON_SUPERTREND_FLIP", True),
+        exit_credit_on_signal_flip=_bool("EXIT_CREDIT_ON_SIGNAL_FLIP", True),
+        reentry_cooldown_bars=_int("REENTRY_COOLDOWN_BARS", 0),
+        credit_spot_stop_pct=_float("CREDIT_SPOT_STOP_PCT", 0.012),
         enforce_cost_economics=_bool("ENFORCE_COST_ECONOMICS", True),
         min_edge_to_cost_multiple=_float("MIN_EDGE_TO_COST_MULTIPLE", 1.5),
         exit_buy_on_cloud_reentry=_bool("EXIT_BUY_ON_CLOUD_REENTRY", False),
