@@ -52,8 +52,9 @@ def unwrap_dhan_record_list(data: Any) -> list[dict[str, Any]]:
                 return [x for x in block if isinstance(x, dict)]
     return []
 
-# Dhan /charts/intraday: OHLC for last ~5 trading days only (not multi-week ranges).
-INTRADAY_MAX_CALENDAR_DAYS = 5
+# Dhan v2 /charts/intraday allows up to 90 days per request (docs: "Only 90 days
+# of data can be polled at once"), history back ~5 years for active instruments.
+INTRADAY_MAX_CALENDAR_DAYS = 90
 _IST_DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 

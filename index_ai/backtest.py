@@ -117,15 +117,21 @@ def replay_session(
     bounds: dict[str, Any] | None = None,
     pnl_mode: str = "option_proxy",
     cloud_exit: bool = False,
+    signal_stride: int = 1,
 ) -> list[dict[str, Any]]:
     """Bar-by-bar signal replay for one session; returns closed proxy trades.
 
     When ``cloud_exit`` is set, an open BUY_CALL / BUY_PUT is also closed once
     spot closes back into the Ichimoku cloud (see :mod:`index_ai.strategies.ichimoku`).
+
+    ``signal_stride`` > 1 evaluates the router only every Nth bar (pending fills
+    still execute every bar). Trades entry-timing precision for a large speed-up
+    on multi-year research backtests; keep it 1 for calibration runs.
     """
     bounds = bounds or session_times()
     sp = get_strategy_params()
     min_bars = sp.ema_slow_period + 2
+    stride = max(1, int(signal_stride))
     prev_tail = (
         previous.tail(sp.ichimoku_span_b_period + sp.ichimoku_base_period)
         if cloud_exit and not previous.empty
@@ -180,6 +186,9 @@ def replay_session(
                     "execution_model": "next_bar_open",
                 }
             pending_entry = None
+
+        if stride > 1 and (i - min_bars) % stride != 0:
+            continue
 
         slice_frame = today.iloc[: i + 1].reset_index(drop=True)
         try:
@@ -257,6 +266,7 @@ def _replay_candles(
     app_settings: AppSettings,
     pnl_mode: str,
     cloud_exit: bool = False,
+    signal_stride: int = 1,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[Any, pd.DataFrame]]]:
     sp = get_strategy_params()
     bounds = session_times()
@@ -286,6 +296,7 @@ def _replay_candles(
                 bounds=bounds,
                 pnl_mode=pnl_mode,
                 cloud_exit=cloud_exit,
+                signal_stride=signal_stride,
             )
         except Exception as exc:
             session_summaries.append({"session": str(day), "error": str(exc), "trades": 0})

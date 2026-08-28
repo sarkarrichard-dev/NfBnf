@@ -31,11 +31,12 @@ GRID: dict[str, tuple[str, list[str]]] = {
 }
 
 
-def _run(candles, instrument, app, cloud_exit=False):
+def _run(candles, instrument, app, cloud_exit=False, stride=3):
     from index_ai.backtest import _replay_candles
 
     trades, _, _ = _replay_candles(
-        candles, instrument=instrument, app_settings=app, pnl_mode="option_proxy", cloud_exit=cloud_exit
+        candles, instrument=instrument, app_settings=app, pnl_mode="option_proxy",
+        cloud_exit=cloud_exit, signal_stride=stride,
     )
     pnls = [float(t["proxy_pnl_rupees"]) for t in trades]
     wins = sum(1 for p in pnls if p > 0)

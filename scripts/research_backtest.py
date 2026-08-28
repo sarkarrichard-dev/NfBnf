@@ -66,6 +66,8 @@ def main() -> None:
     ap.add_argument("--instruments", nargs="*", default=["NIFTY", "BANKNIFTY"])
     ap.add_argument("--iv", default="1")
     ap.add_argument("--sessions", type=int, default=0, help="most-recent N sessions (0 = all)")
+    ap.add_argument("--stride", type=int, default=3,
+                    help="evaluate the router every Nth bar (1 = every bar; 3 default for research)")
     ap.add_argument("--all", action="store_true", help="every style x SENSEX too, full history")
     args = ap.parse_args()
 
@@ -102,7 +104,8 @@ def main() -> None:
             inst = get_instrument(inst_key)
             print(f"{style}/{inst_key}: replaying {len(_sessions(candles))} sessions...", flush=True)
             trades, sess_summ, sessions = _replay_candles(
-                candles, instrument=inst, app_settings=app, pnl_mode="option_proxy"
+                candles, instrument=inst, app_settings=app, pnl_mode="option_proxy",
+                signal_stride=args.stride,
             )
             for t in trades:
                 t["style"] = style

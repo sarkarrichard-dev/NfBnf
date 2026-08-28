@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
-WINDOW_DAYS = 5
+WINDOW_DAYS = 85  # Dhan v2 /charts/intraday allows up to 90 days per request
 
 
 def main() -> None:
