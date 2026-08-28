@@ -112,11 +112,13 @@ def estimate_option_pnl_rupees(
         theta_rupees = -theta_decay * lots
         credit_rupees = -(premium_unit * lots)                         # notional premium, report only
     else:
-        # Credit structures: keep the collected premium unless the spot moves
-        # against the short strike — checked at exit AND at the worst point held.
-        theta_rupees = entry * 0.00015 * lots * hours
+        # Credit structures: the premium is earned by theta decay over the
+        # session, so a 15-minute scalp banks only a sliver of it — not the full
+        # credit. Adverse risk is checked at exit AND at the worst point held.
         width_factor = 0.35 if act == "SELL_IRON_CONDOR" else 0.55
         credit_rupees = entry * 0.0012 * lots * width_factor
+        capture = min(1.0, hours / 5.5)  # fraction of the credit actually decayed
+        theta_rupees = credit_rupees * capture
         max_loss_rupees = (entry * (0.006 if act in _CREDIT_DIR else 0.012)) * lots
 
         if act in _BULLISH:
@@ -130,8 +132,8 @@ def estimate_option_pnl_rupees(
         loss_worst = _adverse_loss_rupees(adverse_worst, entry, delta, lots, max_loss_rupees)
         if loss_worst >= CREDIT_STOP_FRAC * max_loss_rupees:
             # Would have been stopped mid-hold — realise that loss, keep only a
-            # fraction of theta (position closed early), ignore any recovery.
-            gross_pnl_rupees = -min(max_loss_rupees, loss_worst) + theta_rupees * 0.35
+            # sliver of decay (position closed early), ignore any recovery.
+            gross_pnl_rupees = -min(max_loss_rupees, loss_worst) + theta_rupees * 0.3
             stopped = True
         else:
             adverse_rupees = _adverse_loss_rupees(adverse_exit, entry, delta, lots, max_loss_rupees)
@@ -140,9 +142,9 @@ def estimate_option_pnl_rupees(
                 favorable = max(0.0, move) * delta * 0.15
             elif act in _BEARISH:
                 favorable = max(0.0, -move) * delta * 0.15
-            gross_pnl_rupees = credit_rupees + theta_rupees + favorable * lots - adverse_rupees
-            max_profit = credit_rupees + theta_rupees
-            gross_pnl_rupees = max(-max_loss_rupees, min(max_profit, gross_pnl_rupees))
+            # only the decayed fraction of the credit is banked, not the full premium
+            gross_pnl_rupees = theta_rupees + favorable * lots - adverse_rupees
+            gross_pnl_rupees = max(-max_loss_rupees, min(theta_rupees, gross_pnl_rupees))
 
     # Historical option quotes are unavailable in this replay, so deduct a
     # transparent friction estimate: real Indian F&O statutory + broker charges

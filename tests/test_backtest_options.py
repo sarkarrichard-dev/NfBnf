@@ -3,24 +3,25 @@ from __future__ import annotations
 from index_ai.backtest_options import estimate_option_pnl_rupees
 
 
-def test_credit_spread_profitable_when_spot_rises() -> None:
+def test_credit_spread_profitable_when_held_to_close_and_spot_rises() -> None:
+    # a full-session hold captures the credit; a favourable move keeps it OTM
     est = estimate_option_pnl_rupees(
-        "SELL_BULL_PUT_SPREAD",
-        25000.0,
-        25100.0,
-        lot_size=65,
-        hold_minutes=60.0,
+        "SELL_BULL_PUT_SPREAD", 25000.0, 25100.0, lot_size=65, hold_minutes=330.0
     )
     assert est["proxy_pnl_rupees"] > 0
 
 
+def test_credit_spread_scalp_loses_to_friction() -> None:
+    # 15-minute hold banks almost no theta -> friction wins
+    est = estimate_option_pnl_rupees(
+        "SELL_BULL_PUT_SPREAD", 25000.0, 25010.0, lot_size=65, hold_minutes=15.0
+    )
+    assert est["proxy_pnl_rupees"] < 0
+
+
 def test_bearish_credit_loses_when_spot_rises() -> None:
     est = estimate_option_pnl_rupees(
-        "SELL_BEAR_CALL_SPREAD",
-        25000.0,
-        25100.0,
-        lot_size=65,
-        hold_minutes=60.0,
+        "SELL_BEAR_CALL_SPREAD", 25000.0, 25150.0, lot_size=65, hold_minutes=180.0
     )
     assert est["proxy_pnl_rupees"] < 0
 
