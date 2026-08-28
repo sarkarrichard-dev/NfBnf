@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -199,6 +200,62 @@ def validate_quantities(option: dict[str, Any], instrument: IndexInstrument) -> 
     return SafetyCheck(True, "ok", "ok")
 
 
+def validate_credit_economics(option: dict[str, Any], action: str) -> SafetyCheck:
+    """Reject defined-risk credit entries with no usable premium or poor reward/risk.
+
+    Older/manual payloads may not contain risk metrics, so this gate only applies
+    when the option-structure builder has produced them. Live strategy plans
+    always include these values.
+    """
+    if not is_credit_action(action):
+        return SafetyCheck(True, "ok", "ok")
+    if "net_credit_points" not in option or "max_loss_points" not in option:
+        return SafetyCheck(True, "metrics unavailable", "metrics_unavailable")
+    try:
+        credit = float(option.get("net_credit_points") or 0)
+        max_loss = float(option.get("max_loss_points") or 0)
+    except (TypeError, ValueError):
+        return SafetyCheck(False, "Credit risk metrics are invalid.", "credit_economics")
+    if credit <= 0 or max_loss <= 0:
+        return SafetyCheck(
+            False,
+            "Credit entry has no positive net credit or no defined maximum loss.",
+            "credit_economics",
+        )
+    reward_to_risk = credit / max_loss
+    minimum = max(0.0, float(get_strategy_params().credit_min_reward_to_risk))
+    if reward_to_risk < minimum:
+        return SafetyCheck(
+            False,
+            (
+                f"Credit reward/risk {reward_to_risk:.2f} is below the "
+                f"{minimum:.2f} gate; skip this thin-premium spread."
+            ),
+            "credit_economics",
+        )
+    return SafetyCheck(True, "ok", "ok")
+
+
+def validate_entry_quotes(option: dict[str, Any]) -> SafetyCheck:
+    """Ensure a live market order is based on an actual, positive chain quote."""
+    legs = list(option.get("legs") or [])
+    quote_rows = legs or [option]
+    for idx, row in enumerate(quote_rows, start=1):
+        raw = row.get("ltp", row.get("last_price"))
+        try:
+            price = float(raw)
+        except (TypeError, ValueError):
+            price = 0.0
+        if not math.isfinite(price) or price <= 0:
+            label = f"Leg {idx}" if legs else "Option"
+            return SafetyCheck(
+                False,
+                f"{label} has no valid live quote; refresh the option chain before entry.",
+                "quote_unavailable",
+            )
+    return SafetyCheck(True, "ok", "ok")
+
+
 def validate_open_position(instrument_key: str, mode: str) -> SafetyCheck:
     normalized = str(mode or "PAPER").upper()
     for trade in open_trades_for_mode(normalized):
@@ -307,26 +364,17 @@ def validate_execution_plan(
         validate_strategy_coherence(signal, action),
         validate_action_matches_option(action, option),
         validate_quantities(option, instrument),
+        validate_credit_economics(option, action),
         validate_open_position(instrument.key, app_settings.risk.trading_mode),
     ):
         if not check.ok:
             return check
 
     mode_tag = str(signal.get("strategy_mode") or "")
-    if is_premium_sell_action(action) or mode_tag.startswith("apex"):
-        if is_premium_sell_action(action):
-            prem_ok, prem_reason = premium_sell_entry_ready(option, action=action)
-            if not prem_ok:
-                return SafetyCheck(False, prem_reason, "premium_not_ready")
-        from index_ai.apex_risk import apex_daily_trade_limit_reached
-
-        if apex_daily_trade_limit_reached(instrument.key, app_settings.risk.trading_mode):
-            limit = get_strategy_params().apex_max_trades_per_day
-            return SafetyCheck(
-                False,
-                f"Apex max {limit} trades per index today — limit reached.",
-                "apex_daily_limit",
-            )
+    if is_premium_sell_action(action):
+        prem_ok, prem_reason = premium_sell_entry_ready(option, action=action)
+        if not prem_ok:
+            return SafetyCheck(False, prem_reason, "premium_not_ready")
     if not is_premium_sell_action(action):
         spread_ok, spread_reason = credit_spread_entry_ready(option, action=action)
         if not spread_ok:
@@ -346,6 +394,10 @@ def validate_execution_plan(
     live_check = validate_live_entry_allowed(app_settings)
     if app_settings.risk.trading_mode == "LIVE" and not live_check.ok:
         return live_check
+    if app_settings.risk.trading_mode == "LIVE":
+        quote_check = validate_entry_quotes(option)
+        if not quote_check.ok:
+            return quote_check
 
     return SafetyCheck(True, "ok", "ok")
 
@@ -365,6 +417,7 @@ def validate_live_order_payload(
     for check in (
         validate_action_matches_option(action, option),
         validate_quantities(option, instrument),
+        validate_entry_quotes(option),
     ):
         if not check.ok:
             return check

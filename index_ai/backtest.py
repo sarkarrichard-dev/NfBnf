@@ -83,11 +83,15 @@ def _trade_pnl(
         return {
             "proxy_index_points": est["proxy_index_points"],
             "proxy_pnl_rupees": est["proxy_pnl_rupees"],
+            "gross_proxy_pnl_rupees": est["gross_proxy_pnl_rupees"],
+            "estimated_friction_rupees": est["estimated_friction_rupees"],
         }
     points = _spot_proxy_points(action, entry, exit_px)
     return {
         "proxy_index_points": round(points, 2),
         "proxy_pnl_rupees": round(points * instrument.lot_size * 0.25, 2),
+        "gross_proxy_pnl_rupees": round(points * instrument.lot_size * 0.25, 2),
+        "estimated_friction_rupees": 0.0,
     }
 
 
@@ -116,6 +120,8 @@ def replay_session(
     min_bars = sp.ema_slow_period + 2
     trades: list[dict[str, Any]] = []
     open_trade: dict[str, Any] | None = None
+    pending_entry: dict[str, Any] | None = None
+    pending_exit_action: str | None = None
 
     def _close_trade(exit_ts: str, exit_px: float, exit_action: str) -> None:
         nonlocal open_trade
@@ -146,6 +152,22 @@ def replay_session(
     for i in range(min_bars, len(today)):
         row = today.iloc[i]
         ts = pd.Timestamp(row["datetime"])
+
+        # Signals are only knowable at a candle close. Execute them at the
+        # following candle's open; this removes same-bar look-ahead fills.
+        if pending_exit_action and open_trade is not None:
+            _close_trade(str(ts), float(row["open"]), pending_exit_action)
+            pending_exit_action = None
+        if pending_entry is not None and open_trade is None:
+            if _bar_time_allowed(ts, bounds):
+                open_trade = {
+                    **pending_entry,
+                    "entry_time": str(ts),
+                    "entry_price": float(row["open"]),
+                    "execution_model": "next_bar_open",
+                }
+            pending_entry = None
+
         slice_frame = today.iloc[: i + 1].reset_index(drop=True)
         try:
             signal, regime = route_intraday_signal(
@@ -157,40 +179,26 @@ def replay_session(
             continue
 
         if open_trade is None:
-            if signal.action not in _ACTIONABLE:
-                continue
-            if not _bar_time_allowed(ts, bounds):
-                continue
-            if signal.confidence < sp.credit_min_confidence and signal.action not in {"BUY_CALL", "BUY_PUT"}:
-                continue
-            open_trade = {
-                "entry_time": str(ts),
-                "entry_price": float(row["close"]),
-                "action": signal.action,
-                "strategy_mode": signal.strategy_mode,
-                "confidence": signal.confidence,
-                "cpr_regime": regime.day_bias,
-                "reason": signal.reason,
-            }
-            continue
-
-        last_px = float(row["close"])
-        if _should_exit(str(open_trade["action"]), signal) or not _bar_time_allowed(ts, bounds):
-            _close_trade(str(ts), last_px, signal.action)
             if (
                 signal.action in _ACTIONABLE
                 and _bar_time_allowed(ts, bounds)
-                and signal.confidence >= sp.credit_min_confidence
+                and (
+                    signal.confidence >= sp.credit_min_confidence
+                    or signal.action in {"BUY_CALL", "BUY_PUT"}
+                )
             ):
-                open_trade = {
-                    "entry_time": str(ts),
-                    "entry_price": last_px,
+                pending_entry = {
+                    "signal_time": str(ts),
                     "action": signal.action,
                     "strategy_mode": signal.strategy_mode,
                     "confidence": signal.confidence,
                     "cpr_regime": regime.day_bias,
                     "reason": signal.reason,
                 }
+            continue
+
+        if _should_exit(str(open_trade["action"]), signal) or not _bar_time_allowed(ts, bounds):
+            pending_exit_action = signal.action if signal.action != "NO_TRADE" else "SIGNAL_EXIT"
 
     if open_trade is not None:
         last = today.iloc[-1]
@@ -247,6 +255,13 @@ def _replay_candles(
                 "session": str(day),
                 "trades": len(day_trades),
                 "proxy_pnl_rupees": round(sum(float(t["proxy_pnl_rupees"]) for t in day_trades), 2),
+                "gross_proxy_pnl_rupees": round(
+                    sum(float(t.get("gross_proxy_pnl_rupees") or t["proxy_pnl_rupees"]) for t in day_trades),
+                    2,
+                ),
+                "estimated_friction_rupees": round(
+                    sum(float(t.get("estimated_friction_rupees") or 0) for t in day_trades), 2
+                ),
             }
         )
     return all_trades, session_summaries, sessions
@@ -300,6 +315,11 @@ def run_dhan_intraday_backtest(
 
     wins = sum(1 for t in all_trades if t.get("aligned"))
     total_proxy = round(sum(float(t["proxy_pnl_rupees"]) for t in all_trades), 2)
+    total_gross = round(
+        sum(float(t.get("gross_proxy_pnl_rupees") or t["proxy_pnl_rupees"]) for t in all_trades),
+        2,
+    )
+    total_friction = round(sum(float(t.get("estimated_friction_rupees") or 0) for t in all_trades), 2)
     from index_ai.candle_cache import cache_status
 
     disclaimer = (
@@ -332,6 +352,9 @@ def run_dhan_intraday_backtest(
             "losses": len(all_trades) - wins,
             "win_rate_pct": round(100.0 * wins / len(all_trades), 1) if all_trades else 0.0,
             "total_proxy_pnl_rupees": total_proxy,
+            "gross_proxy_pnl_rupees": total_gross,
+            "estimated_friction_rupees": total_friction,
+            "execution_model": "next_bar_open",
         },
         "disclaimer": disclaimer,
         "data_source": data_source,

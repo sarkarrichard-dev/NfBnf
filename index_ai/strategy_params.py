@@ -43,8 +43,11 @@ class StrategyParams:
     credit_wing_strikes: int = 2
     credit_short_strike_steps: int = 2
     credit_min_confidence: float = 0.58
-    credit_min_volume_ratio: float = 0.65
+    credit_min_volume_ratio: float = 0.85
     credit_volume_lookback_bars: int = 20
+    credit_min_reward_to_risk: float = 0.12
+    buy_min_volume_ratio: float = 0.85
+    buy_volume_lookback_bars: int = 20
     auto_buy_trending_only: bool = True
     credit_profit_target_pct: float = 0.50
     credit_stop_loss_pct: float = 0.60
@@ -109,8 +112,11 @@ def get_strategy_params() -> StrategyParams:
         credit_wing_strikes=_int("CREDIT_WING_STRIKES", 2),
         credit_short_strike_steps=_int("CREDIT_SHORT_STRIKE_STEPS", 2),
         credit_min_confidence=_float("CPR_CREDIT_MIN_CONFIDENCE", 0.58),
-        credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.65),
+        credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.85),
         credit_volume_lookback_bars=_int("CREDIT_VOLUME_LOOKBACK_BARS", 20),
+        credit_min_reward_to_risk=_float("CREDIT_MIN_REWARD_TO_RISK", 0.12),
+        buy_min_volume_ratio=_float("BUY_MIN_VOLUME_RATIO", 0.85),
+        buy_volume_lookback_bars=_int("BUY_VOLUME_LOOKBACK_BARS", 20),
         auto_buy_trending_only=_bool("AUTO_BUY_TRENDING_ONLY", True),
         credit_profit_target_pct=_float("CREDIT_PROFIT_TARGET_PCT", 0.50),
         credit_stop_loss_pct=_float("CREDIT_STOP_LOSS_PCT", 0.60),
@@ -142,23 +148,14 @@ def strategy_tuning_summary() -> dict[str, object]:
         ),
         "strategy_style_note": {
             "AUTO": (
-                "Trending CPR → long premium (calls/puts) only; sideways → no buying. "
-                "Credit spreads on trend + range via 1m CPR, EMA cross, and volume."
-                if p.auto_buy_trending_only and not p.auto_credit_sideways_only
+                "Trending CPR → long premium (calls/puts); sideways → iron condor / CPR credit. "
+                "1m EMA cross + volume gates on sell lane. No Apex in AUTO."
+                if p.auto_intelligent_routing
                 else (
-                    "Autopilot: trending days → long premium (calls/puts); sideways → iron condor; "
-                    "optional Apex on R1/S1 when AUTO_INCLUDE_APEX=true."
-                    if p.auto_trend_buy_first and p.auto_credit_sideways_only
-                    else (
-                        "Autopilot: Apex on R1/S1 breakout + ST; else EMA/CPR credit; else buy."
-                        if p.auto_intelligent_routing and p.auto_include_apex
-                        else (
-                            "Intelligent switch: EMA cross → directional credit; "
-                            "sideways CPR → iron condor; aligned trend → CPR credit or buy."
-                            if p.auto_intelligent_routing
-                            else "Fixed rules from REQUIRE_EMA_CROSS_FOR_CREDIT / CPR credit."
-                        )
-                    )
+                    "Trending CPR → long premium only; sideways → no buying. "
+                    "Credit spreads via CPR + EMA + volume."
+                    if p.auto_buy_trending_only and not p.auto_credit_sideways_only
+                    else "Fixed rules from REQUIRE_EMA_CROSS_FOR_CREDIT / CPR credit."
                 )
             ),
             "CREDIT": "Only hedged credit (EMA cross when REQUIRE_EMA_CROSS_FOR_CREDIT=true).",
@@ -210,6 +207,9 @@ def strategy_tuning_summary() -> dict[str, object]:
         "credit_min_confidence": p.credit_min_confidence,
         "credit_min_volume_ratio": p.credit_min_volume_ratio,
         "credit_volume_lookback_bars": p.credit_volume_lookback_bars,
+        "credit_min_reward_to_risk": p.credit_min_reward_to_risk,
+        "buy_min_volume_ratio": p.buy_min_volume_ratio,
+        "buy_volume_lookback_bars": p.buy_volume_lookback_bars,
         "credit_profit_target_pct": p.credit_profit_target_pct,
         "credit_stop_loss_pct": p.credit_stop_loss_pct,
         "enable_profit_trail": p.enable_profit_trail,
@@ -251,6 +251,11 @@ def strategy_tuning_summary() -> dict[str, object]:
             "CPR_NARROW_WIDTH_PCT",
             "CPR_WIDE_WIDTH_PCT",
             "CPR_CREDIT_MIN_CONFIDENCE",
+            "CREDIT_MIN_VOLUME_RATIO",
+            "CREDIT_VOLUME_LOOKBACK_BARS",
+            "CREDIT_MIN_REWARD_TO_RISK",
+            "BUY_MIN_VOLUME_RATIO",
+            "BUY_VOLUME_LOOKBACK_BARS",
             "CREDIT_WING_STRIKES",
             "CREDIT_SHORT_STRIKE_STEPS",
             "CREDIT_PROFIT_TARGET_PCT",

@@ -18,17 +18,28 @@ MODEL_DIR = MEMORY_DIR / "models"
 MODEL_PATH = MODEL_DIR / "outcome_model.joblib"
 META_PATH = MODEL_DIR / "outcome_meta.json"
 
-MIN_TRAINING_SAMPLES = 8
-MIN_CLASS_SAMPLES = 2
-DEFAULT_MIN_WIN_PROB_GATE = 0.45
+MODEL_SCHEMA_VERSION = 2
+MIN_TRAINING_SAMPLES = 20
+MIN_CLASS_SAMPLES = 5
+MIN_HOLDOUT_SAMPLES = 4
+DEFAULT_MIN_WIN_PROB_GATE = 0.52
+MIN_HOLDOUT_ACCURACY = 0.53
+MIN_HOLDOUT_AUC = 0.52
 
 FEATURE_NAMES: tuple[str, ...] = (
     "confidence",
     "is_call",
+    "is_credit",
+    "is_iron_condor",
+    "is_bullish",
     "is_banknifty",
     "ema_spread_pct",
     "dist_tc_pct",
     "dist_bc_pct",
+    "cpr_width_pct",
+    "volume_ratio",
+    "is_ema_cross",
+    "is_breakout",
     "pcr",
     "oi_conf_adj",
     "oi_bias_score",
@@ -60,9 +71,15 @@ def extract_features(
     spread_pct = (ema_fast - ema_slow) / max(abs(ema_slow), 1.0)
     dist_tc = (price - tc) / max(abs(price), 1.0)
     dist_bc = (price - bc) / max(abs(price), 1.0)
-    action = str(signal.get("action") or "")
+    action = str(signal.get("action") or "").upper()
     hour = 12.0
-    created = str(opt.get("created_at") or signal.get("created_at") or "")
+    created = str(
+        opt.get("created_at")
+        or opt.get("signal_time")
+        or signal.get("created_at")
+        or signal.get("signal_time")
+        or ""
+    )
     if "T" in created and len(created) >= 13:
         try:
             hour = float(created[11:13])
@@ -72,13 +89,24 @@ def extract_features(
     from index_ai.oi_learning import oi_bias_feature
 
     bias = str(opt.get("chain_bias") or opt.get("oi_bias") or "")
+    is_credit = action.startswith("SELL_")
+    is_bullish = action in {"BUY_CALL", "SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"}
+    mode = str(signal.get("strategy_mode") or "").lower()
+    breakout = str(signal.get("breakout_tag") or "").upper()
     return {
         "confidence": float(signal.get("confidence") or 0),
-        "is_call": 1.0 if "CALL" in action.upper() else 0.0,
+        "is_call": 1.0 if "CALL" in action else 0.0,
+        "is_credit": 1.0 if is_credit else 0.0,
+        "is_iron_condor": 1.0 if action == "SELL_IRON_CONDOR" else 0.0,
+        "is_bullish": 1.0 if is_bullish else 0.0,
         "is_banknifty": 1.0 if instrument_key.upper() == "BANKNIFTY" else 0.0,
         "ema_spread_pct": round(spread_pct, 6),
         "dist_tc_pct": round(dist_tc, 6),
         "dist_bc_pct": round(dist_bc, 6),
+        "cpr_width_pct": float(signal.get("cpr_width_pct") or 0.0),
+        "volume_ratio": float(signal.get("volume_ratio") or 1.0),
+        "is_ema_cross": 1.0 if mode == "ema_cross" else 0.0,
+        "is_breakout": 1.0 if breakout.startswith("BREAK_") else 0.0,
         "pcr": float(opt.get("chain_pcr") or opt.get("pcr") or 1.0),
         "oi_conf_adj": float(opt.get("oi_confidence_adjustment") or 0.0),
         "oi_bias_score": oi_bias_feature(bias),
@@ -188,24 +216,44 @@ def train_outcome_model(*, force: bool = False) -> dict[str, Any]:
         }
 
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import accuracy_score, roc_auc_score
-    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score, brier_score_loss, roc_auc_score
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
     import joblib
 
     meta_prev = _load_meta()
     prev_version = int(meta_prev.get("version") or 0)
-    if not force and prev_version > 0 and n == int(meta_prev.get("training_samples") or 0):
+    if (
+        not force
+        and meta_prev.get("feature_schema_version") == MODEL_SCHEMA_VERSION
+        and prev_version > 0
+        and n == int(meta_prev.get("training_samples") or 0)
+    ):
         return {**meta_prev, "ready": True, "status": "unchanged", "message": "Model up to date."}
 
-    test_size = 0.25 if n >= 16 else 0.2
-    try:
-        x_train, x_test, y_train, y_test = train_test_split(
-            x, y, test_size=test_size, random_state=42, stratify=y if min(wins, losses) >= 2 else None
-        )
-    except ValueError:
-        x_train, x_test, y_train, y_test = x, x, y, y
+    # The rows arrive oldest-to-newest. Keep the newest observations out of
+    # training so validation cannot benefit from future trade outcomes.
+    holdout_size = max(MIN_HOLDOUT_SAMPLES, int(np.ceil(n * 0.25)))
+    holdout_size = min(holdout_size, n - 2)
+    split_at = n - holdout_size
+    x_train, x_test = x[:split_at], x[split_at:]
+    y_train, y_test = y[:split_at], y[split_at:]
+    train_wins = int(y_train.sum())
+    train_losses = len(y_train) - train_wins
+    if train_wins < MIN_CLASS_SAMPLES or train_losses < MIN_CLASS_SAMPLES:
+        return {
+            "ready": False,
+            "status": "imbalanced_training_window",
+            "message": (
+                "Need at least "
+                f"{MIN_CLASS_SAMPLES} wins and losses before the chronological holdout. "
+                f"Have {train_wins}/{train_losses}."
+            ),
+            "training_samples": n,
+            "wins": wins,
+            "losses": losses,
+            "min_win_prob_gate": DEFAULT_MIN_WIN_PROB_GATE,
+        }
 
     pipeline = Pipeline(
         [
@@ -222,8 +270,10 @@ def train_outcome_model(*, force: bool = False) -> dict[str, Any]:
     try:
         proba = pipeline.predict_proba(x_test)[:, 1]
         auc = float(roc_auc_score(y_test, proba)) if len(set(y_test)) > 1 else None
+        brier = float(brier_score_loss(y_test, proba))
     except Exception:
         auc = None
+        brier = None
 
     coefs = pipeline.named_steps["clf"].coef_[0]
     importance = {
@@ -231,11 +281,14 @@ def train_outcome_model(*, force: bool = False) -> dict[str, Any]:
     }
     top_features = sorted(importance.items(), key=lambda kv: abs(kv[1]), reverse=True)[:4]
 
-    gate = float(meta_prev.get("min_win_prob_gate") or DEFAULT_MIN_WIN_PROB_GATE)
-    if accuracy < 0.48:
-        gate = min(0.62, gate + 0.04)
-    elif accuracy > 0.62:
-        gate = max(0.38, gate - 0.02)
+    gate = max(DEFAULT_MIN_WIN_PROB_GATE, float(meta_prev.get("min_win_prob_gate") or 0.0))
+    gate_active = bool(
+        len(y_test) >= MIN_HOLDOUT_SAMPLES
+        and accuracy >= MIN_HOLDOUT_ACCURACY
+        and (auc is None or auc >= MIN_HOLDOUT_AUC)
+    )
+    if gate_active and accuracy >= 0.65:
+        gate = min(0.62, gate + 0.02)
 
     version = prev_version + 1
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -245,6 +298,7 @@ def train_outcome_model(*, force: bool = False) -> dict[str, Any]:
         "ready": True,
         "status": "trained",
         "version": version,
+        "feature_schema_version": MODEL_SCHEMA_VERSION,
         "trained_at": now_ist_iso(),
         "trained_at_ist": format_ist_display(now_ist_iso()),
         "training_samples": n,
@@ -252,14 +306,22 @@ def train_outcome_model(*, force: bool = False) -> dict[str, Any]:
         "losses": losses,
         "holdout_accuracy": round(accuracy, 3),
         "holdout_auc": round(auc, 3) if auc is not None else None,
+        "holdout_brier": round(brier, 3) if brier is not None else None,
+        "validation_method": "chronological_holdout",
+        "holdout_samples": len(y_test),
+        "gate_active": gate_active,
         "min_win_prob_gate": round(gate, 3),
         "feature_importance": importance,
         "top_features": [{"name": k, "weight": v} for k, v in top_features],
         "message": (
             f"Model v{version} trained on {n} closed trades "
-            f"(holdout accuracy {accuracy:.0%}"
+            f"(chronological holdout accuracy {accuracy:.0%}"
             + (f", AUC {auc:.2f}" if auc is not None else "")
-            + f"). Blocks entries below {gate:.0%} predicted win rate."
+            + (
+                f"). Blocks entries below {gate:.0%} predicted win rate."
+                if gate_active
+                else "). Validation is not reliable enough to block entries yet; scoring only."
+            )
         ),
     }
     _save_meta(meta)
@@ -269,8 +331,19 @@ def train_outcome_model(*, force: bool = False) -> dict[str, Any]:
 
 def load_ml_status() -> dict[str, Any]:
     meta = _load_meta()
-    if meta.get("ready") and MODEL_PATH.is_file():
+    if (
+        meta.get("ready")
+        and meta.get("feature_schema_version") == MODEL_SCHEMA_VERSION
+        and MODEL_PATH.is_file()
+    ):
         return meta
+    if meta.get("ready") and meta.get("feature_schema_version") != MODEL_SCHEMA_VERSION:
+        return {
+            "ready": False,
+            "status": "stale_feature_schema",
+            "message": "Outcome model uses an older feature schema; retraining is required.",
+            "min_win_prob_gate": DEFAULT_MIN_WIN_PROB_GATE,
+        }
     if meta:
         return meta
     return {
@@ -309,6 +382,7 @@ def predict_win_probability(
         "ready": True,
         "win_probability": round(proba, 3),
         "passes_ml_gate": proba >= gate,
+        "gate_active": bool(meta.get("gate_active")),
         "min_win_prob_gate": gate,
         "model_version": meta.get("version"),
         "holdout_accuracy": meta.get("holdout_accuracy"),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from index_ai.bar_volume import volume_confirms
 from index_ai.candlestick_patterns import detect_candlestick_setup
 from index_ai.cpr_regime import CprRegime
 from index_ai.strategy import (
@@ -52,6 +53,11 @@ def evaluate_buy_signal(
         period=cfg.supertrend_period,
         multiplier=cfg.supertrend_multiplier,
     )
+    volume_ok, volume_stats = volume_confirms(
+        df,
+        min_ratio=cfg.buy_min_volume_ratio,
+        lookback=cfg.buy_volume_lookback_bars,
+    )
 
     base_fields = dict(
         price=price,
@@ -68,6 +74,7 @@ def evaluate_buy_signal(
         supertrend_direction=int(st["direction"]) if st.get("ready") else 0,
         supertrend_stop=float(st["stop"]) if st.get("ready") else 0.0,
         breakout_tag=str((setup.get("breakout") or {}).get("breakout_tag") or ""),
+        volume_ratio=float(volume_stats.get("ratio") or 1.0),
     )
 
     if not setup.get("ready"):
@@ -76,6 +83,18 @@ def evaluate_buy_signal(
             reason="No candlestick pattern at support/resistance this bar.",
             confidence=0.0,
             entry_quality="no_pattern",
+            **base_fields,
+        )
+
+    if not volume_ok:
+        return StrategySignal(
+            action="NO_TRADE",
+            reason=(
+                f"Buy setup skipped: bar volume {volume_stats.get('last_bar_volume', 0):,} "
+                f"({float(volume_stats.get('ratio') or 0):.2f}x avg) below confirmation gate."
+            ),
+            confidence=0.0,
+            entry_quality="weak_volume",
             **base_fields,
         )
 

@@ -11,6 +11,15 @@ _CREDIT_DIR = frozenset({"SELL_BULL_PUT_SPREAD", "SELL_BEAR_CALL_SPREAD", "SELL_
 _BUY = frozenset({"BUY_CALL", "BUY_PUT"})
 
 
+def _legs_for_action(action: str) -> int:
+    act = str(action or "").upper()
+    if act == "SELL_IRON_CONDOR":
+        return 4
+    if act in {"SELL_BULL_PUT_SPREAD", "SELL_BEAR_CALL_SPREAD"}:
+        return 2
+    return 1
+
+
 def _delta_for_action(action: str) -> float:
     act = str(action or "").upper()
     if act in {"SELL_ATM_PUT", "SELL_ATM_CALL"}:
@@ -32,6 +41,8 @@ def estimate_option_pnl_rupees(
     lot_size: int,
     hold_minutes: float = 30.0,
     iv_pct: float = 14.0,
+    slippage_bps: float = 10.0,
+    fees_per_leg_side_rupees: float = 20.0,
 ) -> dict[str, float]:
     """
     Estimate spread / premium PnL from spot path + simplified Greeks.
@@ -86,17 +97,34 @@ def estimate_option_pnl_rupees(
     if act in _BUY and iv_pct > 0:
         iv_penalty = entry * 0.00005 * lots * math.sqrt(minutes / 60.0)
 
-    pnl_rupees = credit_rupees + theta_rupees + favorable * lots - adverse_rupees + gamma_boost - iv_penalty
+    gross_pnl_rupees = (
+        credit_rupees + theta_rupees + favorable * lots - adverse_rupees + gamma_boost - iv_penalty
+    )
 
     if act in _CREDIT_DIR | _CREDIT_RANGE:
         max_profit = credit_rupees + theta_rupees * 1.5
         max_loss = -(credit_rupees * 1.8 + adverse_rupees)
-        pnl_rupees = max(max_loss, min(max_profit, pnl_rupees))
+        gross_pnl_rupees = max(max_loss, min(max_profit, gross_pnl_rupees))
+
+    # Historical option quotes are unavailable in this replay, so deduct a
+    # transparent conservative friction estimate rather than assuming fills at
+    # mid/last price. The values are configurable by callers for calibration
+    # against the paper journal.
+    legs = _legs_for_action(act)
+    premium_notional = max(abs(credit_rupees), entry * 0.0018 * lots)
+    slippage_rupees = premium_notional * max(0.0, float(slippage_bps)) * 2 / 10_000
+    fees_rupees = max(0.0, float(fees_per_leg_side_rupees)) * legs * 2
+    estimated_friction_rupees = slippage_rupees + fees_rupees
+    pnl_rupees = gross_pnl_rupees - estimated_friction_rupees
 
     proxy_points = pnl_rupees / max(lots, 1) / max(delta, 0.1)
     return {
         "proxy_index_points": round(proxy_points, 2),
         "proxy_pnl_rupees": round(pnl_rupees, 2),
+        "gross_proxy_pnl_rupees": round(gross_pnl_rupees, 2),
+        "estimated_friction_rupees": round(estimated_friction_rupees, 2),
+        "estimated_slippage_rupees": round(slippage_rupees, 2),
+        "estimated_fees_rupees": round(fees_rupees, 2),
         "theta_rupees": round(theta_rupees, 2),
         "credit_or_debit_rupees": round(credit_rupees, 2),
         "delta_used": delta,

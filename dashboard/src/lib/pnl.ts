@@ -175,9 +175,16 @@ export function logRowsForPeriod(
 export function openLegRows(
   logRows: LogRow[],
   trades: TradeRow[],
-  period: PeriodKey,
+  _period: PeriodKey,
 ): LogRow[] {
-  return logRowsForPeriod(logRows, trades, period).filter((r) => r.is_open)
+  const validTradeIds = new Set(
+    trades.filter((t) => t.entry_session_ok !== false).map((t) => t.id),
+  )
+  return sortLogRowsStable(
+    logRows.filter(
+      (r) => r.is_open && validTradeIds.has(String(r.trade_id || '')),
+    ),
+  )
 }
 
 export function periodBlock(

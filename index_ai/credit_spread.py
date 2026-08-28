@@ -31,6 +31,21 @@ def is_credit_action(action: str) -> bool:
     return str(action or "").upper() in CREDIT_ACTIONS
 
 
+def map_premium_sell_to_hedged_credit(action: str) -> str | None:
+    """Map naked ATM sell actions to hedged credit spreads."""
+    act = str(action or "").upper()
+    if act == "SELL_ATM_PUT":
+        return "SELL_BULL_PUT_SPREAD"
+    if act == "SELL_ATM_CALL":
+        return "SELL_BEAR_CALL_SPREAD"
+    return None
+
+
+def map_apex_to_hedged_credit(action: str) -> str | None:
+    """Backward-compatible alias."""
+    return map_premium_sell_to_hedged_credit(action)
+
+
 def credit_spread_entry_ready(option: dict[str, Any], *, action: str = "") -> tuple[bool, str]:
     """Require full Dhan legs before journal or broker entry."""
     act = str(action or "").upper()
@@ -117,6 +132,7 @@ def attach_credit_risk_metrics(option: dict[str, Any], instrument: IndexInstrume
     structure = str(option.get("structure") or "")
     max_loss_pts = max_loss_points(legs, structure, credit)
     qty = int(option.get("quantity") or instrument.lot_size)
+    reward_to_risk = credit / max(max_loss_pts, 0.01)
     option = {
         **option,
         "ltp": credit,
@@ -124,6 +140,7 @@ def attach_credit_risk_metrics(option: dict[str, Any], instrument: IndexInstrume
         "max_loss_points": max_loss_pts,
         "max_profit_rupees": round(credit * qty, 2),
         "max_loss_rupees": round(max_loss_pts * qty, 2),
+        "reward_to_risk": round(reward_to_risk, 4),
     }
     return option
 

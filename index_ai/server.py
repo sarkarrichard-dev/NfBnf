@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -88,6 +90,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
     reconcile_all_trade_lots()
     from index_ai.learning import repair_closed_trade_prices
+    from index_ai.strategy_params import get_strategy_params, reload_strategy_params
+
+    reload_strategy_params()
+    sp = get_strategy_params()
+    logging.getLogger(__name__).info(
+        "Strategy boot: style=%s intelligent_routing=%s loss_guard=%s",
+        os.getenv("STRATEGY_STYLE", "AUTO"),
+        sp.auto_intelligent_routing,
+        os.getenv("LOSS_GUARD_ENABLED", "true"),
+    )
 
     repair_closed_trade_prices()
     cfg = settings()
@@ -1134,11 +1146,18 @@ def configure_server_logging() -> Path:
     import logging
     import sys
 
+    class IstLogFormatter(logging.Formatter):
+        def formatTime(self, record, datefmt=None):  # noqa: N802
+            dt = datetime.fromtimestamp(record.created, tz=ZoneInfo("Asia/Kolkata"))
+            if datefmt:
+                return dt.strftime(datefmt)
+            return dt.strftime("%H:%M:%S IST")
+
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     log_path = MEMORY_DIR / "server.log"
-    fmt = logging.Formatter(
+    fmt = IstLogFormatter(
         "%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%H:%M:%S IST",
     )
     root = logging.getLogger()
     if not root.handlers:

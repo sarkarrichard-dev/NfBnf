@@ -38,9 +38,9 @@ def attach_option_to_signal(
     if signal.action in PREMIUM_SELL_ACTIONS:
         try:
             if sp.apex_use_hedged_spreads:
-                from index_ai.apex_pivot_trend import map_apex_to_hedged_credit
+                from index_ai.credit_spread import map_premium_sell_to_hedged_credit
 
-                hedged = map_apex_to_hedged_credit(signal.action)
+                hedged = map_premium_sell_to_hedged_credit(signal.action)
                 if hedged:
                     work = copy_signal(
                         signal,

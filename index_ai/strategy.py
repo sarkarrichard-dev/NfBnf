@@ -34,6 +34,7 @@ class StrategySignal:
     cpr_virgin: bool = False
     recommended_structure: str = ""
     ema_spread_pct: float = 0.0
+    volume_ratio: float = 1.0
     entry_quality: str = ""
 
     def to_dict(self) -> dict[str, Any]:

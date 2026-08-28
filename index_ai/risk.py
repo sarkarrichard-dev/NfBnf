@@ -64,12 +64,11 @@ def kill_switch_state(risk: RiskSettings) -> dict[str, Any]:
 def _needs_apex_session_gates(signal_action: str, strategy_mode: str = "") -> bool:
     from index_ai.strategy_router import strategy_style
 
-    mode = str(strategy_mode or "")
+    _ = signal_action
     if strategy_style() == "APEX":
         return True
-    if mode.startswith("apex"):
-        return True
-    return is_premium_sell_action(signal_action)
+    mode = str(strategy_mode or "")
+    return mode.startswith("apex")
 
 
 def check_execution_gates(

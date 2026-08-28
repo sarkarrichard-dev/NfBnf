@@ -86,11 +86,13 @@ def test_train_needs_minimum_samples(ml_db: None) -> None:
 
 
 def test_train_and_predict(ml_db: None) -> None:
-    _seed_closed_trades(14)
+    _seed_closed_trades(24)
     trained = train_outcome_model(force=True)
     assert trained["ready"] is True
     assert trained["version"] >= 1
     assert trained["holdout_accuracy"] is not None
+    assert trained["validation_method"] == "chronological_holdout"
+    assert trained["holdout_samples"] >= 4
 
     pred = predict_win_probability(
         {

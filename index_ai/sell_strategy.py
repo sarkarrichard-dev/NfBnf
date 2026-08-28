@@ -1,4 +1,4 @@
-"""Premium selling — CPR support/resistance + 1m EMA + volume."""
+"""Premium selling — CPR support/resistance + 1m EMA + volume (no Apex)."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ import pandas as pd
 
 from index_ai.bar_volume import volume_confirms
 from index_ai.cpr_regime import CprRegime
-from index_ai.ema_cross import analyze_ema_cross, credit_action_for_cross
-from index_ai.intelligent_router import choose_auto_engine
-from index_ai.strategy import StrategySignal, add_indicators, copy_signal
+from index_ai.credit_spread import map_premium_sell_to_hedged_credit
+from index_ai.ema_cross import analyze_ema_cross
+from index_ai.strategy import StrategySignal, add_indicators
 from index_ai.strategy_mode import pick_auto_credit
 from index_ai.strategy_params import StrategyParams, get_strategy_params
 from index_ai.premium_sell import PREMIUM_SELL_ACTIONS
@@ -56,21 +56,18 @@ def _naked_at_cpr_boundary(
     *,
     allow_naked: bool,
 ) -> tuple[str | None, str]:
-    """Naked ATM sell when price rejects CPR top/bottom with room to hedge elsewhere."""
     if not allow_naked:
         return None, ""
     tol = 0.0012
     if regime.day_bias == "TRENDING_BULL" and price >= regime.tc * (1 - tol):
         return (
             "SELL_ATM_PUT",
-            f"CPR sell: price at/above TC {regime.tc:.0f} — bullish bias, naked put "
-            f"(or hedge with wider put spread). {regime.note}",
+            f"CPR sell: price at/above TC {regime.tc:.0f} — bullish bias, naked put. {regime.note}",
         )
     if regime.day_bias == "TRENDING_BEAR" and price <= regime.bc * (1 + tol):
         return (
             "SELL_ATM_CALL",
-            f"CPR sell: price at/below BC {regime.bc:.0f} — bearish bias, naked call "
-            f"(or hedge with wider call spread). {regime.note}",
+            f"CPR sell: price at/below BC {regime.bc:.0f} — bearish bias, naked call. {regime.note}",
         )
     return None, ""
 
@@ -83,12 +80,8 @@ def evaluate_sell_signal(
     *,
     params: StrategyParams | None = None,
 ) -> StrategySignal:
-    """
-    Option selling from CPR levels (pivot / BC / TC) as S/R.
-
-    Uses sideways vs trending CPR bias, 1m EMA cross/alignment, and bar volume.
-    Hedged spreads by default; naked ATM at CPR boundary when enabled.
-    """
+    """Option selling from CPR levels + 1m EMA + volume only."""
+    _ = previous_day
     cfg = params or get_strategy_params()
     df = (
         add_indicators(frame, fast=cfg.ema_fast_period, slow=cfg.ema_slow_period)
@@ -121,28 +114,13 @@ def evaluate_sell_signal(
 
     allow_naked = not cfg.apex_use_hedged_spreads
 
-    if cfg.auto_intelligent_routing and cfg.auto_include_apex:
-        choice = choose_auto_engine(
-            df,
-            previous_day,
-            regime,
-            cross,
-            params=cfg,
-            close=price,
-        )
-        action = choice.action
-        reason = choice.reason
-        mode = choice.strategy_mode
-        apex_conf = choice.apex_confidence
-    else:
-        action, reason, mode = pick_auto_credit(
-            regime,
-            cross,
-            ema_fast=cfg.ema_fast_period,
-            ema_slow=cfg.ema_slow_period,
-            frame=df,
-        )
-        apex_conf = 0.0
+    action, reason, mode = pick_auto_credit(
+        regime,
+        cross,
+        ema_fast=cfg.ema_fast_period,
+        ema_slow=cfg.ema_slow_period,
+        frame=df,
+    )
 
     if not action:
         naked, naked_reason = _naked_at_cpr_boundary(regime, price, allow_naked=allow_naked)
@@ -170,34 +148,27 @@ def evaluate_sell_signal(
             action="NO_TRADE",
             reason=(
                 f"CPR sell skipped: 1m volume {vol_stats.get('last_bar_volume', 0):,} "
-                f"({float(vol_stats.get('ratio') or 0):.2f}× avg) below gate."
+                f"({float(vol_stats.get('ratio') or 0):.2f}x avg) below gate."
             ),
             confidence=0.0,
             strategy_mode="wait",
             **base,
         )
 
-    conf = (
-        apex_conf
-        if mode.startswith("apex")
-        else _credit_confidence(
-            regime,
-            ema_cross=bool(cross.get("cross")),
-            strategy_mode=mode,
-            volume_ratio=float(vol_stats.get("ratio") or 1.0),
-        )
+    conf = _credit_confidence(
+        regime,
+        ema_cross=bool(cross.get("cross")),
+        strategy_mode=mode,
+        volume_ratio=float(vol_stats.get("ratio") or 1.0),
     )
 
     if action in PREMIUM_SELL_ACTIONS and cfg.apex_use_hedged_spreads:
-        from index_ai.apex_pivot_trend import map_apex_to_hedged_credit
-
-        hedged = map_apex_to_hedged_credit(action)
+        hedged = map_premium_sell_to_hedged_credit(action)
         if hedged:
             action = hedged
             reason = f"{reason} (hedged spread, wings {cfg.credit_wing_strikes} steps)."
-            mode = f"{mode}_hedged" if mode else "cpr_hedged"
+            mode = "cpr_hedged"
 
-    # Range quality for iron condor
     if action == "SELL_IRON_CONDOR":
         spread_pct = abs(ema_fast - ema_slow) / max(abs(price), 1.0) * 100.0
         max_spread = max(0.0, float(cfg.max_sideways_ema_spread_pct))
@@ -217,7 +188,7 @@ def evaluate_sell_signal(
     vol_note = ""
     if vol_stats.get("ready"):
         vol_note = (
-            f" Vol {vol_stats['last_bar_volume']:,} ({vol_stats['ratio']:.2f}× avg)."
+            f" Vol {vol_stats['last_bar_volume']:,} ({vol_stats['ratio']:.2f}x avg)."
         )
 
     return StrategySignal(
@@ -226,5 +197,6 @@ def evaluate_sell_signal(
         confidence=conf,
         strategy_mode=mode,
         entry_quality="cpr_credit",
+        volume_ratio=float(vol_stats.get("ratio") or 1.0),
         **base,
     )

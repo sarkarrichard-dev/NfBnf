@@ -31,7 +31,8 @@ def _regime_stub(day_bias: str = "SIDEWAYS"):
     )
 
 
-def test_auto_engine_picks_apex_on_breakout(monkeypatch) -> None:
+def test_auto_engine_never_uses_apex(monkeypatch) -> None:
+    """Apex removed from AUTO — breakout above R1 still uses EMA/CPR credit only."""
     monkeypatch.setenv("AUTO_INCLUDE_APEX", "true")
     reload_strategy_params()
     previous = _previous()
@@ -55,13 +56,13 @@ def test_auto_engine_picks_apex_on_breakout(monkeypatch) -> None:
     choice = choose_auto_engine(
         frame,
         previous,
-        _regime_stub(),
+        _regime_stub("TRENDING_BULL"),
         cross,
         params=get_strategy_params(),
         close=float(price),
     )
-    assert choice.engine == "apex"
-    assert choice.action in {"SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"}
+    assert choice.engine != "apex"
+    assert choice.engine in {"ema_credit", "wait"}
 
 
 def test_auto_engine_picks_credit_inside_range(monkeypatch) -> None:

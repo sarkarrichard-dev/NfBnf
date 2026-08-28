@@ -101,6 +101,8 @@ export function JournalPanel({ logRows, trades, period, mtmUpdatedAt }: Props) {
               <p className="mt-1 text-xs text-cyan-200/45">
                 Paper / live journal legs with live MTM
                 {mtmUpdatedAt ? ` · ${mtmUpdatedAt}` : ''}
+                {' · '}
+                All open legs (not limited by Today/Week/Month filter)
               </p>
             </div>
             <div className="flex flex-wrap gap-4 text-sm">

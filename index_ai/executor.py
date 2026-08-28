@@ -9,6 +9,7 @@ from index_ai.instruments import IndexInstrument, get_instrument
 from index_ai.learning import learned_settings, loss_guard_for_setup, record_trade
 from index_ai.hf_learning import build_setup_narrative, score_setup_hf
 from index_ai.ml_outcomes import extract_features, score_trade_setup
+from index_ai.market_clock import now_ist_iso
 from index_ai.credit_spread import CREDIT_ACTIONS
 from index_ai.premium_sell import is_premium_sell_action
 from index_ai.risk import check_execution_gates
@@ -90,20 +91,15 @@ def build_execution_plan(
         mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
         return ExecutionPlan(False, mode, safety.reason, option, signal.to_dict())
 
-    if signal_action in CREDIT_ACTIONS or is_premium_sell_action(signal_action):
-        return ExecutionPlan(
-            True,
-            app_settings.risk.trading_mode,
-            f"Credit structure passed gates (min confidence {min_conf:.0%}).",
-            option,
-            signal.to_dict(),
-        )
-
-    ml = score_trade_setup(signal.to_dict(), option, instrument.key)
+    scoring_signal = {**signal.to_dict(), "signal_time": now_ist_iso()}
+    ml = score_trade_setup(scoring_signal, option, instrument.key)
     if ml.get("ready") and ml.get("win_probability") is not None:
-        gate = float(learned.get("ml_min_win_prob") or ml.get("min_win_prob_gate") or 0.45)
+        gate = max(
+            float(learned.get("ml_min_win_prob") or 0.0),
+            float(ml.get("min_win_prob_gate") or 0.52),
+        )
         win_p = float(ml["win_probability"])
-        if win_p < gate:
+        if bool(ml.get("gate_active")) and win_p < gate:
             mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
             return ExecutionPlan(
                 False,
@@ -115,6 +111,19 @@ def build_execution_plan(
                 option,
                 signal.to_dict(),
             )
+
+    if signal_action in CREDIT_ACTIONS or is_premium_sell_action(signal_action):
+        ml_note = ""
+        if ml.get("ready") and ml.get("win_probability") is not None:
+            state = "enforced" if ml.get("gate_active") else "scoring only"
+            ml_note = f" ML win estimate {float(ml['win_probability']):.0%} ({state})."
+        return ExecutionPlan(
+            True,
+            app_settings.risk.trading_mode,
+            f"Credit structure passed gates (min confidence {min_conf:.0%}).{ml_note}",
+            option,
+            signal.to_dict(),
+        )
 
     hf = score_setup_hf(signal.to_dict(), option, instrument.key)
     if hf.get("ready") and hf.get("block_setup"):
@@ -207,12 +216,14 @@ def execute_plan(
                 leg["entry_ltp"] = leg["ltp"]
         if option_payload.get("ltp") is not None and option_payload.get("entry_ltp") is None:
             option_payload["entry_ltp"] = option_payload["ltp"]
+        option_payload.setdefault("signal_time", now_ist_iso())
         option_payload["ml_features"] = extract_features(
             plan.signal, option_payload, inst.key
         )
         ml_snap = score_trade_setup(plan.signal, option_payload, inst.key)
         if ml_snap.get("win_probability") is not None:
             option_payload["ml_win_probability"] = ml_snap["win_probability"]
+            option_payload["ml_gate_active"] = bool(ml_snap.get("gate_active"))
         hf_snap = score_setup_hf(plan.signal, option_payload, inst.key)
         if hf_snap.get("ready"):
             option_payload["hf_sentiment"] = {
