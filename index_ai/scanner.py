@@ -273,6 +273,22 @@ async def _apply_strategy_exits_for_index(
         await asyncio.sleep(TRAIL_INDEX_GAP_SECONDS)
 
 
+async def _run_futures_paper(client: DhanClient) -> None:
+    """Directional index-futures paper strategy — separate from the options path."""
+    try:
+        from index_ai.strategies.futures.paper import enabled, scan_futures_paper
+
+        if not enabled():
+            return
+        events = await asyncio.to_thread(scan_futures_paper, client)
+        for e in events:
+            if e.get("event") in {"entry", "exit"}:
+                _log("futures_paper", **{k: v for k, v in e.items() if k != "trade" or True})
+    except Exception as exc:  # never let this break the options scanner
+        _note_auth_failure(exc)
+        _log("futures_paper_error", error=_friendly_error(exc))
+
+
 async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
     open_list = open_trades_for_mode(cfg.risk.trading_mode)
     prices = await _fetch_index_prices(client, open_list=open_list)
@@ -560,6 +576,7 @@ async def _run_loop() -> None:
             await _run_pre_open_brief_if_due(client, cfg)
             await _close_stale_session_positions(client, cfg)
             await _check_trails(client, cfg)
+            await _run_futures_paper(client)
 
             if is_square_off_window():
                 await _square_off_open(client, cfg)
