@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from index_ai.cpr_regime import CprRegime
+from index_ai.strategies.cpr_regime import CprRegime
 from index_ai.instruments import IndexInstrument
-from index_ai.strategy import StrategySignal, nearest_strike
-from index_ai.premium_sell import PREMIUM_SELL_ACTIONS, is_premium_sell_action
-from index_ai.credit_spread import CREDIT_ACTIONS, attach_credit_risk_metrics
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.strategy import StrategySignal, nearest_strike
+from index_ai.strategies.premium_sell import PREMIUM_SELL_ACTIONS, is_premium_sell_action
+from index_ai.strategies.credit_spread import CREDIT_ACTIONS, attach_credit_risk_metrics
+from index_ai.strategies.strategy_params import get_strategy_params
 
 
 def _chain_rows(chain: dict[str, Any]) -> dict[float, dict[str, Any]]:

@@ -5,15 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 from index_ai.capital_required import compute_capital_required
-from index_ai.credit_spread import CREDIT_ACTIONS
+from index_ai.strategies.credit_spread import CREDIT_ACTIONS
 from index_ai.executor import build_execution_plan
 from index_ai.instruments import IndexInstrument
-from index_ai.option_structures import build_atm_short_option, build_credit_structure
+from index_ai.strategies.option_structures import build_atm_short_option, build_credit_structure
 from index_ai.options_oi import apply_oi_to_signal, choose_option_from_chain_with_oi
-from index_ai.premium_sell import PREMIUM_SELL_ACTIONS
+from index_ai.strategies.premium_sell import PREMIUM_SELL_ACTIONS
 from index_ai.risk_policy import HARDCODED_RISK
-from index_ai.strategy import StrategySignal, copy_signal
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.strategy import StrategySignal, copy_signal
+from index_ai.strategies.strategy_params import get_strategy_params
 from index_ai.trade_lots import stamp_option_quantities
 from index_ai.config import AppSettings
 
@@ -38,7 +38,7 @@ def attach_option_to_signal(
     if signal.action in PREMIUM_SELL_ACTIONS:
         try:
             if sp.apex_use_hedged_spreads:
-                from index_ai.credit_spread import map_premium_sell_to_hedged_credit
+                from index_ai.strategies.credit_spread import map_premium_sell_to_hedged_credit
 
                 hedged = map_premium_sell_to_hedged_credit(signal.action)
                 if hedged:

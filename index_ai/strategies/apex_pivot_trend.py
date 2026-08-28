@@ -15,10 +15,10 @@ from typing import Any
 import pandas as pd
 
 from index_ai.config import candle_interval_minutes
-from index_ai.pivot_points import classic_pivot_levels
-from index_ai.strategy import StrategySignal, copy_signal
-from index_ai.strategy_params import get_strategy_params
-from index_ai.supertrend import compute_supertrend
+from index_ai.strategies.pivot_points import classic_pivot_levels
+from index_ai.strategies.strategy import StrategySignal, copy_signal
+from index_ai.strategies.strategy_params import get_strategy_params
+from index_ai.strategies.supertrend import compute_supertrend
 
 
 def apex_supertrend(frame: pd.DataFrame) -> pd.DataFrame:

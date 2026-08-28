@@ -16,12 +16,12 @@ from index_ai.candle_cache import fetch_backtest_candles, sync_all_configured
 from index_ai.candles import prepare_intraday_signal_frames
 from index_ai.config import AppSettings, candle_interval_minutes
 from index_ai.dhan import DhanClient
-from index_ai.ichimoku import cloud_reentry_exit
+from index_ai.strategies.ichimoku import cloud_reentry_exit
 from index_ai.instruments import IndexInstrument, configured_index_keys, get_instrument
 from index_ai.market_clock import session_times
-from index_ai.strategy import StrategySignal
-from index_ai.strategy_params import get_strategy_params
-from index_ai.strategy_router import route_intraday_signal, strategy_style
+from index_ai.strategies.strategy import StrategySignal
+from index_ai.strategies.strategy_params import get_strategy_params
+from index_ai.strategies.strategy_router import route_intraday_signal, strategy_style
 
 _BUY_ACTIONS = frozenset({"BUY_CALL", "BUY_PUT"})
 
@@ -121,7 +121,7 @@ def replay_session(
     """Bar-by-bar signal replay for one session; returns closed proxy trades.
 
     When ``cloud_exit`` is set, an open BUY_CALL / BUY_PUT is also closed once
-    spot closes back into the Ichimoku cloud (see :mod:`index_ai.ichimoku`).
+    spot closes back into the Ichimoku cloud (see :mod:`index_ai.strategies.ichimoku`).
     """
     bounds = bounds or session_times()
     sp = get_strategy_params()

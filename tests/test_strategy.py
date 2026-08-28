@@ -3,8 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 from index_ai.instruments import get_instrument
-from index_ai.strategy import choose_option_from_chain, cpr_ema_signal
-from index_ai.strategy_params import StrategyParams
+from index_ai.strategies.strategy import choose_option_from_chain, cpr_ema_signal
+from index_ai.strategies.strategy_params import StrategyParams
 
 
 def test_cpr_ema_buys_call_when_price_is_above_cpr_and_fast_ema() -> None:

@@ -7,14 +7,14 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from index_ai.buy_strategy import evaluate_buy_signal
-from index_ai.cpr_regime import CprRegime, analyze_cpr_regime
-from index_ai.credit_spread import CREDIT_ACTIONS
-from index_ai.ema_cross import analyze_ema_cross
-from index_ai.premium_sell import PREMIUM_SELL_ACTIONS, is_premium_sell_action
-from index_ai.sell_strategy import evaluate_sell_signal
-from index_ai.strategy import StrategySignal, add_indicators, copy_signal
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.buy_strategy import evaluate_buy_signal
+from index_ai.strategies.cpr_regime import CprRegime, analyze_cpr_regime
+from index_ai.strategies.credit_spread import CREDIT_ACTIONS
+from index_ai.strategies.ema_cross import analyze_ema_cross
+from index_ai.strategies.premium_sell import PREMIUM_SELL_ACTIONS, is_premium_sell_action
+from index_ai.strategies.sell_strategy import evaluate_sell_signal
+from index_ai.strategies.strategy import StrategySignal, add_indicators, copy_signal
+from index_ai.strategies.strategy_params import get_strategy_params
 
 
 def strategy_style() -> str:
@@ -127,7 +127,7 @@ def evaluate_dual_opportunities(
     )
 
     if style == "APEX":
-        from index_ai.apex_pivot_trend import apex_pivot_trend_signal
+        from index_ai.strategies.apex_pivot_trend import apex_pivot_trend_signal
 
         apex = apex_pivot_trend_signal(frame, previous_day)
         sell = copy_signal(

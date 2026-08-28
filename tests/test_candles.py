@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from index_ai.candles import prepare_intraday_signal_frames
-from index_ai.strategy import cpr_ema_signal
+from index_ai.strategies.strategy import cpr_ema_signal
 
 
 def test_prepare_intraday_uses_rolling_tail_when_today_is_thin() -> None:

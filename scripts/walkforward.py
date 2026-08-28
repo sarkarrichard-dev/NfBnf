@@ -60,7 +60,7 @@ def main() -> None:
     from index_ai.candle_cache import load_cached_range
     from index_ai.config import settings
     from index_ai.instruments import get_instrument
-    from index_ai.strategy_params import reload_strategy_params
+    from index_ai.strategies.strategy_params import reload_strategy_params
     import pandas as pd
 
     app = settings()

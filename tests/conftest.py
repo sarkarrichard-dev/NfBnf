@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from index_ai.strategy_params import reload_strategy_params
+from index_ai.strategies.strategy_params import reload_strategy_params
 
 
 @pytest.fixture(autouse=True)

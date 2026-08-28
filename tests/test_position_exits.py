@@ -23,7 +23,7 @@ def test_today_open_not_stale() -> None:
 
 def test_regime_exit_bear_position_in_bull_regime(monkeypatch) -> None:
     monkeypatch.setenv("REQUIRE_EMA_CROSS_FOR_CREDIT", "false")
-    from index_ai.strategy_params import reload_strategy_params
+    from index_ai.strategies.strategy_params import reload_strategy_params
 
     reload_strategy_params()
     trade = {"action": "SELL_BEAR_CALL_SPREAD"}

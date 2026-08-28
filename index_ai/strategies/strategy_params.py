@@ -140,7 +140,7 @@ def get_strategy_params() -> StrategyParams:
 
 def strategy_tuning_summary() -> dict[str, object]:
     """Active tuning values for dashboard / API (edit .env, then restart)."""
-    from index_ai.strategy_router import strategy_style
+    from index_ai.strategies.strategy_router import strategy_style
 
     from index_ai.config import candle_interval_int, candle_interval_minutes
 

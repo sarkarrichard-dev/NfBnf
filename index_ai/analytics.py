@@ -70,7 +70,7 @@ def _lane_of(trade: dict[str, Any]) -> str:
     mode = str(trade.get("strategy_mode") or "").strip()
     if mode and mode not in {"wait", "conflict", ""}:
         return mode
-    from index_ai.strategy_router import trade_lane
+    from index_ai.strategies.strategy_router import trade_lane
 
     lane = trade_lane(str(trade.get("action") or trade.get("signal", {}).get("action") or ""))
     return {"buy": "buy_premium", "sell": "credit_sell"}.get(lane, "other")

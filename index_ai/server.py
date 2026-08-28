@@ -23,7 +23,7 @@ from index_ai.reports import build_report, export_filename, report_to_csv
 from index_ai.config import DASHBOARD_DIR, MEMORY_DIR, candle_interval_minutes, set_trading_mode, settings
 from index_ai.risk import kill_switch_state
 from index_ai.risk_policy import HARDCODED_RISK, policy_summary
-from index_ai.strategy_params import strategy_tuning_summary
+from index_ai.strategies.strategy_params import strategy_tuning_summary
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.dhan_auth import (
     auto_refresh_dhan_token,
@@ -90,7 +90,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
     reconcile_all_trade_lots()
     from index_ai.learning import repair_closed_trade_prices
-    from index_ai.strategy_params import get_strategy_params, reload_strategy_params
+    from index_ai.strategies.strategy_params import get_strategy_params, reload_strategy_params
 
     reload_strategy_params()
     sp = get_strategy_params()
@@ -953,7 +953,7 @@ async def analyze(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
         raise RuntimeError("Provide candles and previous_day arrays for signal analysis.")
     today = pd.DataFrame(candles)
     prev = pd.DataFrame(previous)
-    from index_ai.strategy import intraday_strategy_signal
+    from index_ai.strategies.strategy import intraday_strategy_signal
 
     signal = intraday_strategy_signal(today, prev)
 

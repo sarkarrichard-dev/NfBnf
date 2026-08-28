@@ -4,8 +4,8 @@ import pandas as pd
 
 from index_ai.instruments import get_instrument
 from index_ai.options_oi import analyze_option_chain, apply_oi_to_signal, choose_option_from_chain_with_oi
-from index_ai.strategy import cpr_ema_signal
-from index_ai.strategy_params import StrategyParams
+from index_ai.strategies.strategy import cpr_ema_signal
+from index_ai.strategies.strategy_params import StrategyParams
 
 
 def test_oi_boosts_aligned_call_signal() -> None:

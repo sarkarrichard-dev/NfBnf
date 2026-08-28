@@ -70,7 +70,7 @@ def test_replay_session_returns_list() -> None:
     _, today = sessions[1]
     combined = pd.concat([prev, today], ignore_index=True)
     from index_ai.candles import prepare_intraday_signal_frames
-    from index_ai.strategy_params import get_strategy_params
+    from index_ai.strategies.strategy_params import get_strategy_params
 
     sp = get_strategy_params()
     ema_frame, previous = prepare_intraday_signal_frames(

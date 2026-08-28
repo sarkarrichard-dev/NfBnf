@@ -6,14 +6,14 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.bar_volume import volume_confirms
-from index_ai.cpr_regime import CprRegime
-from index_ai.credit_spread import map_premium_sell_to_hedged_credit
-from index_ai.ema_cross import analyze_ema_cross
-from index_ai.strategy import StrategySignal, add_indicators
-from index_ai.strategy_mode import pick_auto_credit
-from index_ai.strategy_params import StrategyParams, get_strategy_params
-from index_ai.premium_sell import PREMIUM_SELL_ACTIONS
+from index_ai.strategies.bar_volume import volume_confirms
+from index_ai.strategies.cpr_regime import CprRegime
+from index_ai.strategies.credit_spread import map_premium_sell_to_hedged_credit
+from index_ai.strategies.ema_cross import analyze_ema_cross
+from index_ai.strategies.strategy import StrategySignal, add_indicators
+from index_ai.strategies.strategy_mode import pick_auto_credit
+from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
+from index_ai.strategies.premium_sell import PREMIUM_SELL_ACTIONS
 
 
 def _structure_for_bias(day_bias: str) -> str:

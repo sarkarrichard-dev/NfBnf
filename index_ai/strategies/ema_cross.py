@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.strategy import add_indicators
+from index_ai.strategies.strategy import add_indicators
 
 
 def min_ema_bars(slow_period: int) -> int:

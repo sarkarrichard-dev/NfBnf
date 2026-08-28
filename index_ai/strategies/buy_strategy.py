@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.bar_volume import volume_confirms
-from index_ai.candlestick_patterns import detect_candlestick_setup
-from index_ai.cpr_regime import CprRegime
-from index_ai.strategy import (
+from index_ai.strategies.bar_volume import volume_confirms
+from index_ai.strategies.candlestick_patterns import detect_candlestick_setup
+from index_ai.strategies.cpr_regime import CprRegime
+from index_ai.strategies.strategy import (
     StrategySignal,
     add_indicators,
     previous_day_cpr,
 )
-from index_ai.strategy_params import StrategyParams, get_strategy_params
-from index_ai.supertrend import supertrend_snapshot
+from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
+from index_ai.strategies.supertrend import supertrend_snapshot
 
 
 def evaluate_buy_signal(

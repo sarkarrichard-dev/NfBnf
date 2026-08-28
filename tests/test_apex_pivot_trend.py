@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.apex_pivot_trend import apex_pivot_trend_signal
-from index_ai.pivot_points import classic_pivot_levels
+from index_ai.strategies.apex_pivot_trend import apex_pivot_trend_signal
+from index_ai.strategies.pivot_points import classic_pivot_levels
 
 
 def _previous() -> pd.DataFrame:

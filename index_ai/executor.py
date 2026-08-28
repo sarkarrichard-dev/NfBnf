@@ -10,12 +10,12 @@ from index_ai.learning import learned_settings, loss_guard_for_setup, record_tra
 from index_ai.hf_learning import build_setup_narrative, score_setup_hf
 from index_ai.ml_outcomes import extract_features, score_trade_setup
 from index_ai.market_clock import now_ist_iso
-from index_ai.credit_spread import CREDIT_ACTIONS
-from index_ai.premium_sell import is_premium_sell_action
+from index_ai.strategies.credit_spread import CREDIT_ACTIONS
+from index_ai.strategies.premium_sell import is_premium_sell_action
 from index_ai.risk import check_execution_gates
-from index_ai.strategy import StrategySignal
-from index_ai.strategy_params import get_strategy_params
-from index_ai.credit_spread import init_credit_trail_meta, is_credit_option
+from index_ai.strategies.strategy import StrategySignal
+from index_ai.strategies.strategy_params import get_strategy_params
+from index_ai.strategies.credit_spread import init_credit_trail_meta, is_credit_option
 from index_ai.execution_safety import acquire_execution_lock, validate_execution_plan
 from index_ai.trailing import init_trail_meta
 

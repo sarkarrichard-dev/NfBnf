@@ -6,7 +6,7 @@ from typing import Any
 
 from index_ai.config import RiskSettings
 from index_ai.instruments import IndexInstrument, get_instrument
-from index_ai.strategy_params import StrategyParams, get_strategy_params
+from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
 
 CREDIT_ACTIONS = frozenset(
     {

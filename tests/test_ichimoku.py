@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from index_ai.ichimoku import cloud_reentry_exit, compute_ichimoku, ichimoku_snapshot
+from index_ai.strategies.ichimoku import cloud_reentry_exit, compute_ichimoku, ichimoku_snapshot
 
 
 def _frame(closes: list[float]) -> pd.DataFrame:

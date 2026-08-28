@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from index_ai.credit_spread import compute_credit_mtm, is_credit_option
+from index_ai.strategies.credit_spread import compute_credit_mtm, is_credit_option
 from index_ai.dhan import DhanClient
 from index_ai.exit import estimate_pnl_rupees, option_ltp_with_retry
 from index_ai.market_clock import format_ist_display, now_ist_iso
@@ -121,7 +121,7 @@ def _ltp_from_cache_or_fetch(
 
 def _build_ltp_cache(client: DhanClient, trades: list[dict[str, Any]]) -> dict[tuple[str, int], float]:
     """One marketfeed LTP request per segment for all open legs (fast poll path)."""
-    from index_ai.credit_spread import _parse_ltp_bucket
+    from index_ai.strategies.credit_spread import _parse_ltp_bucket
 
     by_segment: dict[str, set[int]] = {}
     for trade in trades:

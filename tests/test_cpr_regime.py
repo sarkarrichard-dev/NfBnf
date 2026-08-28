@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.cpr_regime import analyze_cpr_regime
+from index_ai.strategies.cpr_regime import analyze_cpr_regime
 
 def test_wide_cpr_classifies_sideways_bias() -> None:
     previous = pd.DataFrame(

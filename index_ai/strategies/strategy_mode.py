@@ -6,10 +6,10 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.bar_volume import volume_confirms
-from index_ai.cpr_regime import CprRegime
-from index_ai.ema_cross import credit_action_for_cross
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.bar_volume import volume_confirms
+from index_ai.strategies.cpr_regime import CprRegime
+from index_ai.strategies.ema_cross import credit_action_for_cross
+from index_ai.strategies.strategy_params import get_strategy_params
 
 
 def _volume_wait_reason(stats: dict[str, Any], *, min_ratio: float) -> str:

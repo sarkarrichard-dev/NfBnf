@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.cpr_regime import analyze_cpr_regime
-from index_ai.ema_cross import analyze_ema_cross
-from index_ai.strategy_mode import pick_auto_credit
-from index_ai.strategy_params import reload_strategy_params
-from index_ai.strategy_router import route_intraday_signal
+from index_ai.strategies.cpr_regime import analyze_cpr_regime
+from index_ai.strategies.ema_cross import analyze_ema_cross
+from index_ai.strategies.strategy_mode import pick_auto_credit
+from index_ai.strategies.strategy_params import reload_strategy_params
+from index_ai.strategies.strategy_router import route_intraday_signal
 
 
 def _sideways_frames() -> tuple[pd.DataFrame, pd.DataFrame]:

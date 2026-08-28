@@ -5,10 +5,10 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.breakout import detect_breakout
+from index_ai.strategies.breakout import detect_breakout
 from index_ai.instruments import IndexInstrument
-from index_ai.strategy_params import StrategyParams, get_strategy_params
-from index_ai.supertrend import supertrend_snapshot
+from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
+from index_ai.strategies.supertrend import supertrend_snapshot
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.bar_volume import volume_confirms
+from index_ai.strategies.bar_volume import volume_confirms
 
 
 def test_volume_confirms_when_last_bar_above_average() -> None:

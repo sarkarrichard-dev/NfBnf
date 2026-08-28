@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from index_ai.credit_spread import (
+from index_ai.strategies.credit_spread import (
     attach_credit_risk_metrics,
     evaluate_credit_open_trade,
     init_credit_trail_meta,

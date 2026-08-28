@@ -5,7 +5,7 @@ from index_ai.config import settings
 from index_ai.dhan import DhanClient
 from index_ai.instruments import configured_index_keys
 from index_ai.planner import plan_instrument
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.strategy_params import get_strategy_params
 
 
 def main() -> None:

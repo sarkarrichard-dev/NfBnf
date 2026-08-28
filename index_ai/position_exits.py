@@ -10,7 +10,7 @@ from index_ai.market_clock import (
     parse_ist_datetime,
     today_ist_date,
 )
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.strategy_params import get_strategy_params
 
 _BULLISH_ACTIONS = frozenset({"BUY_CALL", "SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"})
 _BEARISH_ACTIONS = frozenset({"BUY_PUT", "SELL_BEAR_CALL_SPREAD", "SELL_ATM_CALL"})

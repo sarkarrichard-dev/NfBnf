@@ -141,7 +141,7 @@ def build_ops_status() -> dict[str, Any]:
             }
         )
 
-    from index_ai.strategy_params import get_strategy_params
+    from index_ai.strategies.strategy_params import get_strategy_params
 
     sp = get_strategy_params()
     if sp.auto_credit_sideways_only and sp.auto_trend_buy_first:

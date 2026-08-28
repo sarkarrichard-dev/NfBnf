@@ -2,7 +2,7 @@ import pytest
 
 from index_ai.execution_safety import validate_cost_economics
 from index_ai.instruments import get_instrument
-from index_ai.strategy_params import reload_strategy_params
+from index_ai.strategies.strategy_params import reload_strategy_params
 
 
 @pytest.fixture(autouse=True)

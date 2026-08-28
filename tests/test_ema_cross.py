@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.ema_cross import analyze_ema_cross, credit_action_for_cross
+from index_ai.strategies.ema_cross import analyze_ema_cross, credit_action_for_cross
 
 
 def _frame_with_cross_down() -> pd.DataFrame:

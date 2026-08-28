@@ -7,9 +7,9 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.cpr_regime import CprRegime
-from index_ai.strategy_mode import pick_auto_credit
-from index_ai.strategy_params import StrategyParams
+from index_ai.strategies.cpr_regime import CprRegime
+from index_ai.strategies.strategy_mode import pick_auto_credit
+from index_ai.strategies.strategy_params import StrategyParams
 
 
 @dataclass(frozen=True)
