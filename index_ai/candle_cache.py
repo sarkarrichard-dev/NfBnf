@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -41,6 +41,35 @@ def _normalize_frame(frame: pd.DataFrame) -> pd.DataFrame:
     work = work.dropna(subset=["datetime", "open", "high", "low", "close"])
     work = work.sort_values("datetime").drop_duplicates(subset=["datetime"], keep="last")
     return work.reset_index(drop=True)
+
+
+_SESSION_OPEN = time(9, 15)
+_SESSION_CLOSE = time(15, 35)  # a little past 15:30 to keep the closing bar
+
+
+def to_ist_session_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Put candle timestamps on IST wall-clock and drop anything outside 09:15-15:35.
+
+    Dhan sends UTC epoch seconds; ``chart_response_to_frame`` leaves them naive-UTC
+    (a 09:15 IST bar reads as 03:45). The live path gates on the real clock so it
+    never noticed, but any backtest that compares a bar's time-of-day to the IST
+    session window was only ever seeing the last ~40 minutes. This also removes
+    the pre/post-session junk rows the 90-day history endpoint returns.
+    Idempotent: a frame already on IST is left as-is.
+    """
+    if frame.empty:
+        return frame
+    work = frame.copy()
+    work["datetime"] = pd.to_datetime(work["datetime"])
+    # Detect from the earliest bar-of-day: a real session opens 09:15 IST / 03:45
+    # UTC. tmin is robust to the junk afternoon rows the history endpoint appends
+    # (which would fool a tmax check).
+    tmin = work["datetime"].dt.time.min()
+    if tmin < time(7, 0):  # naive-UTC -> shift onto IST wall-clock
+        work["datetime"] = work["datetime"] + pd.Timedelta(hours=5, minutes=30)
+    t = work["datetime"].dt.time
+    work = work[(t >= _SESSION_OPEN) & (t <= _SESSION_CLOSE)]
+    return work.sort_values("datetime").reset_index(drop=True)
 
 
 def save_session_day(instrument_key: str, interval: str, day: date, frame: pd.DataFrame) -> int:
@@ -84,7 +113,7 @@ def load_cached_range(
 
     if not frames:
         return pd.DataFrame(columns=["datetime", "open", "high", "low", "close", "volume"])
-    return _normalize_frame(pd.concat(frames, ignore_index=True))
+    return to_ist_session_frame(_normalize_frame(pd.concat(frames, ignore_index=True)))
 
 
 def list_cached_days(instrument_key: str, interval: str) -> list[str]:
