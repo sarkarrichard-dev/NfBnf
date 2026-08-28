@@ -37,6 +37,10 @@ class StrategyParams:
     max_sideways_ema_spread_pct: float = 0.08
     breakout_confidence_boost: float = 0.06
     exit_on_supertrend_flip: bool = True
+    exit_buy_on_cloud_reentry: bool = False
+    ichimoku_conversion_period: int = 9
+    ichimoku_base_period: int = 26
+    ichimoku_span_b_period: int = 52
     cpr_narrow_width_pct: float = 0.35
     cpr_wide_width_pct: float = 0.75
     enable_credit_strategies: bool = True
@@ -106,6 +110,10 @@ def get_strategy_params() -> StrategyParams:
         max_sideways_ema_spread_pct=_float("MAX_SIDEWAYS_EMA_SPREAD_PCT", 0.08),
         breakout_confidence_boost=_float("BREAKOUT_CONFIDENCE_BOOST", 0.06),
         exit_on_supertrend_flip=_bool("EXIT_ON_SUPERTREND_FLIP", True),
+        exit_buy_on_cloud_reentry=_bool("EXIT_BUY_ON_CLOUD_REENTRY", False),
+        ichimoku_conversion_period=_int("ICHIMOKU_CONVERSION_PERIOD", 9),
+        ichimoku_base_period=_int("ICHIMOKU_BASE_PERIOD", 26),
+        ichimoku_span_b_period=_int("ICHIMOKU_SPAN_B_PERIOD", 52),
         cpr_narrow_width_pct=_float("CPR_NARROW_WIDTH_PCT", 0.35),
         cpr_wide_width_pct=_float("CPR_WIDE_WIDTH_PCT", 0.75),
         enable_credit_strategies=_bool("ENABLE_CREDIT_STRATEGIES", True),
@@ -130,7 +138,7 @@ def strategy_tuning_summary() -> dict[str, object]:
     """Active tuning values for dashboard / API (edit .env, then restart)."""
     from index_ai.strategy_router import strategy_style
 
-    from index_ai.config import candle_interval_minutes, candle_interval_int, bars_for_minutes
+    from index_ai.config import candle_interval_int, candle_interval_minutes
 
     p = get_strategy_params()
     style = strategy_style()
@@ -220,6 +228,15 @@ def strategy_tuning_summary() -> dict[str, object]:
             f"arms after ₹{p.profit_trail_arm_rupees_per_lot:,.0f}×lots, "
             f"exits on {p.profit_trail_giveback_pct:.0%} giveback from peak."
         ),
+        "exit_buy_on_cloud_reentry": p.exit_buy_on_cloud_reentry,
+        "ichimoku_conversion_period": p.ichimoku_conversion_period,
+        "ichimoku_base_period": p.ichimoku_base_period,
+        "ichimoku_span_b_period": p.ichimoku_span_b_period,
+        "cloud_exit_note": (
+            "Buy lane only: exit long-premium when spot closes back into the Kumo "
+            f"(Ichimoku {p.ichimoku_conversion_period}/{p.ichimoku_base_period}/"
+            f"{p.ichimoku_span_b_period}). Longs trail the cloud top, shorts the Kijun."
+        ),
         "require_supertrend_align": p.require_supertrend_align,
         "require_breakout_tag": p.require_breakout_tag,
         "breakout_lookback": p.breakout_lookback,
@@ -272,6 +289,10 @@ def strategy_tuning_summary() -> dict[str, object]:
             "MAX_SIDEWAYS_EMA_SPREAD_PCT",
             "SUPERTREND_PERIOD",
             "SUPERTREND_MULTIPLIER",
+            "EXIT_BUY_ON_CLOUD_REENTRY",
+            "ICHIMOKU_CONVERSION_PERIOD",
+            "ICHIMOKU_BASE_PERIOD",
+            "ICHIMOKU_SPAN_B_PERIOD",
         ],
         "presets": {
             "more_sideways_credit": {
