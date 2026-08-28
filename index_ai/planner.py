@@ -12,7 +12,7 @@ from index_ai.instruments import configured_index_keys, get_instrument
 from index_ai.options_oi import analyze_option_chain
 from index_ai.options_expiry import pick_nearest_expiry
 from index_ai.plan_builder import build_opportunity
-from index_ai.strategy_router import evaluate_dual_opportunities
+from index_ai.strategies.strategy_router import evaluate_dual_opportunities
 
 INDEX_KEYS = configured_index_keys()
 
@@ -43,7 +43,7 @@ def plan_instrument(
         interval=iv,
     )
     candles = chart_response_to_frame(data)
-    from index_ai.strategy_params import get_strategy_params
+    from index_ai.strategies.strategy_params import get_strategy_params
 
     sp = get_strategy_params()
     ema_frame, previous = prepare_intraday_signal_frames(

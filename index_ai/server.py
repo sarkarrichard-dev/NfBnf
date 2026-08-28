@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -21,7 +23,7 @@ from index_ai.reports import build_report, export_filename, report_to_csv
 from index_ai.config import DASHBOARD_DIR, MEMORY_DIR, candle_interval_minutes, set_trading_mode, settings
 from index_ai.risk import kill_switch_state
 from index_ai.risk_policy import HARDCODED_RISK, policy_summary
-from index_ai.strategy_params import strategy_tuning_summary
+from index_ai.strategies.strategy_params import strategy_tuning_summary
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.dhan_auth import (
     auto_refresh_dhan_token,
@@ -88,6 +90,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
     reconcile_all_trade_lots()
     from index_ai.learning import repair_closed_trade_prices
+    from index_ai.strategies.strategy_params import get_strategy_params, reload_strategy_params
+
+    reload_strategy_params()
+    sp = get_strategy_params()
+    logging.getLogger(__name__).info(
+        "Strategy boot: style=%s intelligent_routing=%s loss_guard=%s",
+        os.getenv("STRATEGY_STYLE", "AUTO"),
+        sp.auto_intelligent_routing,
+        os.getenv("LOSS_GUARD_ENABLED", "true"),
+    )
 
     repair_closed_trade_prices()
     cfg = settings()
@@ -941,7 +953,7 @@ async def analyze(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
         raise RuntimeError("Provide candles and previous_day arrays for signal analysis.")
     today = pd.DataFrame(candles)
     prev = pd.DataFrame(previous)
-    from index_ai.strategy import intraday_strategy_signal
+    from index_ai.strategies.strategy import intraday_strategy_signal
 
     signal = intraday_strategy_signal(today, prev)
 
@@ -1134,11 +1146,18 @@ def configure_server_logging() -> Path:
     import logging
     import sys
 
+    class IstLogFormatter(logging.Formatter):
+        def formatTime(self, record, datefmt=None):  # noqa: N802
+            dt = datetime.fromtimestamp(record.created, tz=ZoneInfo("Asia/Kolkata"))
+            if datefmt:
+                return dt.strftime(datefmt)
+            return dt.strftime("%H:%M:%S IST")
+
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     log_path = MEMORY_DIR / "server.log"
-    fmt = logging.Formatter(
+    fmt = IstLogFormatter(
         "%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%H:%M:%S IST",
     )
     root = logging.getLogger()
     if not root.handlers:

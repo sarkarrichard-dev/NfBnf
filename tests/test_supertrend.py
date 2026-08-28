@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.supertrend import compute_supertrend, supertrend_snapshot
+from index_ai.strategies.supertrend import compute_supertrend, supertrend_snapshot
 
 
 def _trending_up(n: int = 40) -> pd.DataFrame:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from index_ai.credit_spread import credit_spread_entry_ready, is_credit_action
+from index_ai.strategies.credit_spread import credit_spread_entry_ready, is_credit_action
 from index_ai.learning import (
     _is_test_trade_id,
     _row_to_trade,

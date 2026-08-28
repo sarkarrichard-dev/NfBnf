@@ -28,11 +28,11 @@ from index_ai.market_clock import (
     now_ist_iso,
     today_ist_date,
 )
-from index_ai.strategy_router import trade_lane
+from index_ai.strategies.strategy_router import trade_lane
 from index_ai.chart_live import fetch_supertrend_snapshot
 from index_ai.planner import plan_instrument
 from index_ai.risk import kill_switch_state
-from index_ai.credit_spread import is_credit_option
+from index_ai.strategies.credit_spread import is_credit_option
 from index_ai.mtm import enrich_open_trade_mtm
 from index_ai.position_exits import (
     is_intraday_stale_open,

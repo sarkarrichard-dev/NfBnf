@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from index_ai.strategy_params import get_strategy_params, reload_strategy_params
+from index_ai.strategies.strategy_params import get_strategy_params, reload_strategy_params
 
 
 def test_strategy_params_load_from_env(monkeypatch) -> None:

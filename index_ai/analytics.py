@@ -65,6 +65,74 @@ def _count_by_leg(trades: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda x: -x[1]))
 
 
+def _lane_of(trade: dict[str, Any]) -> str:
+    """Group a trade for expectancy reporting: strategy_mode, else buy/sell lane."""
+    mode = str(trade.get("strategy_mode") or "").strip()
+    if mode and mode not in {"wait", "conflict", ""}:
+        return mode
+    from index_ai.strategies.strategy_router import trade_lane
+
+    lane = trade_lane(str(trade.get("action") or trade.get("signal", {}).get("action") or ""))
+    return {"buy": "buy_premium", "sell": "credit_sell"}.get(lane, "other")
+
+
+def _est_trade_cost_rupees(trade: dict[str, Any]) -> float | None:
+    option = trade.get("option") or {}
+    inst = str(trade.get("instrument") or option.get("instrument") or "NIFTY")
+    qty = int(option.get("quantity") or 0)
+    legs = option.get("legs") or []
+    has_px = any(float(leg.get("ltp") or 0) > 0 for leg in legs) or float(option.get("ltp") or 0) > 0
+    if qty <= 0 or not has_px:
+        return None
+    try:
+        from index_ai.charges import estimate_trade_cost
+
+        return estimate_trade_cost(option, qty, inst).total_rupees
+    except Exception:
+        return None
+
+
+def expectancy_by_lane(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-strategy expectancy from closed trades — the honest scorecard.
+
+    expectancy_rupees is the mean realised P&L per closed trade. For LIVE rows
+    that is already net of real charges; for PAPER rows est_cost_rupees shows the
+    friction those trades would have carried live.
+    """
+    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for t in trades:
+        if t.get("pnl") is None:
+            continue
+        buckets[_lane_of(t)].append(t)
+
+    out: list[dict[str, Any]] = []
+    for lane, rows in buckets.items():
+        pnls = [float(t["pnl"]) for t in rows]
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p < 0]
+        costs = [c for c in (_est_trade_cost_rupees(t) for t in rows) if c is not None]
+        n = len(rows)
+        out.append(
+            {
+                "lane": lane,
+                "closed_trades": n,
+                "win_rate": round(len(wins) / n, 3) if n else None,
+                "avg_win_rupees": round(sum(wins) / len(wins), 0) if wins else 0.0,
+                "avg_loss_rupees": round(sum(losses) / len(losses), 0) if losses else 0.0,
+                "expectancy_rupees": round(sum(pnls) / n, 0) if n else 0.0,
+                "total_pnl_rupees": round(sum(pnls), 0),
+                "est_round_trip_cost_rupees": round(sum(costs) / len(costs), 0) if costs else None,
+                "verdict": (
+                    "profitable" if n and sum(pnls) / n > 0
+                    else "break-even" if n and abs(sum(pnls) / n) < 1
+                    else "losing"
+                ),
+            }
+        )
+    out.sort(key=lambda r: r["total_pnl_rupees"])
+    return out
+
+
 def _count_by(trades: list[dict[str, Any]], field: str) -> dict[str, int]:
     counts: dict[str, int] = defaultdict(int)
     for t in trades:
@@ -236,6 +304,7 @@ def build_analytics(
         "open_positions": open_count,
         "stale_open_positions": stale_open_count,
         "overview": _period_stats(session_raw),
+        "expectancy_by_lane": expectancy_by_lane(session_raw),
         "today": _period_stats(today_trades),
         "week": _period_stats(week_trades),
         "month": _period_stats(month_trades),

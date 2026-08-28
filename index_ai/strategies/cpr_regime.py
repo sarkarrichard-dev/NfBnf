@@ -7,8 +7,8 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.strategy import previous_day_cpr
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.strategy import previous_day_cpr
+from index_ai.strategies.strategy_params import get_strategy_params
 
 
 @dataclass(frozen=True)

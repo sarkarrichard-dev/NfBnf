@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from index_ai.credit_spread import credit_spread_entry_ready
+from index_ai.strategies.credit_spread import credit_spread_entry_ready
 
 
 def test_credit_spread_rejects_single_strike_leg() -> None:

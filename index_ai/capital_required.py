@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from index_ai.credit_spread import attach_credit_risk_metrics, net_credit_points
+from index_ai.strategies.credit_spread import attach_credit_risk_metrics, net_credit_points
 from index_ai.instruments import IndexInstrument
 from index_ai.trade_lots import get_lots_per_trade
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.strategy import cpr_ema_signal, intraday_strategy_signal
-from index_ai.strategy_params import StrategyParams
+from index_ai.strategies.strategy import cpr_ema_signal, intraday_strategy_signal
+from index_ai.strategies.strategy_params import StrategyParams
 
 
 def _bullish_cpr_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -24,7 +24,7 @@ def test_intraday_blocks_long_when_supertrend_bearish(monkeypatch) -> None:
     base = cpr_ema_signal(today, previous)
     assert base.action == "BUY_CALL"
 
-    import index_ai.strategy as strat
+    import index_ai.strategies.strategy as strat
 
     monkeypatch.setattr(
         strat,
@@ -44,7 +44,7 @@ def test_intraday_blocks_long_when_supertrend_bearish(monkeypatch) -> None:
 
 def test_intraday_boosts_confidence_on_break_res(monkeypatch) -> None:
     today, previous = _bullish_cpr_frames()
-    import index_ai.strategy as strat
+    import index_ai.strategies.strategy as strat
 
     monkeypatch.setattr(
         strat,
@@ -73,7 +73,7 @@ def test_intraday_boosts_confidence_on_break_res(monkeypatch) -> None:
 
 def test_require_breakout_tag_blocks_without_break(monkeypatch) -> None:
     today, previous = _bullish_cpr_frames()
-    import index_ai.strategy as strat
+    import index_ai.strategies.strategy as strat
 
     monkeypatch.setattr(
         strat,

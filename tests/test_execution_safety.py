@@ -3,6 +3,8 @@ from __future__ import annotations
 from index_ai.config import settings
 from index_ai.execution_safety import (
     validate_action_matches_option,
+    validate_credit_economics,
+    validate_entry_quotes,
     validate_execution_plan,
     validate_live_exit_allowed,
     validate_open_position,
@@ -65,6 +67,21 @@ def test_structure_mismatch_wrong_legs() -> None:
     opt["structure"] = "BULL_PUT_SPREAD"
     check = validate_action_matches_option("SELL_BEAR_CALL_SPREAD", opt)
     assert not check.ok
+
+
+def test_credit_economics_blocks_thin_credit() -> None:
+    check = validate_credit_economics(
+        {"net_credit_points": 2.0, "max_loss_points": 100.0},
+        "SELL_BEAR_CALL_SPREAD",
+    )
+    assert not check.ok
+    assert check.code == "credit_economics"
+
+
+def test_entry_quotes_require_positive_ltp() -> None:
+    check = validate_entry_quotes({"ltp": 0})
+    assert not check.ok
+    assert check.code == "quote_unavailable"
 
 
 def test_live_exit_blocked_without_traded_status() -> None:

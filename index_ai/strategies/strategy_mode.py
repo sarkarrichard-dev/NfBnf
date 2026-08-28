@@ -6,10 +6,10 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.bar_volume import volume_confirms
-from index_ai.cpr_regime import CprRegime
-from index_ai.ema_cross import credit_action_for_cross
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.bar_volume import volume_confirms
+from index_ai.strategies.cpr_regime import CprRegime
+from index_ai.strategies.ema_cross import credit_action_for_cross
+from index_ai.strategies.strategy_params import get_strategy_params
 
 
 def _volume_wait_reason(stats: dict[str, Any], *, min_ratio: float) -> str:
@@ -60,6 +60,15 @@ def pick_auto_credit(
 
     cross_action = credit_action_for_cross(cross)
     if cross_action:
+        if bias in {"SIDEWAYS", "MIXED"}:
+            return (
+                None,
+                (
+                    f"AUTO: Fresh {ema_fast}/{ema_slow} EMA cross while CPR is {bias.lower()} "
+                    "— wait for a confirmed break instead of selling into a possible whipsaw."
+                ),
+                "wait",
+            )
         if cross_action == "SELL_BEAR_CALL_SPREAD" and bias == "TRENDING_BULL":
             return (
                 None,

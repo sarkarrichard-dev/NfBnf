@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.candlestick_patterns import detect_candlestick_setup
-from index_ai.candlestick_sr import intraday_candle_trend
+from index_ai.strategies.candlestick_patterns import detect_candlestick_setup
+from index_ai.strategies.candlestick_sr import intraday_candle_trend
 
 
 def test_intraday_trend_detects_up_move() -> None:

@@ -7,7 +7,6 @@ intraday window. Option PnL can use a simplified Greeks proxy.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -17,11 +16,14 @@ from index_ai.candle_cache import fetch_backtest_candles, sync_all_configured
 from index_ai.candles import prepare_intraday_signal_frames
 from index_ai.config import AppSettings, candle_interval_minutes
 from index_ai.dhan import DhanClient
+from index_ai.strategies.ichimoku import cloud_reentry_exit
 from index_ai.instruments import IndexInstrument, configured_index_keys, get_instrument
 from index_ai.market_clock import session_times
-from index_ai.strategy import StrategySignal
-from index_ai.strategy_params import get_strategy_params
-from index_ai.strategy_router import route_intraday_signal, strategy_style
+from index_ai.strategies.strategy import StrategySignal
+from index_ai.strategies.strategy_params import get_strategy_params
+from index_ai.strategies.strategy_router import route_intraday_signal, strategy_style
+
+_BUY_ACTIONS = frozenset({"BUY_CALL", "BUY_PUT"})
 
 _BULLISH = frozenset({"BUY_CALL", "SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"})
 _BEARISH = frozenset({"BUY_PUT", "SELL_BEAR_CALL_SPREAD", "SELL_ATM_CALL"})
@@ -79,15 +81,20 @@ def _trade_pnl(
             exit_px,
             lot_size=instrument.lot_size,
             hold_minutes=max(5.0, hold),
+            instrument_key=instrument.key,
         )
         return {
             "proxy_index_points": est["proxy_index_points"],
             "proxy_pnl_rupees": est["proxy_pnl_rupees"],
+            "gross_proxy_pnl_rupees": est["gross_proxy_pnl_rupees"],
+            "estimated_friction_rupees": est["estimated_friction_rupees"],
         }
     points = _spot_proxy_points(action, entry, exit_px)
     return {
         "proxy_index_points": round(points, 2),
         "proxy_pnl_rupees": round(points * instrument.lot_size * 0.25, 2),
+        "gross_proxy_pnl_rupees": round(points * instrument.lot_size * 0.25, 2),
+        "estimated_friction_rupees": 0.0,
     }
 
 
@@ -109,13 +116,31 @@ def replay_session(
     allow_option_selling: bool,
     bounds: dict[str, Any] | None = None,
     pnl_mode: str = "option_proxy",
+    cloud_exit: bool = False,
+    signal_stride: int = 1,
 ) -> list[dict[str, Any]]:
-    """Bar-by-bar signal replay for one session; returns closed proxy trades."""
+    """Bar-by-bar signal replay for one session; returns closed proxy trades.
+
+    When ``cloud_exit`` is set, an open BUY_CALL / BUY_PUT is also closed once
+    spot closes back into the Ichimoku cloud (see :mod:`index_ai.strategies.ichimoku`).
+
+    ``signal_stride`` > 1 evaluates the router only every Nth bar (pending fills
+    still execute every bar). Trades entry-timing precision for a large speed-up
+    on multi-year research backtests; keep it 1 for calibration runs.
+    """
     bounds = bounds or session_times()
     sp = get_strategy_params()
     min_bars = sp.ema_slow_period + 2
+    stride = max(1, int(signal_stride))
+    prev_tail = (
+        previous.tail(sp.ichimoku_span_b_period + sp.ichimoku_base_period)
+        if cloud_exit and not previous.empty
+        else None
+    )
     trades: list[dict[str, Any]] = []
     open_trade: dict[str, Any] | None = None
+    pending_entry: dict[str, Any] | None = None
+    pending_exit_action: str | None = None
 
     def _close_trade(exit_ts: str, exit_px: float, exit_action: str) -> None:
         nonlocal open_trade
@@ -146,6 +171,25 @@ def replay_session(
     for i in range(min_bars, len(today)):
         row = today.iloc[i]
         ts = pd.Timestamp(row["datetime"])
+
+        # Signals are only knowable at a candle close. Execute them at the
+        # following candle's open; this removes same-bar look-ahead fills.
+        if pending_exit_action and open_trade is not None:
+            _close_trade(str(ts), float(row["open"]), pending_exit_action)
+            pending_exit_action = None
+        if pending_entry is not None and open_trade is None:
+            if _bar_time_allowed(ts, bounds):
+                open_trade = {
+                    **pending_entry,
+                    "entry_time": str(ts),
+                    "entry_price": float(row["open"]),
+                    "execution_model": "next_bar_open",
+                }
+            pending_entry = None
+
+        if stride > 1 and (i - min_bars) % stride != 0:
+            continue
+
         slice_frame = today.iloc[: i + 1].reset_index(drop=True)
         try:
             signal, regime = route_intraday_signal(
@@ -157,40 +201,56 @@ def replay_session(
             continue
 
         if open_trade is None:
-            if signal.action not in _ACTIONABLE:
-                continue
-            if not _bar_time_allowed(ts, bounds):
-                continue
-            if signal.confidence < sp.credit_min_confidence and signal.action not in {"BUY_CALL", "BUY_PUT"}:
-                continue
-            open_trade = {
-                "entry_time": str(ts),
-                "entry_price": float(row["close"]),
-                "action": signal.action,
-                "strategy_mode": signal.strategy_mode,
-                "confidence": signal.confidence,
-                "cpr_regime": regime.day_bias,
-                "reason": signal.reason,
-            }
-            continue
-
-        last_px = float(row["close"])
-        if _should_exit(str(open_trade["action"]), signal) or not _bar_time_allowed(ts, bounds):
-            _close_trade(str(ts), last_px, signal.action)
             if (
                 signal.action in _ACTIONABLE
                 and _bar_time_allowed(ts, bounds)
-                and signal.confidence >= sp.credit_min_confidence
+                and (
+                    signal.confidence >= sp.credit_min_confidence
+                    or signal.action in {"BUY_CALL", "BUY_PUT"}
+                )
             ):
-                open_trade = {
-                    "entry_time": str(ts),
-                    "entry_price": last_px,
+                pending_entry = {
+                    "signal_time": str(ts),
                     "action": signal.action,
                     "strategy_mode": signal.strategy_mode,
                     "confidence": signal.confidence,
                     "cpr_regime": regime.day_bias,
                     "reason": signal.reason,
+                    # snapshot signal state for downstream ML seeding
+                    "signal_features": {
+                        "price": float(getattr(signal, "price", 0) or 0),
+                        "tc": float(getattr(signal, "tc", 0) or 0),
+                        "bc": float(getattr(signal, "bc", 0) or 0),
+                        "ema_fast": float(getattr(signal, "ema_fast", 0) or 0),
+                        "ema_slow": float(getattr(signal, "ema_slow", 0) or 0),
+                        "cpr_width_pct": float(getattr(signal, "cpr_width_pct", 0) or 0),
+                        "volume_ratio": float(getattr(signal, "volume_ratio", 1) or 1),
+                        "breakout_tag": str(getattr(signal, "breakout_tag", "") or ""),
+                    },
                 }
+            continue
+
+        open_action = str(open_trade["action"])
+        if cloud_exit and open_action in _BUY_ACTIONS and _bar_time_allowed(ts, bounds):
+            edir = 1 if open_action == "BUY_CALL" else -1
+            cloud_frame = (
+                pd.concat([prev_tail, slice_frame], ignore_index=True)
+                if prev_tail is not None
+                else slice_frame
+            )
+            hit, _reason = cloud_reentry_exit(
+                edir,
+                cloud_frame,
+                conversion=sp.ichimoku_conversion_period,
+                base=sp.ichimoku_base_period,
+                span_b=sp.ichimoku_span_b_period,
+            )
+            if hit:
+                pending_exit_action = "CLOUD_EXIT"
+                continue
+
+        if _should_exit(open_action, signal) or not _bar_time_allowed(ts, bounds):
+            pending_exit_action = signal.action if signal.action != "NO_TRADE" else "SIGNAL_EXIT"
 
     if open_trade is not None:
         last = today.iloc[-1]
@@ -205,6 +265,8 @@ def _replay_candles(
     instrument: IndexInstrument,
     app_settings: AppSettings,
     pnl_mode: str,
+    cloud_exit: bool = False,
+    signal_stride: int = 1,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[Any, pd.DataFrame]]]:
     sp = get_strategy_params()
     bounds = session_times()
@@ -233,6 +295,8 @@ def _replay_candles(
                 allow_option_selling=app_settings.risk.allow_option_selling,
                 bounds=bounds,
                 pnl_mode=pnl_mode,
+                cloud_exit=cloud_exit,
+                signal_stride=signal_stride,
             )
         except Exception as exc:
             session_summaries.append({"session": str(day), "error": str(exc), "trades": 0})
@@ -247,6 +311,13 @@ def _replay_candles(
                 "session": str(day),
                 "trades": len(day_trades),
                 "proxy_pnl_rupees": round(sum(float(t["proxy_pnl_rupees"]) for t in day_trades), 2),
+                "gross_proxy_pnl_rupees": round(
+                    sum(float(t.get("gross_proxy_pnl_rupees") or t["proxy_pnl_rupees"]) for t in day_trades),
+                    2,
+                ),
+                "estimated_friction_rupees": round(
+                    sum(float(t.get("estimated_friction_rupees") or 0) for t in day_trades), 2
+                ),
             }
         )
     return all_trades, session_summaries, sessions
@@ -262,12 +333,15 @@ def run_dhan_intraday_backtest(
     use_cache: bool = True,
     refresh_cache: bool = False,
     pnl_mode: str = "option_proxy",
+    cloud_exit: bool | None = None,
 ) -> dict[str, Any]:
     """
     Replay strategy on Dhan / cached intraday spot candles.
 
     lookback_days up to 365 when cache has history; Dhan only refreshes ~5 days.
     pnl_mode: option_proxy (default) | spot
+    cloud_exit: overlay an Ichimoku cloud-reentry exit on the buy lane.
+      None (default) → use EXIT_BUY_ON_CLOUD_REENTRY from strategy params.
     """
     key = instrument_key.strip().upper()
     if key not in configured_index_keys():
@@ -280,6 +354,12 @@ def run_dhan_intraday_backtest(
     pnl_mode = str(pnl_mode or "option_proxy").strip().lower()
     if pnl_mode not in {"option_proxy", "spot"}:
         pnl_mode = "option_proxy"
+
+    cloud_exit = (
+        bool(get_strategy_params().exit_buy_on_cloud_reentry)
+        if cloud_exit is None
+        else bool(cloud_exit)
+    )
 
     iv = str(interval or candle_interval_minutes())
     candles, data_source = fetch_backtest_candles(
@@ -296,10 +376,17 @@ def run_dhan_intraday_backtest(
         instrument=instrument,
         app_settings=app_settings,
         pnl_mode=pnl_mode,
+        cloud_exit=cloud_exit,
     )
 
     wins = sum(1 for t in all_trades if t.get("aligned"))
+    cloud_exits = sum(1 for t in all_trades if t.get("exit_action") == "CLOUD_EXIT")
     total_proxy = round(sum(float(t["proxy_pnl_rupees"]) for t in all_trades), 2)
+    total_gross = round(
+        sum(float(t.get("gross_proxy_pnl_rupees") or t["proxy_pnl_rupees"]) for t in all_trades),
+        2,
+    )
+    total_friction = round(sum(float(t.get("estimated_friction_rupees") or 0) for t in all_trades), 2)
     from index_ai.candle_cache import cache_status
 
     disclaimer = (
@@ -322,6 +409,7 @@ def run_dhan_intraday_backtest(
         },
         "strategy_style": strategy_style(),
         "pnl_mode": pnl_mode,
+        "cloud_exit": cloud_exit,
         "use_cache": use_cache,
         "cache": cache_status()["instruments"].get(key),
         "trades": all_trades,
@@ -332,6 +420,10 @@ def run_dhan_intraday_backtest(
             "losses": len(all_trades) - wins,
             "win_rate_pct": round(100.0 * wins / len(all_trades), 1) if all_trades else 0.0,
             "total_proxy_pnl_rupees": total_proxy,
+            "gross_proxy_pnl_rupees": total_gross,
+            "estimated_friction_rupees": total_friction,
+            "execution_model": "next_bar_open",
+            "cloud_exits": cloud_exits,
         },
         "disclaimer": disclaimer,
         "data_source": data_source,

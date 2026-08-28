@@ -37,14 +37,23 @@ class StrategyParams:
     max_sideways_ema_spread_pct: float = 0.08
     breakout_confidence_boost: float = 0.06
     exit_on_supertrend_flip: bool = True
+    enforce_cost_economics: bool = True
+    min_edge_to_cost_multiple: float = 1.5
+    exit_buy_on_cloud_reentry: bool = False
+    ichimoku_conversion_period: int = 9
+    ichimoku_base_period: int = 26
+    ichimoku_span_b_period: int = 52
     cpr_narrow_width_pct: float = 0.35
     cpr_wide_width_pct: float = 0.75
     enable_credit_strategies: bool = True
     credit_wing_strikes: int = 2
     credit_short_strike_steps: int = 2
     credit_min_confidence: float = 0.58
-    credit_min_volume_ratio: float = 0.65
+    credit_min_volume_ratio: float = 0.85
     credit_volume_lookback_bars: int = 20
+    credit_min_reward_to_risk: float = 0.12
+    buy_min_volume_ratio: float = 0.85
+    buy_volume_lookback_bars: int = 20
     auto_buy_trending_only: bool = True
     credit_profit_target_pct: float = 0.50
     credit_stop_loss_pct: float = 0.60
@@ -103,14 +112,23 @@ def get_strategy_params() -> StrategyParams:
         max_sideways_ema_spread_pct=_float("MAX_SIDEWAYS_EMA_SPREAD_PCT", 0.08),
         breakout_confidence_boost=_float("BREAKOUT_CONFIDENCE_BOOST", 0.06),
         exit_on_supertrend_flip=_bool("EXIT_ON_SUPERTREND_FLIP", True),
+        enforce_cost_economics=_bool("ENFORCE_COST_ECONOMICS", True),
+        min_edge_to_cost_multiple=_float("MIN_EDGE_TO_COST_MULTIPLE", 1.5),
+        exit_buy_on_cloud_reentry=_bool("EXIT_BUY_ON_CLOUD_REENTRY", False),
+        ichimoku_conversion_period=_int("ICHIMOKU_CONVERSION_PERIOD", 9),
+        ichimoku_base_period=_int("ICHIMOKU_BASE_PERIOD", 26),
+        ichimoku_span_b_period=_int("ICHIMOKU_SPAN_B_PERIOD", 52),
         cpr_narrow_width_pct=_float("CPR_NARROW_WIDTH_PCT", 0.35),
         cpr_wide_width_pct=_float("CPR_WIDE_WIDTH_PCT", 0.75),
         enable_credit_strategies=_bool("ENABLE_CREDIT_STRATEGIES", True),
         credit_wing_strikes=_int("CREDIT_WING_STRIKES", 2),
         credit_short_strike_steps=_int("CREDIT_SHORT_STRIKE_STEPS", 2),
         credit_min_confidence=_float("CPR_CREDIT_MIN_CONFIDENCE", 0.58),
-        credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.65),
+        credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.85),
         credit_volume_lookback_bars=_int("CREDIT_VOLUME_LOOKBACK_BARS", 20),
+        credit_min_reward_to_risk=_float("CREDIT_MIN_REWARD_TO_RISK", 0.12),
+        buy_min_volume_ratio=_float("BUY_MIN_VOLUME_RATIO", 0.85),
+        buy_volume_lookback_bars=_int("BUY_VOLUME_LOOKBACK_BARS", 20),
         auto_buy_trending_only=_bool("AUTO_BUY_TRENDING_ONLY", True),
         credit_profit_target_pct=_float("CREDIT_PROFIT_TARGET_PCT", 0.50),
         credit_stop_loss_pct=_float("CREDIT_STOP_LOSS_PCT", 0.60),
@@ -122,9 +140,9 @@ def get_strategy_params() -> StrategyParams:
 
 def strategy_tuning_summary() -> dict[str, object]:
     """Active tuning values for dashboard / API (edit .env, then restart)."""
-    from index_ai.strategy_router import strategy_style
+    from index_ai.strategies.strategy_router import strategy_style
 
-    from index_ai.config import candle_interval_minutes, candle_interval_int, bars_for_minutes
+    from index_ai.config import candle_interval_int, candle_interval_minutes
 
     p = get_strategy_params()
     style = strategy_style()
@@ -142,23 +160,14 @@ def strategy_tuning_summary() -> dict[str, object]:
         ),
         "strategy_style_note": {
             "AUTO": (
-                "Trending CPR → long premium (calls/puts) only; sideways → no buying. "
-                "Credit spreads on trend + range via 1m CPR, EMA cross, and volume."
-                if p.auto_buy_trending_only and not p.auto_credit_sideways_only
+                "Trending CPR → long premium (calls/puts); sideways → iron condor / CPR credit. "
+                "1m EMA cross + volume gates on sell lane. No Apex in AUTO."
+                if p.auto_intelligent_routing
                 else (
-                    "Autopilot: trending days → long premium (calls/puts); sideways → iron condor; "
-                    "optional Apex on R1/S1 when AUTO_INCLUDE_APEX=true."
-                    if p.auto_trend_buy_first and p.auto_credit_sideways_only
-                    else (
-                        "Autopilot: Apex on R1/S1 breakout + ST; else EMA/CPR credit; else buy."
-                        if p.auto_intelligent_routing and p.auto_include_apex
-                        else (
-                            "Intelligent switch: EMA cross → directional credit; "
-                            "sideways CPR → iron condor; aligned trend → CPR credit or buy."
-                            if p.auto_intelligent_routing
-                            else "Fixed rules from REQUIRE_EMA_CROSS_FOR_CREDIT / CPR credit."
-                        )
-                    )
+                    "Trending CPR → long premium only; sideways → no buying. "
+                    "Credit spreads via CPR + EMA + volume."
+                    if p.auto_buy_trending_only and not p.auto_credit_sideways_only
+                    else "Fixed rules from REQUIRE_EMA_CROSS_FOR_CREDIT / CPR credit."
                 )
             ),
             "CREDIT": "Only hedged credit (EMA cross when REQUIRE_EMA_CROSS_FOR_CREDIT=true).",
@@ -210,6 +219,9 @@ def strategy_tuning_summary() -> dict[str, object]:
         "credit_min_confidence": p.credit_min_confidence,
         "credit_min_volume_ratio": p.credit_min_volume_ratio,
         "credit_volume_lookback_bars": p.credit_volume_lookback_bars,
+        "credit_min_reward_to_risk": p.credit_min_reward_to_risk,
+        "buy_min_volume_ratio": p.buy_min_volume_ratio,
+        "buy_volume_lookback_bars": p.buy_volume_lookback_bars,
         "credit_profit_target_pct": p.credit_profit_target_pct,
         "credit_stop_loss_pct": p.credit_stop_loss_pct,
         "enable_profit_trail": p.enable_profit_trail,
@@ -219,6 +231,23 @@ def strategy_tuning_summary() -> dict[str, object]:
             "No fixed profit cap when enabled — MTM trails peak profit; "
             f"arms after ₹{p.profit_trail_arm_rupees_per_lot:,.0f}×lots, "
             f"exits on {p.profit_trail_giveback_pct:.0%} giveback from peak."
+        ),
+        "enforce_cost_economics": p.enforce_cost_economics,
+        "min_edge_to_cost_multiple": p.min_edge_to_cost_multiple,
+        "cost_economics_note": (
+            "Entry is blocked unless the trade's expected edge (credit collected, "
+            "or the index move to trail-arm × delta × qty) is at least "
+            f"{p.min_edge_to_cost_multiple:g}× the estimated round-trip cost "
+            "(brokerage + STT + exchange + GST + stamp + half-spread slippage)."
+        ),
+        "exit_buy_on_cloud_reentry": p.exit_buy_on_cloud_reentry,
+        "ichimoku_conversion_period": p.ichimoku_conversion_period,
+        "ichimoku_base_period": p.ichimoku_base_period,
+        "ichimoku_span_b_period": p.ichimoku_span_b_period,
+        "cloud_exit_note": (
+            "Buy lane only: exit long-premium when spot closes back into the Kumo "
+            f"(Ichimoku {p.ichimoku_conversion_period}/{p.ichimoku_base_period}/"
+            f"{p.ichimoku_span_b_period}). Longs trail the cloud top, shorts the Kijun."
         ),
         "require_supertrend_align": p.require_supertrend_align,
         "require_breakout_tag": p.require_breakout_tag,
@@ -251,6 +280,11 @@ def strategy_tuning_summary() -> dict[str, object]:
             "CPR_NARROW_WIDTH_PCT",
             "CPR_WIDE_WIDTH_PCT",
             "CPR_CREDIT_MIN_CONFIDENCE",
+            "CREDIT_MIN_VOLUME_RATIO",
+            "CREDIT_VOLUME_LOOKBACK_BARS",
+            "CREDIT_MIN_REWARD_TO_RISK",
+            "BUY_MIN_VOLUME_RATIO",
+            "BUY_VOLUME_LOOKBACK_BARS",
             "CREDIT_WING_STRIKES",
             "CREDIT_SHORT_STRIKE_STEPS",
             "CREDIT_PROFIT_TARGET_PCT",
@@ -267,6 +301,21 @@ def strategy_tuning_summary() -> dict[str, object]:
             "MAX_SIDEWAYS_EMA_SPREAD_PCT",
             "SUPERTREND_PERIOD",
             "SUPERTREND_MULTIPLIER",
+            "EXIT_BUY_ON_CLOUD_REENTRY",
+            "ICHIMOKU_CONVERSION_PERIOD",
+            "ICHIMOKU_BASE_PERIOD",
+            "ICHIMOKU_SPAN_B_PERIOD",
+            "ENFORCE_COST_ECONOMICS",
+            "MIN_EDGE_TO_COST_MULTIPLE",
+            "CHARGE_BROKERAGE_PER_ORDER",
+            "CHARGE_STT_SELL_PCT",
+            "CHARGE_EXCH_TXN_PCT_NSE",
+            "CHARGE_EXCH_TXN_PCT_BSE",
+            "CHARGE_GST_PCT",
+            "CHARGE_STAMP_BUY_PCT",
+            "SLIPPAGE_HALF_SPREAD_POINTS_NIFTY",
+            "SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY",
+            "SLIPPAGE_HALF_SPREAD_POINTS_SENSEX",
         ],
         "presets": {
             "more_sideways_credit": {

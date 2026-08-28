@@ -1,0 +1,3 @@
+[submodule "reference/openalgo"]
+	path = reference/openalgo
+	url = https://github.com/marketcalls/openalgo

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from index_ai.strategy_params import StrategyParams, get_strategy_params
+from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
 
 
 def profit_trail_settings(params: StrategyParams | None = None) -> dict[str, Any]:

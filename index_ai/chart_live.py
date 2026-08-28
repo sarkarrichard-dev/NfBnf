@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo
 from index_ai.candles import prepare_intraday_signal_frames
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.instruments import get_instrument
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.strategy_params import get_strategy_params
 from index_ai.config import candle_interval_minutes
-from index_ai.supertrend import supertrend_snapshot
+from index_ai.strategies.supertrend import supertrend_snapshot
 
 
 def fetch_supertrend_snapshot(client: DhanClient, instrument_key: str) -> dict:
@@ -28,7 +28,7 @@ def fetch_supertrend_snapshot(client: DhanClient, instrument_key: str) -> dict:
     candles = chart_response_to_frame(data)
     ema_frame, _ = prepare_intraday_signal_frames(candles)
     params = get_strategy_params()
-    from index_ai.strategy_router import strategy_style
+    from index_ai.strategies.strategy_router import strategy_style
 
     if strategy_style() == "APEX":
         period = params.apex_supertrend_period

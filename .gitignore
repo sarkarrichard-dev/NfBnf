@@ -7,9 +7,14 @@ venv/
 !.env.example
 .pytest_cache/
 .ruff_cache/
+.vs/
+.idea/
 *.egg-info/
 dist/
 build/
+
+# graphify knowledge-graph outputs (regenerate with /graphify)
+graphify-out/
 
 # Private trading data and local memory
 memory/
@@ -19,3 +24,6 @@ memory/
 *.csv
 *.parquet
 *.xlsx
+
+# Research / backtest / ML-seed outputs (regenerable)
+research/

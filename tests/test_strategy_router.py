@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.strategy_params import reload_strategy_params
-from index_ai.strategy_router import evaluate_dual_opportunities, route_intraday_signal, trade_lane
+from index_ai.strategies.strategy_params import reload_strategy_params
+from index_ai.strategies.strategy_router import evaluate_dual_opportunities, route_intraday_signal, trade_lane
 
 
 def test_trade_lane_buy_and_sell() -> None:

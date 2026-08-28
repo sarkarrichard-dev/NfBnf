@@ -110,7 +110,7 @@ After CPR+EMA aligns, the scanner applies:
 - **Supertrend** — ATR bands; mismatched trend blocks the trade.
 - **Exit** — open trades also exit on Supertrend flip or price through the live Supertrend stop (refreshed each trail cycle).
 
-Tunables in `index_ai/strategy_params.py` (`require_breakout_tag` for stricter Roxx-style entries only on Break Res/Sup).
+Tunables in `index_ai/strategies/strategy_params.py` (`require_breakout_tag` for stricter Roxx-style entries only on Break Res/Sup).
 
 ## Open interest (Dhan option chain)
 

@@ -9,7 +9,7 @@ from index_ai.executor import build_execution_plan
 from index_ai.config import settings
 from index_ai.instruments import get_instrument
 from index_ai.learning import learned_settings, learning_report, update_learning
-from index_ai.strategy import StrategySignal
+from index_ai.strategies.strategy import StrategySignal
 
 
 def main() -> None:

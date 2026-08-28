@@ -4,7 +4,7 @@ from typing import Any
 
 from index_ai.config import RiskSettings
 from index_ai.instruments import IndexInstrument, get_instrument
-from index_ai.strategy_params import StrategyParams, get_strategy_params
+from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
 
 
 def _direction_for_action(action: str, transaction_type: str) -> int:
@@ -176,7 +176,7 @@ def evaluate_open_trade(
     *,
     fresh_supertrend: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    from index_ai.credit_spread import evaluate_credit_open_trade, is_credit_option
+    from index_ai.strategies.credit_spread import evaluate_credit_open_trade, is_credit_option
 
     option = trade.get("option") or {}
     if is_credit_option(option):

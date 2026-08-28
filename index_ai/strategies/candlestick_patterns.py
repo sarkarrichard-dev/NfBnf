@@ -6,8 +6,8 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.breakout import detect_breakout
-from index_ai.candlestick_sr import intraday_candle_trend, swing_levels
+from index_ai.strategies.breakout import detect_breakout
+from index_ai.strategies.candlestick_sr import intraday_candle_trend, swing_levels
 
 
 def _body(row: pd.Series) -> float:

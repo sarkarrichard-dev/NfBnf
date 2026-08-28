@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.breakout import detect_breakout
+from index_ai.strategies.breakout import detect_breakout
 
 
 def test_break_res_when_close_crosses_range_high() -> None:

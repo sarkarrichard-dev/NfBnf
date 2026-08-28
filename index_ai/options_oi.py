@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from index_ai.instruments import IndexInstrument
-from index_ai.strategy import StrategySignal, copy_signal, nearest_strike
+from index_ai.strategies.strategy import StrategySignal, copy_signal, nearest_strike
 
 
 @dataclass(frozen=True)

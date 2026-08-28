@@ -338,7 +338,7 @@ def option_leg_fields(trade: dict[str, Any]) -> dict[str, Any]:
     structure = str(option.get("structure") or "")
     legs = list(option.get("legs") or [])
     if structure and legs:
-        from index_ai.credit_spread import format_legs_summary
+        from index_ai.strategies.credit_spread import format_legs_summary
 
         parts = [row["label"] for row in format_legs_summary(legs)]
         leg_display = f"{structure.replace('_', ' ')}: " + ", ".join(parts)

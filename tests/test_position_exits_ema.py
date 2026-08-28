@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from index_ai.position_exits import strategy_exit_reason
-from index_ai.strategy_params import reload_strategy_params
+from index_ai.strategies.strategy_params import reload_strategy_params
 
 
 def test_ema_bull_flip_closes_bear_call(monkeypatch) -> None:

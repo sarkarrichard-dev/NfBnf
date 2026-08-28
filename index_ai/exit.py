@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from index_ai.config import AppSettings
-from index_ai.credit_spread import compute_credit_mtm, is_credit_option
+from index_ai.strategies.credit_spread import compute_credit_mtm, is_credit_option
 from index_ai.dhan import DhanClient
 from index_ai.dhan_errors import DhanRateLimitError
 from index_ai.instruments import get_instrument
@@ -65,7 +65,7 @@ def _ltp_from_chain(client: DhanClient, trade: dict[str, Any]) -> float | None:
 
     legs = list(option.get("legs") or [])
     if legs:
-        from index_ai.credit_spread import mark_to_close_debit
+        from index_ai.strategies.credit_spread import mark_to_close_debit
 
         leg_ltps: list[float] = []
         for leg in legs:

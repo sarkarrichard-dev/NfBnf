@@ -5,8 +5,8 @@ from typing import Any
 from index_ai.config import RiskSettings
 from index_ai.learning import today_live_consecutive_loss_streak, today_live_realized_pnl
 from index_ai.risk_policy import DAILY_LOSS_RUPEES_PER_LOT, effective_risk_limits
-from index_ai.credit_spread import CREDIT_ACTIONS
-from index_ai.premium_sell import is_premium_sell_action
+from index_ai.strategies.credit_spread import CREDIT_ACTIONS
+from index_ai.strategies.premium_sell import is_premium_sell_action
 
 
 def risk_settings_dict(risk: RiskSettings) -> dict[str, Any]:
@@ -62,14 +62,13 @@ def kill_switch_state(risk: RiskSettings) -> dict[str, Any]:
 
 
 def _needs_apex_session_gates(signal_action: str, strategy_mode: str = "") -> bool:
-    from index_ai.strategy_router import strategy_style
+    from index_ai.strategies.strategy_router import strategy_style
 
-    mode = str(strategy_mode or "")
+    _ = signal_action
     if strategy_style() == "APEX":
         return True
-    if mode.startswith("apex"):
-        return True
-    return is_premium_sell_action(signal_action)
+    mode = str(strategy_mode or "")
+    return mode.startswith("apex")
 
 
 def check_execution_gates(
@@ -102,7 +101,7 @@ def check_execution_gates(
         tx = "SELL"
 
     if _needs_apex_session_gates(signal_action, strategy_mode):
-        from index_ai.apex_risk import (
+        from index_ai.strategies.apex_risk import (
             apex_entry_window_message,
             is_apex_entry_window,
         )

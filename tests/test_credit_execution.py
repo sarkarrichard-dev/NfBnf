@@ -3,7 +3,7 @@ from __future__ import annotations
 from index_ai.config import AppSettings, DhanSettings, RiskSettings
 from index_ai.executor import build_execution_plan
 from index_ai.instruments import get_instrument
-from index_ai.strategy import StrategySignal
+from index_ai.strategies.strategy import StrategySignal
 
 
 def _settings() -> AppSettings:

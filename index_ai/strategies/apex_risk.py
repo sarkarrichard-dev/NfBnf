@@ -7,7 +7,7 @@ from datetime import time
 
 from index_ai.learning import connect
 from index_ai.market_clock import now_ist, today_ist_date
-from index_ai.strategy_params import get_strategy_params
+from index_ai.strategies.strategy_params import get_strategy_params
 
 
 def _parse_time(name: str, default: time) -> time:
