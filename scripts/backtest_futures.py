@@ -21,6 +21,13 @@ OUT = Path("research/futures")
 
 
 def _num(v: str):
+    if ":" in v:
+        from datetime import time
+
+        hh, mm = (int(x) for x in v.split(":", 1))
+        return time(hh, mm)
+    if v.lower() in {"true", "false"}:
+        return v.lower() == "true"
     try:
         return int(v)
     except ValueError:
