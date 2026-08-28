@@ -11,6 +11,9 @@ venv/
 dist/
 build/
 
+# graphify knowledge-graph outputs (regenerate with /graphify)
+graphify-out/
+
 # Private trading data and local memory
 memory/
 *.sqlite
