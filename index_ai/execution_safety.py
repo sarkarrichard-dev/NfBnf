@@ -7,6 +7,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+from index_ai.charges import estimate_trade_cost
 from index_ai.config import AppSettings
 from index_ai.credit_spread import CREDIT_ACTIONS, credit_spread_entry_ready, is_credit_action
 from index_ai.premium_sell import PREMIUM_SELL_ACTIONS, is_premium_sell_action, premium_sell_entry_ready
@@ -236,6 +237,70 @@ def validate_credit_economics(option: dict[str, Any], action: str) -> SafetyChec
     return SafetyCheck(True, "ok", "ok")
 
 
+_BUY_ACTIONS = frozenset({"BUY_CALL", "BUY_PUT"})
+
+
+def _expected_edge_rupees(
+    option: dict[str, Any], action: str, instrument: IndexInstrument, qty: int
+) -> float | None:
+    """Best-case favourable outcome the trade is playing for, in rupees.
+
+    Credit structures: the net credit collected (that is the max profit).
+    Long premium: the index move to trail-arm, at ~0.5 delta.
+    Returns None when it cannot be estimated (gate then abstains).
+    """
+    act = str(action or "").upper()
+    if is_credit_action(act):
+        raw = option.get("net_credit_points")
+        if raw in (None, ""):
+            return None
+        try:
+            return abs(float(raw)) * max(1, int(qty))
+        except (TypeError, ValueError):
+            return None
+    if act in _BUY_ACTIONS:
+        arm = float(getattr(instrument, "trail_activation_points", 0) or 0)
+        if arm <= 0:
+            return None
+        return arm * 0.5 * max(1, int(qty))
+    return None
+
+
+def validate_cost_economics(
+    option: dict[str, Any], action: str, instrument: IndexInstrument
+) -> SafetyCheck:
+    """Block trades whose expected edge cannot clear their round-trip cost.
+
+    Cost = brokerage + STT + exchange txn + SEBI + GST + stamp + half-spread
+    slippage, both sides, every leg (see :mod:`index_ai.charges`).
+    """
+    params = get_strategy_params()
+    if not params.enforce_cost_economics:
+        return SafetyCheck(True, "cost gate disabled", "ok")
+
+    try:
+        qty = int(option.get("quantity") or instrument.lot_size)
+    except (TypeError, ValueError):
+        qty = instrument.lot_size
+
+    edge = _expected_edge_rupees(option, action, instrument, qty)
+    if edge is None:
+        return SafetyCheck(True, "edge not estimable", "cost_metrics_unavailable")
+
+    cost = estimate_trade_cost(option, qty, instrument.key).total_rupees
+    multiple = max(0.0, float(params.min_edge_to_cost_multiple))
+    if cost > 0 and edge < multiple * cost:
+        return SafetyCheck(
+            False,
+            (
+                f"Cost economics: expected edge ~Rs {edge:,.0f} is below "
+                f"{multiple:g}x the Rs {cost:,.0f} round-trip cost — friction eats this trade."
+            ),
+            "cost_economics",
+        )
+    return SafetyCheck(True, f"edge Rs {edge:,.0f} vs cost Rs {cost:,.0f}", "ok")
+
+
 def validate_entry_quotes(option: dict[str, Any]) -> SafetyCheck:
     """Ensure a live market order is based on an actual, positive chain quote."""
     legs = list(option.get("legs") or [])
@@ -365,6 +430,7 @@ def validate_execution_plan(
         validate_action_matches_option(action, option),
         validate_quantities(option, instrument),
         validate_credit_economics(option, action),
+        validate_cost_economics(option, action, instrument),
         validate_open_position(instrument.key, app_settings.risk.trading_mode),
     ):
         if not check.ok:

@@ -81,6 +81,7 @@ def _trade_pnl(
             exit_px,
             lot_size=instrument.lot_size,
             hold_minutes=max(5.0, hold),
+            instrument_key=instrument.key,
         )
         return {
             "proxy_index_points": est["proxy_index_points"],

@@ -37,6 +37,8 @@ class StrategyParams:
     max_sideways_ema_spread_pct: float = 0.08
     breakout_confidence_boost: float = 0.06
     exit_on_supertrend_flip: bool = True
+    enforce_cost_economics: bool = True
+    min_edge_to_cost_multiple: float = 1.5
     exit_buy_on_cloud_reentry: bool = False
     ichimoku_conversion_period: int = 9
     ichimoku_base_period: int = 26
@@ -110,6 +112,8 @@ def get_strategy_params() -> StrategyParams:
         max_sideways_ema_spread_pct=_float("MAX_SIDEWAYS_EMA_SPREAD_PCT", 0.08),
         breakout_confidence_boost=_float("BREAKOUT_CONFIDENCE_BOOST", 0.06),
         exit_on_supertrend_flip=_bool("EXIT_ON_SUPERTREND_FLIP", True),
+        enforce_cost_economics=_bool("ENFORCE_COST_ECONOMICS", True),
+        min_edge_to_cost_multiple=_float("MIN_EDGE_TO_COST_MULTIPLE", 1.5),
         exit_buy_on_cloud_reentry=_bool("EXIT_BUY_ON_CLOUD_REENTRY", False),
         ichimoku_conversion_period=_int("ICHIMOKU_CONVERSION_PERIOD", 9),
         ichimoku_base_period=_int("ICHIMOKU_BASE_PERIOD", 26),
@@ -228,6 +232,14 @@ def strategy_tuning_summary() -> dict[str, object]:
             f"arms after ₹{p.profit_trail_arm_rupees_per_lot:,.0f}×lots, "
             f"exits on {p.profit_trail_giveback_pct:.0%} giveback from peak."
         ),
+        "enforce_cost_economics": p.enforce_cost_economics,
+        "min_edge_to_cost_multiple": p.min_edge_to_cost_multiple,
+        "cost_economics_note": (
+            "Entry is blocked unless the trade's expected edge (credit collected, "
+            "or the index move to trail-arm × delta × qty) is at least "
+            f"{p.min_edge_to_cost_multiple:g}× the estimated round-trip cost "
+            "(brokerage + STT + exchange + GST + stamp + half-spread slippage)."
+        ),
         "exit_buy_on_cloud_reentry": p.exit_buy_on_cloud_reentry,
         "ichimoku_conversion_period": p.ichimoku_conversion_period,
         "ichimoku_base_period": p.ichimoku_base_period,
@@ -293,6 +305,17 @@ def strategy_tuning_summary() -> dict[str, object]:
             "ICHIMOKU_CONVERSION_PERIOD",
             "ICHIMOKU_BASE_PERIOD",
             "ICHIMOKU_SPAN_B_PERIOD",
+            "ENFORCE_COST_ECONOMICS",
+            "MIN_EDGE_TO_COST_MULTIPLE",
+            "CHARGE_BROKERAGE_PER_ORDER",
+            "CHARGE_STT_SELL_PCT",
+            "CHARGE_EXCH_TXN_PCT_NSE",
+            "CHARGE_EXCH_TXN_PCT_BSE",
+            "CHARGE_GST_PCT",
+            "CHARGE_STAMP_BUY_PCT",
+            "SLIPPAGE_HALF_SPREAD_POINTS_NIFTY",
+            "SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY",
+            "SLIPPAGE_HALF_SPREAD_POINTS_SENSEX",
         ],
         "presets": {
             "more_sideways_credit": {

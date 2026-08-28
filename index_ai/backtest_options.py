@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+from index_ai.charges import half_spread_points, leg_charge_rupees
+
 _BULLISH = frozenset({"BUY_CALL", "SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"})
 _BEARISH = frozenset({"BUY_PUT", "SELL_BEAR_CALL_SPREAD", "SELL_ATM_CALL"})
 _CREDIT_RANGE = frozenset({"SELL_IRON_CONDOR"})
@@ -43,6 +45,7 @@ def estimate_option_pnl_rupees(
     iv_pct: float = 14.0,
     slippage_bps: float = 10.0,
     fees_per_leg_side_rupees: float = 20.0,
+    instrument_key: str = "NIFTY",
 ) -> dict[str, float]:
     """
     Estimate spread / premium PnL from spot path + simplified Greeks.
@@ -107,13 +110,24 @@ def estimate_option_pnl_rupees(
         gross_pnl_rupees = max(max_loss, min(max_profit, gross_pnl_rupees))
 
     # Historical option quotes are unavailable in this replay, so deduct a
-    # transparent conservative friction estimate rather than assuming fills at
-    # mid/last price. The values are configurable by callers for calibration
-    # against the paper journal.
+    # transparent friction estimate: real Indian F&O statutory + broker charges
+    # (index_ai.charges) on an estimated per-leg premium, plus half-spread
+    # slippage on entry and exit. Falls back to the legacy bps model if the
+    # charges import is unavailable.
     legs = _legs_for_action(act)
-    premium_notional = max(abs(credit_rupees), entry * 0.0018 * lots)
-    slippage_rupees = premium_notional * max(0.0, float(slippage_bps)) * 2 / 10_000
-    fees_rupees = max(0.0, float(fees_per_leg_side_rupees)) * legs * 2
+    premium_per_leg = max(entry * 0.004, abs(credit_rupees) / max(legs, 1) / max(lots, 1))
+    try:
+        charge_one_leg = leg_charge_rupees(
+            premium_per_leg, lots, "SELL", exchange="BSE" if instrument_key.upper() == "SENSEX" else "NSE"
+        ) + leg_charge_rupees(
+            premium_per_leg, lots, "BUY", exchange="BSE" if instrument_key.upper() == "SENSEX" else "NSE"
+        )
+        fees_rupees = charge_one_leg * legs
+        slippage_rupees = half_spread_points(instrument_key) * lots * legs * 2
+    except Exception:
+        premium_notional = max(abs(credit_rupees), entry * 0.0018 * lots)
+        slippage_rupees = premium_notional * max(0.0, float(slippage_bps)) * 2 / 10_000
+        fees_rupees = max(0.0, float(fees_per_leg_side_rupees)) * legs * 2
     estimated_friction_rupees = slippage_rupees + fees_rupees
     pnl_rupees = gross_pnl_rupees - estimated_friction_rupees
 
