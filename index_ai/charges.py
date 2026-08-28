@@ -131,6 +131,48 @@ def round_trip_charges_rupees(
     return round(total, 2)
 
 
+_FUT_HALF_SPREAD_POINTS: dict[str, float] = {
+    "NIFTY": 0.5, "BANKNIFTY": 1.5, "SENSEX": 2.0, "FINNIFTY": 0.75, "MIDCPNIFTY": 0.5
+}
+
+
+def futures_round_trip_rupees(
+    price: float, lot: int, instrument_key: str = "NIFTY", *, rates: ChargeRates | None = None
+) -> float:
+    """Open + close statutory/broker cost for one index-futures lot (no slippage).
+
+    STT on futures is 0.02% on the SELL side only (post 1-Oct-2024); exchange txn
+    ~0.0019%/side; stamp 0.002% on BUY. Much lighter than a multi-leg option
+    spread relative to the rupee move a futures point represents.
+    """
+    r = rates or ChargeRates.load()
+    turnover = max(0.0, float(price)) * max(0, int(lot))
+    if turnover <= 0:
+        return 0.0
+    exch = float(os.getenv("CHARGE_FUT_EXCH_TXN_PCT", "0.0000190"))
+    stt_sell = float(os.getenv("CHARGE_FUT_STT_SELL_PCT", "0.0002"))
+    stamp_buy = float(os.getenv("CHARGE_FUT_STAMP_BUY_PCT", "0.00002"))
+    brokerage = 2 * min(r.brokerage_per_order_rupees, r.brokerage_pct * turnover)
+    exch_txn = 2 * exch * turnover
+    sebi = 2 * r.sebi_pct * turnover
+    stt = stt_sell * turnover
+    stamp = stamp_buy * turnover
+    gst = r.gst_pct * (brokerage + exch_txn + sebi)
+    return round(brokerage + exch_txn + sebi + stt + stamp + gst, 2)
+
+
+def futures_slippage_rupees(lot: int, instrument_key: str) -> float:
+    key = str(instrument_key or "").upper()
+    env = os.getenv(f"SLIPPAGE_FUT_HALF_SPREAD_POINTS_{key}")
+    hs = _FUT_HALF_SPREAD_POINTS.get(key, 1.0)
+    if env:
+        try:
+            hs = max(0.0, float(env))
+        except ValueError:
+            pass
+    return round(hs * max(0, int(lot)) * 2, 2)  # half-spread each side
+
+
 def half_spread_points(instrument_key: str) -> float:
     key = str(instrument_key or "").upper()
     env = os.getenv(f"SLIPPAGE_HALF_SPREAD_POINTS_{key}")
