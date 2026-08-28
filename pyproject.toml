@@ -35,3 +35,8 @@ include = ["index_ai*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["reference"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["reference"]
