@@ -93,6 +93,8 @@ def main() -> None:
                     help="hold credit spreads to a spot stop / session close instead of exiting on signal flip")
     ap.add_argument("--cooldown", type=int, default=0,
                     help="bars to wait after an exit before a new entry (anti-whipsaw)")
+    ap.add_argument("--param", action="append", default=[], metavar="KEY=VAL",
+                    help="strategy-param env override, repeatable (e.g. --param EMA_SLOW_PERIOD=10)")
     ap.add_argument("--all", action="store_true", help="every style x SENSEX too, full history")
     args = ap.parse_args()
 
@@ -100,6 +102,7 @@ def main() -> None:
         os.environ["EXIT_CREDIT_ON_SIGNAL_FLIP"] = "false"
     if args.cooldown:
         os.environ["REENTRY_COOLDOWN_BARS"] = str(args.cooldown)
+    _overrides = dict(p.split("=", 1) for p in args.param if "=" in p)
 
     styles = ["AUTO", "BUY", "CREDIT", "APEX"] if args.all else [s.upper() for s in args.styles]
     instruments = (
@@ -130,6 +133,8 @@ def main() -> None:
         for style in styles:
             os.environ["CANDLE_INTERVAL_MINUTES"] = iv
             os.environ["STRATEGY_STYLE"] = style
+            for k, v in _overrides.items():
+                os.environ[k] = v
             reload_strategy_params()
             for inst_key in instruments:
                 combo = f"{iv}m/{style}/{inst_key}"
