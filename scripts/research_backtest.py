@@ -60,11 +60,32 @@ def _agg(trades: list[dict]) -> dict:
     }
 
 
+def _write_report(summary: dict) -> None:
+    lines = ["# Full-history backtest — every interval × style\n"]
+    lines.append("_Net P&L is after the index_ai.charges friction model. Option P&L is a "
+                 "delta/theta proxy — calibrate against the paper journal before trusting levels._\n")
+    for grp, insts in summary.items():
+        lines.append(f"\n## {grp}\n")
+        lines.append("| Instrument | Span | Trades | Win% | Net ₹ | Gross ₹ | Friction ₹ | Expectancy ₹ | Max DD ₹ |")
+        lines.append("|---|---|--:|--:|--:|--:|--:|--:|--:|")
+        for inst_key, a in insts.items():
+            lines.append(
+                f"| {inst_key} | {a['span']} | {a['trades']} | {a['win_rate_pct']} | "
+                f"{a['net_pnl']:,} | {a['gross_pnl']:,} | {a['friction_paid']:,} | "
+                f"{a['expectancy']:,} | {a['max_drawdown']:,} |"
+            )
+        for inst_key, a in insts.items():
+            if a.get("net_by_year"):
+                yrs = "  ".join(f"{y}: ₹{v:,}" for y, v in a["net_by_year"].items())
+                lines.append(f"\n*{inst_key} by year* — {yrs}")
+    (REPORTS / "backtest_all_styles.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--styles", nargs="*", default=["AUTO", "BUY", "CREDIT"])
     ap.add_argument("--instruments", nargs="*", default=["NIFTY", "BANKNIFTY"])
-    ap.add_argument("--iv", default="1")
+    ap.add_argument("--iv", nargs="*", default=["1"], help="candle interval(s): 1 5 15")
     ap.add_argument("--sessions", type=int, default=0, help="most-recent N sessions (0 = all)")
     ap.add_argument("--stride", type=int, default=3,
                     help="evaluate the router every Nth bar (1 = every bar; 3 default for research)")
@@ -86,68 +107,56 @@ def main() -> None:
     from index_ai.strategies.strategy_params import reload_strategy_params
     import pandas as pd
 
-    app = settings()
+    intervals = [str(x) for x in args.iv]
     combined_trades: list[dict] = []
     summary: dict[str, dict] = {}
 
-    for style in styles:
-        os.environ["STRATEGY_STYLE"] = style
-        reload_strategy_params()
-        for inst_key in instruments:
-            candles = load_cached_range(inst_key, args.iv)
-            if candles.empty:
-                print(f"{style}/{inst_key}: no cached candles — skip")
-                continue
-            if args.sessions:
-                days = [d for d, _ in _sessions(candles)][-args.sessions - 1 :]
-                candles = candles[pd.to_datetime(candles["datetime"]).dt.date.isin(set(days))]
-            inst = get_instrument(inst_key)
-            print(f"{style}/{inst_key}: replaying {len(_sessions(candles))} sessions...", flush=True)
-            trades, sess_summ, sessions = _replay_candles(
-                candles, instrument=inst, app_settings=app, pnl_mode="option_proxy",
-                signal_stride=args.stride,
-            )
-            for t in trades:
-                t["style"] = style
-            combined_trades.extend(trades)
-            a = _agg(trades)
-            a["sessions"] = max(0, len(sessions) - 1)
-            a["span"] = f"{str(sessions[0][0])} .. {str(sessions[-1][0])}" if sessions else ""
-            summary.setdefault(style, {})[inst_key] = a
-            (BACKTESTS / f"{style}_{inst_key}.json").write_text(
-                json.dumps({"summary": a, "trades": trades}, indent=2, default=str), encoding="utf-8"
-            )
-            print(
-                f"  {inst_key}: {a['trades']} trades, {a['win_rate_pct']}% win, "
-                f"net Rs {a['net_pnl']:,} (gross {a['gross_pnl']:,}, friction {a['friction_paid']:,}), "
-                f"maxDD Rs {a['max_drawdown']:,}",
-                flush=True,
-            )
+    for iv in intervals:
+        os.environ["CANDLE_INTERVAL_MINUTES"] = iv
+        for style in styles:
+            os.environ["STRATEGY_STYLE"] = style
+            reload_strategy_params()
+            app = settings()
+            for inst_key in instruments:
+                combo = f"{iv}m/{style}/{inst_key}"
+                candles = load_cached_range(inst_key, iv)
+                if candles.empty:
+                    print(f"{combo}: no cached candles — skip", flush=True)
+                    continue
+                if args.sessions:
+                    days = [d for d, _ in _sessions(candles)][-args.sessions - 1 :]
+                    candles = candles[pd.to_datetime(candles["datetime"]).dt.date.isin(set(days))]
+                inst = get_instrument(inst_key)
+                print(f"{combo}: replaying {len(_sessions(candles))} sessions...", flush=True)
+                trades, _sess, sessions = _replay_candles(
+                    candles, instrument=inst, app_settings=app, pnl_mode="option_proxy",
+                    signal_stride=args.stride,
+                )
+                for t in trades:
+                    t["style"], t["interval"] = style, iv
+                combined_trades.extend(trades)
+                a = _agg(trades)
+                a["sessions"] = max(0, len(sessions) - 1)
+                a["span"] = f"{str(sessions[0][0])} .. {str(sessions[-1][0])}" if sessions else ""
+                summary.setdefault(f"{iv}m·{style}", {})[inst_key] = a
+                (BACKTESTS / f"{iv}m_{style}_{inst_key}.json").write_text(
+                    json.dumps({"summary": a, "trades": trades}, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                (BACKTESTS / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+                (DATASETS / "backtest_trades.jsonl").write_text(
+                    "\n".join(json.dumps(t, default=str) for t in combined_trades), encoding="utf-8"
+                )
+                _write_report(summary)
+                print(
+                    f"  {combo}: {a['trades']} trades, {a['win_rate_pct']}% win, "
+                    f"net Rs {a['net_pnl']:,} (gross {a['gross_pnl']:,}, "
+                    f"friction {a['friction_paid']:,}), maxDD Rs {a['max_drawdown']:,}",
+                    flush=True,
+                )
 
-    (DATASETS / "backtest_trades.jsonl").write_text(
-        "\n".join(json.dumps(t, default=str) for t in combined_trades), encoding="utf-8"
-    )
-
-    lines = ["# Full-history backtest — every style\n"]
-    lines.append("_Net P&L is after the index_ai.charges friction model. Option P&L is a "
-                 "delta/theta proxy — calibrate against the paper journal before trusting levels._\n")
-    for style, insts in summary.items():
-        lines.append(f"\n## {style}\n")
-        lines.append("| Instrument | Span | Trades | Win% | Net ₹ | Gross ₹ | Friction ₹ | Expectancy ₹ | Max DD ₹ |")
-        lines.append("|---|---|--:|--:|--:|--:|--:|--:|--:|")
-        for inst_key, a in insts.items():
-            lines.append(
-                f"| {inst_key} | {a['span']} | {a['trades']} | {a['win_rate_pct']} | "
-                f"{a['net_pnl']:,} | {a['gross_pnl']:,} | {a['friction_paid']:,} | "
-                f"{a['expectancy']:,} | {a['max_drawdown']:,} |"
-            )
-        for inst_key, a in insts.items():
-            if a["net_by_year"]:
-                yrs = "  ".join(f"{y}: ₹{v:,}" for y, v in a["net_by_year"].items())
-                lines.append(f"\n*{inst_key} by year* — {yrs}")
-    (REPORTS / "backtest_all_styles.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    (BACKTESTS / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    print(f"\nWrote research/reports/backtest_all_styles.md and "
+    _write_report(summary)
+    print(f"\nDone. research/reports/backtest_all_styles.md + "
           f"research/datasets/backtest_trades.jsonl ({len(combined_trades)} trades)")
 
 
