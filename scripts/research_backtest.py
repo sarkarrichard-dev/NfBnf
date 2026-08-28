@@ -111,12 +111,15 @@ def main() -> None:
     combined_trades: list[dict] = []
     summary: dict[str, dict] = {}
 
+    # settings() calls load_dotenv(override=True), which would clobber the env
+    # overrides below — so read it once up front and never again in this run.
+    app = settings()
+
     for iv in intervals:
-        os.environ["CANDLE_INTERVAL_MINUTES"] = iv
         for style in styles:
+            os.environ["CANDLE_INTERVAL_MINUTES"] = iv
             os.environ["STRATEGY_STYLE"] = style
             reload_strategy_params()
-            app = settings()
             for inst_key in instruments:
                 combo = f"{iv}m/{style}/{inst_key}"
                 candles = load_cached_range(inst_key, iv)
