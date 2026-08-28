@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 from index_ai.charges import half_spread_points, leg_charge_rupees
 
 _BULLISH = frozenset({"BUY_CALL", "SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"})
@@ -59,55 +57,55 @@ def estimate_option_pnl_rupees(
     lots = max(1, int(lot_size))
     delta = _delta_for_action(act)
     minutes = max(5.0, float(hold_minutes))
+    hours = minutes / 60.0
 
-    # Theta: credit structures earn decay; long premium bleeds.
-    theta_per_hour = entry * 0.00015 * lots * (1.0 if act in _CREDIT_DIR | _CREDIT_RANGE else -1.0)
-    theta_rupees = theta_per_hour * (minutes / 60.0)
-
-    # Assumed credit collected (directional spreads / condor) or debit paid (buy).
-    if act in _CREDIT_DIR | _CREDIT_RANGE:
+    if act in _BUY:
+        # Long premium P&L = change in the option's price, not a sunk debit.
+        #   d(premium) ~= delta*signed_move + 0.5*gamma*move^2 - theta*time
+        direction = 1.0 if act == "BUY_CALL" else -1.0
+        signed_move = move * direction
+        gamma_term = 0.5 * (signed_move**2) / max(entry * 0.004, 1.0)   # convexity, always >= 0
+        theta_decay = entry * 0.00035 * hours                          # weekly-ATM bleed / hr
+        per_unit = signed_move * delta + gamma_term - theta_decay
+        gross_pnl_rupees = per_unit * lots
+        theta_rupees = -theta_decay * lots
+        credit_rupees = -(entry * 0.005 * lots)                        # notional premium, report only
+    else:
+        # Credit structures: keep the collected premium unless the spot moves
+        # against the short strike, then bleed toward the defined max loss.
+        theta_rupees = entry * 0.00015 * lots * hours
         width_factor = 0.35 if act == "SELL_IRON_CONDOR" else 0.55
         credit_rupees = entry * 0.0012 * lots * width_factor
-    elif act in _BUY:
-        credit_rupees = -entry * 0.0018 * lots
-    else:
-        credit_rupees = 0.0
 
-    # Directional loss from adverse spot move (spread-defined risk capped).
-    adverse = 0.0
-    if act in _BULLISH:
-        adverse = max(0.0, -move) * delta
-    elif act in _BEARISH:
-        adverse = max(0.0, move) * delta
-    elif act in _CREDIT_RANGE:
-        adverse = abs(move) * delta * 0.65
+        adverse_move = 0.0
+        if act in _BULLISH:
+            adverse_move = max(0.0, -move)
+        elif act in _BEARISH:
+            adverse_move = max(0.0, move)
+        elif act in _CREDIT_RANGE:
+            adverse_move = abs(move)
+        # Short strike sits ~1% OTM. Inside that it's a slow delta bleed; once the
+        # spot breaches it, losses ramp fast toward the defined wing width.
+        breach = entry * 0.010
+        max_loss_rupees = (entry * (0.006 if act in _CREDIT_DIR else 0.012)) * lots
+        if adverse_move <= breach:
+            adverse_rupees = adverse_move * delta * lots * 1.4
+        else:
+            past_frac = min(1.0, (adverse_move - breach) / max(entry * 0.004, 1.0))  # wings ~0.4%
+            adverse_rupees = min(
+                max_loss_rupees,
+                breach * delta * lots * 1.4 + past_frac * max_loss_rupees,
+            )
 
-    max_loss_pts = entry * 0.004 if act in _CREDIT_DIR else entry * 0.008
-    adverse_pts = min(adverse, max_loss_pts)
-    adverse_rupees = adverse_pts * lots
+        favorable = 0.0
+        if act in _BULLISH:
+            favorable = max(0.0, move) * delta * 0.15
+        elif act in _BEARISH:
+            favorable = max(0.0, -move) * delta * 0.15
 
-    favorable = 0.0
-    if act in _BULLISH:
-        favorable = max(0.0, move) * delta * 0.35
-    elif act in _BEARISH:
-        favorable = max(0.0, -move) * delta * 0.35
-
-    gamma_boost = 0.0
-    if act in _BUY:
-        gamma_boost = move * delta * lots * (1.0 + min(1.0, abs(move) / max(entry * 0.003, 1.0)))
-
-    iv_penalty = 0.0
-    if act in _BUY and iv_pct > 0:
-        iv_penalty = entry * 0.00005 * lots * math.sqrt(minutes / 60.0)
-
-    gross_pnl_rupees = (
-        credit_rupees + theta_rupees + favorable * lots - adverse_rupees + gamma_boost - iv_penalty
-    )
-
-    if act in _CREDIT_DIR | _CREDIT_RANGE:
-        max_profit = credit_rupees + theta_rupees * 1.5
-        max_loss = -(credit_rupees * 1.8 + adverse_rupees)
-        gross_pnl_rupees = max(max_loss, min(max_profit, gross_pnl_rupees))
+        gross_pnl_rupees = credit_rupees + theta_rupees + favorable * lots - adverse_rupees
+        max_profit = credit_rupees + theta_rupees
+        gross_pnl_rupees = max(-max_loss_rupees, min(max_profit, gross_pnl_rupees))
 
     # Historical option quotes are unavailable in this replay, so deduct a
     # transparent friction estimate: real Indian F&O statutory + broker charges
