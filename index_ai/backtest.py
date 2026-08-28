@@ -67,6 +67,8 @@ def _trade_pnl(
     entry_time: str,
     exit_time: str,
     pnl_mode: str,
+    high_spot: float | None = None,
+    low_spot: float | None = None,
 ) -> dict[str, float]:
     if pnl_mode == "option_proxy":
         try:
@@ -82,6 +84,8 @@ def _trade_pnl(
             lot_size=instrument.lot_size,
             hold_minutes=max(5.0, hold),
             instrument_key=instrument.key,
+            high_spot=high_spot,
+            low_spot=low_spot,
         )
         return {
             "proxy_index_points": est["proxy_index_points"],
@@ -139,13 +143,22 @@ def replay_session(
     )
     trades: list[dict[str, Any]] = []
     open_trade: dict[str, Any] | None = None
+    open_bar_i: int = 0
     pending_entry: dict[str, Any] | None = None
     pending_exit_action: str | None = None
 
-    def _close_trade(exit_ts: str, exit_px: float, exit_action: str) -> None:
+    def _close_trade(exit_ts: str, exit_px: float, exit_action: str, exit_bar_i: int) -> None:
         nonlocal open_trade
         if open_trade is None:
             return
+        lo = hi = None
+        try:
+            window = today.iloc[open_bar_i : max(exit_bar_i + 1, open_bar_i + 1)]
+            if not window.empty:
+                lo = float(window["low"].min())
+                hi = float(window["high"].max())
+        except Exception:
+            lo = hi = None
         pnl = _trade_pnl(
             str(open_trade["action"]),
             float(open_trade["entry_price"]),
@@ -154,6 +167,8 @@ def replay_session(
             entry_time=str(open_trade["entry_time"]),
             exit_time=exit_ts,
             pnl_mode=pnl_mode,
+            high_spot=hi,
+            low_spot=lo,
         )
         trades.append(
             {
@@ -175,7 +190,7 @@ def replay_session(
         # Signals are only knowable at a candle close. Execute them at the
         # following candle's open; this removes same-bar look-ahead fills.
         if pending_exit_action and open_trade is not None:
-            _close_trade(str(ts), float(row["open"]), pending_exit_action)
+            _close_trade(str(ts), float(row["open"]), pending_exit_action, i)
             pending_exit_action = None
         if pending_entry is not None and open_trade is None:
             if _bar_time_allowed(ts, bounds):
@@ -185,6 +200,7 @@ def replay_session(
                     "entry_price": float(row["open"]),
                     "execution_model": "next_bar_open",
                 }
+                open_bar_i = i
             pending_entry = None
 
         if stride > 1 and (i - min_bars) % stride != 0:
@@ -254,7 +270,7 @@ def replay_session(
 
     if open_trade is not None:
         last = today.iloc[-1]
-        _close_trade(str(last["datetime"]), float(last["close"]), "SESSION_END")
+        _close_trade(str(last["datetime"]), float(last["close"]), "SESSION_END", len(today) - 1)
 
     return trades
 
