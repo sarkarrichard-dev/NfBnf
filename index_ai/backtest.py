@@ -207,6 +207,17 @@ def replay_session(
                     "confidence": signal.confidence,
                     "cpr_regime": regime.day_bias,
                     "reason": signal.reason,
+                    # snapshot signal state for downstream ML seeding
+                    "signal_features": {
+                        "price": float(getattr(signal, "price", 0) or 0),
+                        "tc": float(getattr(signal, "tc", 0) or 0),
+                        "bc": float(getattr(signal, "bc", 0) or 0),
+                        "ema_fast": float(getattr(signal, "ema_fast", 0) or 0),
+                        "ema_slow": float(getattr(signal, "ema_slow", 0) or 0),
+                        "cpr_width_pct": float(getattr(signal, "cpr_width_pct", 0) or 0),
+                        "volume_ratio": float(getattr(signal, "volume_ratio", 1) or 1),
+                        "breakout_tag": str(getattr(signal, "breakout_tag", "") or ""),
+                    },
                 }
             continue
 

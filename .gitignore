@@ -24,3 +24,6 @@ memory/
 *.csv
 *.parquet
 *.xlsx
+
+# Research / backtest / ML-seed outputs (regenerable)
+research/
