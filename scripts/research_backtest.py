@@ -102,7 +102,7 @@ def main() -> None:
 
     from index_ai.backtest import _replay_candles, _sessions
     from index_ai.candle_cache import load_cached_range
-    from index_ai.config import settings
+    from index_ai.config import freeze_env, settings
     from index_ai.instruments import get_instrument
     from index_ai.strategies.strategy_params import reload_strategy_params
     import pandas as pd
@@ -111,9 +111,11 @@ def main() -> None:
     combined_trades: list[dict] = []
     summary: dict[str, dict] = {}
 
-    # settings() calls load_dotenv(override=True), which would clobber the env
-    # overrides below — so read it once up front and never again in this run.
+    # settings() / candle_interval_minutes() call load_dotenv(override=True), which
+    # would clobber the STRATEGY_STYLE / CANDLE_INTERVAL_MINUTES overrides below
+    # mid-replay. Read settings once, then pin the environment.
     app = settings()
+    freeze_env()
 
     for iv in intervals:
         for style in styles:

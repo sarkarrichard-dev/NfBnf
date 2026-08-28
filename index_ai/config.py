@@ -77,8 +77,23 @@ def _float(name: str, default: float) -> float:
         return default
 
 
+_ENV_FROZEN = False
+
+
+def freeze_env() -> None:
+    """Stop _load_env() from reloading .env, pinning the current os.environ.
+
+    ``_load_env()`` runs ``load_dotenv(override=True)``, which silently reverts any
+    env var set programmatically (e.g. STRATEGY_STYLE / CANDLE_INTERVAL_MINUTES in
+    the research backtest runners) back to the .env value. Scripts that drive
+    those vars call this once, after reading ``settings()``.
+    """
+    global _ENV_FROZEN
+    _ENV_FROZEN = True
+
+
 def _load_env() -> None:
-    if os.getenv("PYTEST_CURRENT_TEST"):
+    if _ENV_FROZEN or os.getenv("PYTEST_CURRENT_TEST"):
         return
     load_dotenv(ENV_PATH, override=True)
 
