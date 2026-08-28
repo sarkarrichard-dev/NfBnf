@@ -23,9 +23,12 @@ class FuturesConfig:
     trend_min_bars: int = 30       # total 15m bars (prev day + today) before the trend read is trusted
 
     # --- 5-minute entry trigger ---
+    entry_mode: str = "ema_reclaim"   # "ema_reclaim" | "orb"
     entry_ema: int = 9
     entry_min_bars: int = 12
-    max_extension_pct: float = 0.30  # skip entry if 5m close is >this% above/below the 5m EMA
+    max_extension_pct: float = 0.30    # skip entry if 5m close is >this% above/below the 5m EMA
+    orb_minutes: int = 45             # opening-range window for entry_mode="orb"
+    max_trades_per_session: int = 0    # 0 = unlimited; 1-2 = only the best setup(s) of the day
 
     # --- risk, index points ---
     initial_stop_pts: float = 40.0

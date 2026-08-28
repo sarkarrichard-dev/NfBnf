@@ -38,7 +38,16 @@ def replay_futures_session(
     pos: dict[str, Any] | None = None
     pending: dict[str, Any] | None = None
     day_loss_pts = 0.0
+    n_entries = 0
     t5 = pd.to_datetime(bars5_today["datetime"])
+
+    # opening range (for entry_mode="orb")
+    open_ts = t5.iloc[0] if len(t5) else None
+    orb_mask = (
+        (t5 <= open_ts + pd.Timedelta(minutes=cfg.orb_minutes)) if open_ts is not None else t5 == t5
+    )
+    orb_hi = float(bars5_today.loc[orb_mask.to_numpy(), "high"].max()) if orb_mask.any() else 0.0
+    orb_lo = float(bars5_today.loc[orb_mask.to_numpy(), "low"].min()) if orb_mask.any() else 0.0
 
     # 15m trend, computed once: carry indicators across yesterday->today, then
     # read the direction of the last fully-closed 15m bar for each 5m timestamp.
@@ -59,9 +68,18 @@ def replay_futures_session(
     ema5 = bars5_today["close"].ewm(span=cfg.entry_ema, adjust=False).mean().to_numpy()
     close5 = bars5_today["close"].to_numpy()
 
+    high5 = bars5_today["high"].to_numpy()
+    low5 = bars5_today["low"].to_numpy()
+
     def _entry_fires(i: int, direction: int) -> bool:
         if i < 1:
             return False
+        if cfg.entry_mode == "orb":
+            if orb_hi <= 0:
+                return False
+            if direction == LONG:
+                return close5[i - 1] <= orb_hi < close5[i] and high5[i] > orb_hi
+            return close5[i - 1] >= orb_lo > close5[i] and low5[i] < orb_lo
         pe, ce, pc, cc = ema5[i - 1], ema5[i], close5[i - 1], close5[i]
         if abs(cc - ce) / max(ce, 1.0) * 100.0 > cfg.max_extension_pct:
             return False
@@ -108,6 +126,7 @@ def replay_futures_session(
             pos = {"dir": pending["dir"], "entry": o, "entry_ts": ts,
                    "peak": o, "stop": o - pending["dir"] * cfg.initial_stop_pts, "armed": False}
             pending = None
+            n_entries += 1
         elif pending is not None and pending.get("exit"):
             _close(ts, o, pending["reason"])
             pending = None
@@ -143,7 +162,8 @@ def replay_futures_session(
             continue
 
         in_window = cfg.entry_start <= ts.time() <= cfg.entry_end
-        if direction == FLAT or not in_window or day_loss_pts >= cfg.daily_stop_pts:
+        capped = cfg.max_trades_per_session and n_entries >= cfg.max_trades_per_session
+        if direction == FLAT or not in_window or capped or day_loss_pts >= cfg.daily_stop_pts:
             continue
         if _entry_fires(i, direction):
             pending = {"dir": direction}
