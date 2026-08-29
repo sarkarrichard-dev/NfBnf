@@ -842,6 +842,16 @@ async def reconcile_api(repair: bool = Query(False)) -> dict[str, Any]:
     )
 
 
+@app.get("/api/daily-report", include_in_schema=False)
+async def daily_report_api(run: bool = Query(False)) -> dict[str, Any]:
+    """Latest end-of-day report. run=true regenerates it now instead of waiting."""
+    from index_ai.daily_ops import latest_report, run_eod
+
+    if run:
+        return await asyncio.to_thread(run_eod)
+    return latest_report() or {"error": "no report yet — generated after square-off each session"}
+
+
 @app.get("/api/market-context", include_in_schema=False)
 async def market_context_api(refresh: bool = Query(False)) -> dict[str, Any]:
     """FII/DII/Pro/Client positioning, India VIX, IV term structure, OI walls, pinning."""

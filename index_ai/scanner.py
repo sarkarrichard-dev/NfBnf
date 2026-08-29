@@ -79,6 +79,8 @@ class ScannerState:
     pre_open_brief: dict[str, Any] | None = None
     last_reconcile: dict[str, Any] | None = None
     market_context: dict[str, Any] | None = None
+    last_spread_sample: dict[str, Any] | None = None
+    last_eod: dict[str, Any] | None = None
     events: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=80))
 
 
@@ -133,6 +135,8 @@ def scanner_status() -> dict[str, Any]:
         "index_scan_concurrency": INDEX_SCAN_CONCURRENCY,
         "last_reconcile": _state.last_reconcile,
         "market_context": _state.market_context,
+        "last_spread_sample": _state.last_spread_sample,
+        "last_eod": _state.last_eod,
         "events": list(_state.events),
     }
 
@@ -315,6 +319,29 @@ async def _run_options_cpr_paper(client: DhanClient) -> None:
     except Exception as exc:  # never let this break the options scanner
         _note_auth_failure(exc)
         _log("options_cpr_paper_error", error=_friendly_error(exc))
+
+
+async def _sample_spreads(client: DhanClient) -> None:
+    """Measure the live option book — runs whether or not any lane is trading."""
+    from index_ai.daily_ops import sample_spreads
+
+    out = await asyncio.to_thread(sample_spreads, client)
+    if out.get("sampled"):
+        _state.last_spread_sample = out
+
+
+async def _run_eod_if_due() -> None:
+    """After square-off, once a day: retrain the brain and write the session report."""
+    from index_ai.daily_ops import eod_due, run_eod
+
+    if not eod_due():
+        return
+    report = await asyncio.to_thread(run_eod)
+    _state.last_eod = {"date": report.get("date"),
+                       "brain_trained": bool((report.get("brain") or {}).get("trained"))}
+    _log("eod_report", date=report.get("date"),
+         brain=(report.get("brain") or {}).get("reason")
+         or ("trained" if (report.get("brain") or {}).get("trained") else "not trained"))
 
 
 async def _run_reconcile(client: DhanClient, cfg: AppSettings) -> None:
@@ -655,6 +682,8 @@ async def _run_loop() -> None:
                 ("futures_paper", lambda: _run_futures_paper(client)),
                 ("options_cpr_paper", lambda: _run_options_cpr_paper(client)),
                 ("reconcile", lambda: _run_reconcile(client, cfg)),
+                ("spread_sampling", lambda: _sample_spreads(client)),
+                ("eod_report", _run_eod_if_due),
             ):
                 if not _state.running:
                     break
