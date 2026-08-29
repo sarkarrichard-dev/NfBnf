@@ -148,6 +148,29 @@ def calibrated_half_spread(instrument: str) -> tuple[float, str]:
     return half_spread_points(key), "default (unmeasured)"
 
 
+def bucket_half_spreads(instrument: str) -> tuple[float, float]:
+    """(near-ATM, far-OTM wing) half-spread in points.
+
+    Measured separately because they differ materially and not in the direction
+    intuition suggests — live NIFTY quotes show ~0.20pt near-ATM against ~0.60pt
+    on the wing. An env override sets both; otherwise each bucket uses its own
+    observed median once there are samples, falling back to the overall number.
+    """
+    key = str(instrument).upper()
+    env = os.getenv(f"SLIPPAGE_HALF_SPREAD_POINTS_{key}")
+    if env:
+        try:
+            v = max(0.0, float(env))
+            return v, v
+        except ValueError:
+            pass
+    base, _src = calibrated_half_spread(key)
+    s = summary(key)
+    near = (s.get("near") or {}).get("median_pts") if s.get("ready") else None
+    wing = (s.get("wing") or {}).get("median_pts") if s.get("ready") else None
+    return float(near if near is not None else base), float(wing if wing is not None else base)
+
+
 def status() -> dict[str, Any]:
     out = {"min_samples": MIN_SAMPLES, "instruments": {}}
     for key in ("NIFTY", "BANKNIFTY", "SENSEX"):

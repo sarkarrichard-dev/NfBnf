@@ -22,7 +22,7 @@ from typing import Any
 
 import pandas as pd
 
-from index_ai.charges import half_spread_points, leg_charge_rupees
+from index_ai.charges import leg_charge_rupees
 from index_ai.strategies.options_cpr.backtest import _align15
 from index_ai.strategies.options_cpr.config import OptionsCprConfig, config_for
 from index_ai.strategies.options_cpr.engine import (
@@ -82,14 +82,23 @@ def _build_spread(
 
 
 def _sell_friction(short_px: float, long_px: float, lot: int, cfg: OptionsCprConfig) -> float:
-    hs = half_spread_points(cfg.key)
+    """Round-trip cost of the structure: real charges per leg + bid-ask on each leg.
+
+    Near-ATM and far-OTM legs are priced from *separate* measured buckets. Live
+    quotes show the wing is the **wider** book in absolute points (NIFTY: ~0.20pt
+    near vs ~0.60pt wing), which is the opposite of the intuition that a cheap
+    option must be cheap to cross — the wing costs pennies but you give up a much
+    larger fraction of it on every fill.
+    """
+    from index_ai.market_context.spread_calib import bucket_half_spreads
+
+    near_hs, wing_hs = bucket_half_spreads(cfg.key)
     f = (
         leg_charge_rupees(max(short_px, 2.0), lot, "SELL", exchange=cfg.exchange)
         + leg_charge_rupees(max(short_px, 2.0), lot, "BUY", exchange=cfg.exchange)
-        + hs * lot * 2
+        + near_hs * lot * 2
     )
-    if long_px > 0:  # hedged — the far-OTM wing is cheap and trades a tighter book
-        wing_hs = hs * min(1.0, max(0.2, long_px / max(short_px, 1.0)))
+    if long_px > 0:
         f += (
             leg_charge_rupees(max(long_px, 1.0), lot, "BUY", exchange=cfg.exchange)
             + leg_charge_rupees(max(long_px, 1.0), lot, "SELL", exchange=cfg.exchange)
