@@ -11,12 +11,16 @@ IST = ZoneInfo("Asia/Kolkata")
 # NSE index F&O regular session (IST)
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
-# Algo window: analyse 9:15–9:30 (OI, volume, CPR, EMA), entries 9:30–15:15, flat by 15:15
-TRADING_ENTRIES_START = time(9, 30)
-TRADING_ENTRIES_END = time(15, 15)
-SQUARE_OFF_TIME = time(15, 15)
-PRE_OPEN_ANALYSIS_START = time(9, 15)
-PRE_OPEN_ANALYSIS_END = time(9, 30)
+# Algo window: analyse from 9:00 (participant OI, VIX, CPR levels, pre-open auction),
+# entries 9:20–15:00, hard square-off 15:10.
+# 9:00–9:15 has no live index candles — the exchange pre-open auction runs then — so
+# analysis in that slice uses prior-session data (CPR, participant OI, VIX) plus the
+# auction print. Live-candle work only becomes possible from 9:15.
+TRADING_ENTRIES_START = time(9, 20)
+TRADING_ENTRIES_END = time(15, 0)
+SQUARE_OFF_TIME = time(15, 10)
+PRE_OPEN_ANALYSIS_START = time(9, 0)
+PRE_OPEN_ANALYSIS_END = time(9, 20)
 
 
 def _parse_time_env(name: str, default: time) -> time:

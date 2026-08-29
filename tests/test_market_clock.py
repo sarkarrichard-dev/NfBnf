@@ -63,34 +63,35 @@ def test_pnl_estimate_buy() -> None:
 
 
 def test_pre_open_analysis_window() -> None:
-    dt = datetime(2026, 6, 2, 9, 25, tzinfo=IST)
+    # analysis runs 9:00-9:20 (participant OI, VIX, CPR levels, pre-open auction)
+    dt = datetime(2026, 6, 2, 9, 5, tzinfo=IST)
     assert is_pre_open_analysis_window(dt) is True
     assert is_trading_entries_allowed(dt) is False
 
 
-def test_first_entry_after_930() -> None:
-    dt = datetime(2026, 6, 2, 9, 29, 59, tzinfo=IST)
+def test_first_entry_at_920() -> None:
+    dt = datetime(2026, 6, 2, 9, 19, 59, tzinfo=IST)
     assert is_trading_entries_allowed(dt) is False
-    dt = datetime(2026, 6, 2, 9, 30, tzinfo=IST)
+    dt = datetime(2026, 6, 2, 9, 20, tzinfo=IST)
     assert is_trading_entries_allowed(dt) is True
 
 
-def test_entries_closed_at_315() -> None:
-    dt = datetime(2026, 6, 2, 15, 14, tzinfo=IST)
+def test_entries_closed_at_300() -> None:
+    dt = datetime(2026, 6, 2, 14, 59, tzinfo=IST)
     assert is_trading_entries_allowed(dt) is True
-    dt = datetime(2026, 6, 2, 15, 15, tzinfo=IST)
+    dt = datetime(2026, 6, 2, 15, 0, tzinfo=IST)
     assert is_trading_entries_allowed(dt) is False
 
 
-def test_square_off_from_315() -> None:
-    dt = datetime(2026, 6, 2, 15, 14, tzinfo=IST)
+def test_square_off_from_310() -> None:
+    dt = datetime(2026, 6, 2, 15, 9, tzinfo=IST)
     assert is_square_off_window(dt) is False
-    dt = datetime(2026, 6, 2, 15, 15, tzinfo=IST)
+    dt = datetime(2026, 6, 2, 15, 10, tzinfo=IST)
     assert is_square_off_window(dt) is True
 
 
 def test_market_status_pre_open_phase() -> None:
-    dt = datetime(2026, 6, 2, 9, 25, tzinfo=IST)
+    dt = datetime(2026, 6, 2, 9, 16, tzinfo=IST)
     status = market_status(dt)
     assert status["phase"] == "pre_open_analysis"
     assert status["entries_allowed"] is False

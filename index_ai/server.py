@@ -842,6 +842,22 @@ async def reconcile_api(repair: bool = Query(False)) -> dict[str, Any]:
     )
 
 
+@app.get("/api/market-context", include_in_schema=False)
+async def market_context_api(refresh: bool = Query(False)) -> dict[str, Any]:
+    """FII/DII/Pro/Client positioning, India VIX, IV term structure, OI walls, pinning."""
+    from index_ai.market_context import context as mkt
+
+    return await asyncio.to_thread(mkt.load_for_session, refresh=refresh)
+
+
+@app.get("/api/market-context/spreads", include_in_schema=False)
+async def spread_calibration_api() -> dict[str, Any]:
+    """Observed option bid-ask half-spread per index vs the assumed default."""
+    from index_ai.market_context.spread_calib import status
+
+    return status()
+
+
 @app.get("/api/brain/status", include_in_schema=False)
 async def brain_status_api() -> dict[str, Any]:
     """Unified ML brain: dataset size, walk-forward verdict, whether the gate is armed."""

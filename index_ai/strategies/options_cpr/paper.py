@@ -22,7 +22,7 @@ from typing import Any
 import pandas as pd
 
 from index_ai.candle_cache import to_ist_session_frame
-from index_ai.charges import half_spread_points, leg_charge_breakdown
+from index_ai.charges import leg_charge_breakdown
 from index_ai.config import MEMORY_DIR
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.instruments import get_instrument
@@ -114,29 +114,76 @@ def _day_counters(state: dict[str, Any], key: str, today: str) -> dict[str, Any]
     return c
 
 
-def _brain_check(trade_like: dict[str, Any], lane: str, df, today5, prev5, cpr) -> dict[str, Any]:
-    """Regime + learned win-probability gate. Never raises — a broken brain must
-    not stop the lane, so any failure falls open with the reason recorded."""
+def _brain_check(trade_like: dict[str, Any], lane: str, df, today5, prev5, cpr,
+                 *, key: str = "") -> dict[str, Any]:
+    """Regime + market context + learned win-probability gate.
+
+    Never raises — a broken brain or a dead NSE endpoint must not stop the lane,
+    so any failure falls open with the reason recorded.
+    """
     try:
         from index_ai.brain.gate import check
         from index_ai.brain.regime import classify
+        from index_ai.market_context import context as mkt
 
+        ctx = mkt.load_for_session()
+        cond = ctx.get("conditions") or {}
+        # hard, non-model condition: never sell premium into a stressed vol regime
+        if lane == "sell" and cond.get("allow_selling") is False:
+            return {"allowed": False, "reason": "; ".join(cond.get("blocks") or ["context block"]),
+                    "win_probability": None, "context": cond}
+        feats = mkt.features(ctx, key)
+        trade_like = {**trade_like, "features": {**(trade_like.get("features") or {}), **feats}}
         read = classify(today5, prev5, cpr_width_pct=cpr.width_pct)
-        return check(trade_like, lane=lane, regime=read)
+        out = check(trade_like, lane=lane, regime=read)
+        out["context_warnings"] = cond.get("warnings") or []
+        return out
     except Exception as exc:
         return {"allowed": True, "reason": f"brain unavailable: {exc}", "win_probability": None}
 
 
-def _chain_book(client: Any, key: str):
-    """Live ChainBook when the market is open and a chain is reachable, else None."""
+def _chain_book(client: Any, key: str, *, spot: float | None = None):
+    """Live ChainBook when the market is open and a chain is reachable, else None.
+
+    Also samples the observed bid-ask so ``spread_calib`` can replace the guessed
+    half-spread with a measured one, and records an OI snapshot for intraday flow.
+    Both are best-effort: sampling must never break a trading tick.
+    """
     if not is_market_open():
         return None
     try:
         from index_ai.strategies.options_cpr.live_chain import ChainBook
 
-        return ChainBook.fetch(client, get_instrument(key))
+        book = ChainBook.fetch(client, get_instrument(key))
     except Exception:
         return None
+    if book is not None and spot:
+        _sample_market(book, key, float(spot))
+    return book
+
+
+def _sample_market(book: Any, key: str, spot: float) -> None:
+    """Record spread samples + an OI snapshot from this chain fetch. Never raises."""
+    try:
+        from index_ai.market_context import oi_flow
+        from index_ai.market_context.spread_calib import observe
+
+        cfg = _cfg(key)
+        step = cfg.strike_step
+        atm = round(spot / step) * step
+        # near-ATM (short leg / bought option) and far-OTM (hedge wing) behave
+        # very differently, so sample both buckets
+        wing = round(spot * (1 - cfg.sell_wing_pct) / step) * step
+        observe(book, key, spot, strikes=[
+            (atm, True), (atm, False),
+            (atm + step, True), (atm - step, False),
+            (wing, False), (round(spot * (1 + cfg.sell_wing_pct) / step) * step, True),
+        ])
+        rows = getattr(book, "_rows", None)
+        if rows:
+            oi_flow.record_snapshot(key, getattr(book, "expiry", ""), rows, spot)
+    except Exception:
+        pass
 
 
 def _mark_leg(book, strike: float, is_call: bool, cfg: OptionsCprConfig,
@@ -170,7 +217,10 @@ def _leg_friction(open_prem: float, close_prem: float, qty: int, cfg: OptionsCpr
     close_b = leg_charge_breakdown(close_prem, qty, close_side, exchange=cfg.exchange)
     total = open_b["total"] + close_b["total"]
     if model != "dhan_ltp":
-        total += half_spread_points(cfg.key) * max(1, qty) * 2
+        # proxy fill: add the spread explicitly, measured where we have samples
+        from index_ai.market_context.spread_calib import calibrated_half_spread
+
+        total += calibrated_half_spread(cfg.key)[0] * max(1, qty) * 2
     breakdown = {k: round(open_b[k] + close_b[k], 2) for k in open_b}
     return round(total, 2), breakdown
 
@@ -252,7 +302,7 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     inst_state = state.setdefault(key, {"position": None})
     ctr = _day_counters(state, key, str(today))
     pos = inst_state.get("position")
-    book = _chain_book(client, key)
+    book = _chain_book(client, key, spot=spot)
     out: dict[str, Any] = {"instrument": key, "event": "none"}
 
     if pos:
@@ -355,7 +405,7 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         "expiry": getattr(book, "expiry", None),
         "features": entry_features(df, i, cpr, prev5),
     }
-    verdict = _brain_check(pos | {"instrument": key, "lane": "buy"}, "buy", df, today5, prev5, cpr)
+    verdict = _brain_check(pos | {"instrument": key, "lane": "buy"}, "buy", df, today5, prev5, cpr, key=key)
     if not verdict["allowed"]:
         out["reason"] = f"brain: {verdict['reason']}"
         return out
@@ -429,7 +479,7 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
         ctr = {"date": str(today), "trades": 0, "consec_losses": 0, "daily_pnl": 0.0, "kill": False}
         inst["sell_day"] = ctr
     pos = inst.get("sell_position")
-    book = _chain_book(client, key)
+    book = _chain_book(client, key, spot=spot)
     out: dict[str, Any] = {"instrument": key, "lane": "sell", "event": "none"}
 
     if pos:
@@ -533,7 +583,7 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
     }
     verdict = _brain_check(
         sell_pos | {"instrument": key, "lane": "sell", "long_strike": sp["long_k"]},
-        "sell", df, today5, prev5, cpr,
+        "sell", df, today5, prev5, cpr, key=key,
     )
     if not verdict["allowed"]:
         out["reason"] = f"brain: {verdict['reason']}"

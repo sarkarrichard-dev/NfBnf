@@ -78,6 +78,7 @@ class ScannerState:
     pre_open_brief_date: str | None = None
     pre_open_brief: dict[str, Any] | None = None
     last_reconcile: dict[str, Any] | None = None
+    market_context: dict[str, Any] | None = None
     events: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=80))
 
 
@@ -131,6 +132,7 @@ def scanner_status() -> dict[str, Any]:
         "health": _health.as_dict(),
         "index_scan_concurrency": INDEX_SCAN_CONCURRENCY,
         "last_reconcile": _state.last_reconcile,
+        "market_context": _state.market_context,
         "events": list(_state.events),
     }
 
@@ -391,10 +393,30 @@ async def _square_off_open(client: DhanClient, cfg: AppSettings) -> None:
         await asyncio.sleep(TRAIL_INDEX_GAP_SECONDS)
 
 
+async def _run_market_context_if_due() -> None:
+    """From 09:00 IST — build the day's external context once per session.
+
+    Runs before the first entry (09:20) and needs no broker data, so it works in
+    the 09:00-09:15 auction window where there are no live candles yet: NSE
+    participant OI (prior session), India VIX, and the derived trading conditions.
+    """
+    from index_ai.market_context import context as mkt
+
+    cur = mkt.latest()
+    if cur and cur.get("session") == today_ist_date():
+        return
+    ctx = await asyncio.to_thread(mkt.build, refresh=True)
+    _state.market_context = ctx
+    _log("market_context", sources=ctx.get("sources"), notes=ctx.get("notes"),
+         blocks=(ctx.get("conditions") or {}).get("blocks"))
+
+
 async def _run_pre_open_brief_if_due(client: DhanClient, cfg: AppSettings) -> None:
-    """9:15–9:30 IST — refresh OI, spot volume, CPR, and EMA before first entry at 9:30."""
+    """9:00–9:20 IST — context, OI, spot volume, CPR and EMA before first entry at 9:20."""
     if not is_pre_open_analysis_window():
         return
+
+    await _run_market_context_if_due()
 
     from index_ai.pre_open_brief import build_pre_open_brief
 
@@ -625,6 +647,7 @@ async def _run_loop() -> None:
             # Stages are isolated: one failing step no longer aborts the cycle,
             # so a flaky lane can't stop trailing stops from being checked.
             for name, factory in (
+                ("market_context", _run_market_context_if_due),
                 ("live_order_sync", _sync_live),
                 ("pre_open_brief", lambda: _run_pre_open_brief_if_due(client, cfg)),
                 ("stale_positions", lambda: _close_stale_session_positions(client, cfg)),
