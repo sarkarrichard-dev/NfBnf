@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import os
 from typing import Any
 
@@ -69,8 +70,17 @@ def set_lots_per_trade(lots: int) -> dict[str, Any]:
     return lots_settings_summary()
 
 
+# read-modify-write: two fast clicks on "+" both read the same value and the
+# second write discards the first, so the counter and the real lot size diverge.
+# On a trading system that means orders sized differently from what is displayed.
+_LOTS_LOCK = threading.Lock()
+
+
 def adjust_lots_per_trade(delta: int) -> dict[str, Any]:
-    return set_lots_per_trade(get_lots_per_trade() + int(delta))
+    """Relative change, serialized. Prefer set_lots_per_trade() from a UI — an
+    absolute target is idempotent and cannot drift from what the user sees."""
+    with _LOTS_LOCK:
+        return set_lots_per_trade(get_lots_per_trade() + int(delta))
 
 
 def order_quantity(instrument: IndexInstrument) -> int:

@@ -34,6 +34,9 @@ const LearningPanel = lazy(() =>
 const BrainPanel = lazy(() =>
   import('./components/BrainPanel').then((m) => ({ default: m.BrainPanel })),
 )
+const FeaturesPanel = lazy(() =>
+  import('./components/FeaturesPanel').then((m) => ({ default: m.FeaturesPanel })),
+)
 const LanesPanel = lazy(() =>
   import('./components/LanesPanel').then((m) => ({ default: m.LanesPanel })),
 )
@@ -158,6 +161,7 @@ function App() {
               liveSummary={dashboard.analytics?.live_summary}
               paperSummary={dashboard.analytics?.paper_summary}
               gates={gates}
+              liveArmed={status.data?.live_allowed}
             />
           </div>
           <div className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
@@ -221,6 +225,11 @@ function App() {
             <CollapsibleSection title="Dhan login & token" defaultOpen>
               <Suspense fallback={<PanelFallback />}>
                 <DhanAuthPanel />
+              </Suspense>
+            </CollapsibleSection>
+            <CollapsibleSection title="Feature toggles" defaultOpen>
+              <Suspense fallback={<PanelFallback />}>
+                <FeaturesPanel />
               </Suspense>
             </CollapsibleSection>
             <CollapsibleSection title="Strategy tuning (.env)" defaultOpen>

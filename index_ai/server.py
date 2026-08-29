@@ -20,7 +20,18 @@ from fastapi.staticfiles import StaticFiles
 
 from index_ai.analytics import build_analytics
 from index_ai.reports import build_report, export_filename, report_to_csv
-from index_ai.config import DASHBOARD_DIR, MEMORY_DIR, candle_interval_minutes, set_trading_mode, settings
+from index_ai.config import (
+    ARM_LIVE_PHRASE,
+    DASHBOARD_DIR,
+    MEMORY_DIR,
+    arm_live_trading,
+    candle_interval_minutes,
+    disarm_live_trading,
+    feature_flags,
+    set_feature_flag,
+    set_trading_mode,
+    settings,
+)
 from index_ai.risk import kill_switch_state
 from index_ai.risk_policy import HARDCODED_RISK, policy_summary
 from index_ai.strategies.strategy_params import strategy_tuning_summary
@@ -153,6 +164,27 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     tick_stop = asyncio.Event()
     tick_task = asyncio.create_task(_tick_feed_loop())
+
+    async def _warm() -> None:
+        """Spin up the thread pool and touch the modules the first UI action needs.
+
+        Without this the first mode switch or lot change pays ~2.5s of pool
+        startup and lazy imports, which reads as a hung button on a fresh server.
+        """
+        def _touch() -> None:
+            from index_ai.learning import open_trades_for_mode
+            from index_ai.trade_lots import lots_settings_summary
+
+            settings()
+            lots_settings_summary()
+            open_trades_for_mode("PAPER")
+
+        try:
+            await asyncio.to_thread(_touch)
+        except Exception:
+            pass
+
+    warm_task = asyncio.create_task(_warm())
     if cfg.dhan.ready:
         try:
             from index_ai.candle_cache import ensure_active_interval_cache, sync_all_configured
@@ -169,7 +201,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     boot_scanner_task.cancel()
     cache_task.cancel()
     tick_task.cancel()
-    for task in (renew_task, boot_scanner_task, cache_task, tick_task):
+    warm_task.cancel()
+    for task in (renew_task, boot_scanner_task, cache_task, tick_task, warm_task):
         try:
             await task
         except asyncio.CancelledError:
@@ -294,9 +327,9 @@ def _trading_gates(cfg: Any) -> dict[str, Any]:
             {
                 "title": "Live flag off",
                 "detail": (
-                    "ALLOW_LIVE_TRADING=false — no broker orders are sent. Note: switching this "
-                    "panel to Live sets BOTH TRADING_MODE=LIVE and ALLOW_LIVE_TRADING=true, so "
-                    "that one click arms real orders. There is no second manual confirmation."
+                    "ALLOW_LIVE_TRADING=false — no broker orders are sent. Switching to Live "
+                    "sets the mode only; real orders stay blocked until you arm them with the "
+                    'confirmation phrase. Switching back to Paper always disarms.'
                 ),
             }
         )
@@ -629,7 +662,7 @@ async def update_lots_settings(payload: dict[str, Any] = Body(default_factory=di
         # traded, so rewriting it would falsify the journal
         out["reconcile"] = reconcile_all_trade_lots(open_only=True)
         out["policy"] = policy_summary()
-        return out
+        return out  # carries lots_per_trade so the client reconciles to the truth
 
     return await asyncio.to_thread(_apply)
 
@@ -874,6 +907,47 @@ async def reconcile_api(repair: bool = Query(False)) -> dict[str, Any]:
     return await asyncio.to_thread(
         reconcile, client, mode=cfg.risk.trading_mode, repair=repair or None
     )
+
+
+@app.get("/api/settings/features", include_in_schema=False)
+async def get_features() -> dict[str, Any]:
+    """Feature flags the app can toggle for itself — no .env editing needed."""
+    return {"flags": feature_flags()}
+
+
+@app.post("/api/settings/features", include_in_schema=False)
+async def update_feature(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    flag, on = str(payload.get("flag") or ""), bool(payload.get("enabled"))
+    try:
+        result = await asyncio.to_thread(set_feature_flag, flag, on)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result["restart_required"] = flag.upper() == "ENABLE_TICK_FEED"
+    result["flags"] = feature_flags()
+    return result
+
+
+@app.post("/api/trading/arm-live", include_in_schema=False)
+async def arm_live(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Arm or disarm real broker orders.
+
+    Arming needs the exact confirmation phrase; disarming never does — the safe
+    direction should always be one click.
+    """
+    if payload.get("disarm"):
+        await asyncio.to_thread(disarm_live_trading)
+    else:
+        try:
+            await asyncio.to_thread(arm_live_trading, str(payload.get("confirm") or ""))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cfg = settings()
+    return {
+        "live_orders_enabled": cfg.risk.allow_live_trading,
+        "trading_mode": cfg.risk.trading_mode,
+        "confirm_phrase": ARM_LIVE_PHRASE,
+        "trading_gates": _trading_gates(cfg),
+    }
 
 
 @app.get("/api/tick-feed", include_in_schema=False)
