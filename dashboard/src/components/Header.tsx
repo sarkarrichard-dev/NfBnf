@@ -59,7 +59,7 @@ export const Header = memo(function Header({ tradingMode, market, dhanReady }: P
           Index Options AI
         </h1>
         <p className="mt-1 text-[13px] text-slate-500">
-          {phaseLabel} · CPR + EMA + OI · NIFTY &amp; Bank Nifty FNO
+          {phaseLabel} · CPR + EMA + OI · NIFTY · BANKNIFTY · SENSEX
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">

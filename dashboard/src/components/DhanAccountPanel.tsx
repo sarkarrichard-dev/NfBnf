@@ -3,6 +3,7 @@ import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { money, pnlClass } from '../lib/pnl'
 import { cn } from '../lib/cn'
+import { Button } from './ui/Button'
 
 type DhanPosition = {
   leg_label?: string
@@ -85,16 +86,14 @@ export function DhanAccountPanel({ tradingMode }: Props) {
           Real Dhan funds &amp; fills (broker)
           {data?.updated_at_ist ? ` · ${data.updated_at_ist}` : ''}
         </p>
-        <button
-          type="button"
-          onClick={() => refreshWithSync()}
-          className="inline-flex items-center gap-1 rounded border border-slate-700 px-2 py-1 text-xs text-slate-300"
+        <Button
+          onClick={() => refreshWithSync()} className="inline-flex items-center gap-1"
         >
           <span className={isFetching ? 'inline-block animate-spin' : ''} aria-hidden>
             ↻
           </span>
           Refresh
-        </button>
+        </Button>
       </div>
 
       {errMsg ? (

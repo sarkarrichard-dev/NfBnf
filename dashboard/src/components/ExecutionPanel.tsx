@@ -5,6 +5,7 @@ import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { money } from '../lib/pnl'
 import { fx } from '../lib/theme'
+import { Button } from './ui/Button'
 
 type Gate = { title?: string; detail?: string; ok?: boolean }
 
@@ -69,10 +70,9 @@ export const ExecutionPanel = memo(function ExecutionPanel({
           <p className="mb-2 text-xs text-cyan-200/45">Trading mode</p>
           <div className="inline-flex rounded-lg border border-cyan-500/20 bg-black/20 p-0.5">
             {(['PAPER', 'LIVE'] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                disabled={setMode.isPending}
+              <Button
+            key={mode}
+                pending={setMode.isPending}
                 onClick={() => setMode.mutate(mode)}
                 className={cn(
                   'rounded-md px-4 py-1.5 text-sm transition',
@@ -82,28 +82,24 @@ export const ExecutionPanel = memo(function ExecutionPanel({
                 )}
               >
                 {mode === 'PAPER' ? 'Paper' : 'Live'}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
         <div>
           <p className="mb-2 text-xs text-cyan-200/45">Lots per trade</p>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded border border-cyan-500/25 px-2 py-1 text-cyan-100/80 hover:border-cyan-400/40"
+            <Button
               onClick={() => adjustLots.mutate(-1)}
             >
               −
-            </button>
+            </Button>
             <strong className="min-w-[2rem] text-center text-lg">{lotsPerTrade}</strong>
-            <button
-              type="button"
-              className="rounded border border-cyan-500/25 px-2 py-1 text-cyan-100/80 hover:border-cyan-400/40"
+            <Button
               onClick={() => adjustLots.mutate(1)}
             >
               +
-            </button>
+            </Button>
           </div>
           {orderQuantities ? (
             <p className="mt-1 text-xs text-cyan-200/40">

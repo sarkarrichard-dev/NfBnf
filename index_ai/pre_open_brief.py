@@ -1,4 +1,4 @@
-"""9:15–9:30 IST pre-open: OI, spot volume, CPR, EMA before first entry at 9:30."""
+"""9:00–9:20 IST pre-open: context, OI, spot volume, CPR, EMA before first entry at 9:20."""
 
 from __future__ import annotations
 
@@ -91,8 +91,8 @@ def _derive_notes_from_analysis(snapshots: dict[str, Any], notes: list[str]) -> 
 
 async def build_pre_open_brief(client: DhanClient, cfg: AppSettings) -> dict[str, Any]:
     """
-    Pre-open window (9:15–9:30 IST): refresh OI, spot volume, CPR, and EMA for both indices.
-    Re-run each scanner cycle in that window so data stays current before 9:30 entry.
+    Pre-open window (9:00–9:20 IST): refresh OI, spot volume, CPR, and EMA for each index.
+    Re-run each scanner cycle in that window so data stays current before the 9:20 entry.
     """
     from index_ai.learning import learning_report, today_live_realized_pnl, trades_summary
     from index_ai.oi_learning import analyze_oi_outcomes
@@ -158,7 +158,7 @@ async def build_pre_open_brief(client: DhanClient, cfg: AppSettings) -> dict[str
 
     summary_parts = [
         "Pre-open analysis (OI · spot volume · CPR · EMA).",
-        "First entry at 9:30 AM IST.",
+        "First entry at 9:20 AM IST.",
     ]
     if index_lines:
         summary_parts.append(" | ".join(index_lines))
@@ -168,8 +168,8 @@ async def build_pre_open_brief(client: DhanClient, cfg: AppSettings) -> dict[str
     brief = {
         "built_at": now_ist_iso(),
         "built_at_ist": format_ist_display(now_ist_iso()),
-        "analysis_window": "9:15–9:30 IST",
-        "entries_from": "9:30 IST",
+        "analysis_window": "9:00–9:20 IST",
+        "entries_from": "9:20 IST",
         "learning": learned,
         "oi_insights": historical_oi,
         "trades_summary": summary_stats,

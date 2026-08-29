@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
+import { Button } from './ui/Button'
 
 type BrainStatus = {
   enabled?: boolean
@@ -82,22 +83,18 @@ export function BrainPanel() {
             seeded with backtest rows
           </span>
         ) : null}
-        <button
-          type="button"
+        <Button
           onClick={() => train.mutate()}
-          disabled={train.isPending}
-          className="rounded border border-slate-700 px-3 py-1.5 text-xs text-slate-300 disabled:opacity-50"
+          pending={train.isPending}
         >
           {train.isPending ? 'Training…' : 'Retrain brain'}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
           onClick={() => refreshBrief.mutate()}
-          disabled={refreshBrief.isPending}
-          className="rounded border border-slate-700 px-3 py-1.5 text-xs text-slate-300 disabled:opacity-50"
+          pending={refreshBrief.isPending}
         >
           Refresh brief
-        </button>
+        </Button>
       </div>
 
       {!armed ? (

@@ -46,7 +46,7 @@ def enabled() -> bool:
 
 
 def instruments() -> list[str]:
-    raw = os.getenv("OPTIONS_CPR_PAPER_INSTRUMENTS", "NIFTY,BANKNIFTY")
+    raw = os.getenv("OPTIONS_CPR_PAPER_INSTRUMENTS", "NIFTY,BANKNIFTY,SENSEX")
     return [x.strip().upper() for x in raw.split(",") if x.strip()]
 
 

@@ -4,6 +4,7 @@ import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
+import { Button } from './ui/Button'
 
 type OpsItem = { code?: string; title?: string; detail?: string }
 
@@ -133,19 +134,16 @@ export const OperationsPanel = memo(function OperationsPanel() {
       </p>
 
       <div className="mb-3 flex flex-wrap gap-2">
-        {['NIFTY', 'BANKNIFTY'].map((inst) => (
-          <button
+        {['NIFTY', 'BANKNIFTY', 'SENSEX'].map((inst) => (
+          <Button
             key={inst}
-            type="button"
-            disabled={probe.isPending}
+            pending={probe.isPending}
             onClick={() => probe.mutate(inst)}
-            className="rounded border border-cyan-500/30 px-2.5 py-1 text-xs text-cyan-100 hover:bg-cyan-500/10"
           >
             Test signal · {inst}
-          </button>
+          </Button>
         ))}
-        <button
-          type="button"
+        <Button
           onClick={() => {
             for (const key of [
               'ops-status',
@@ -158,10 +156,9 @@ export const OperationsPanel = memo(function OperationsPanel() {
               void qc.invalidateQueries({ queryKey: [key] })
             }
           }}
-          className="rounded border border-slate-600 px-2.5 py-1 text-xs text-slate-300"
         >
           Refresh
-        </button>
+        </Button>
       </div>
 
       {probe.data ? (

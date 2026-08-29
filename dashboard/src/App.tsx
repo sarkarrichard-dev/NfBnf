@@ -1,6 +1,8 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CollapsibleSection } from './components/CollapsibleSection'
+import { Tabs } from './components/ui/Tabs'
+import { useStickyTab } from './hooks/useStickyTab'
 import { OperationsPanel } from './components/OperationsPanel'
 import { ExecutionPanel } from './components/ExecutionPanel'
 import { Header } from './components/Header'
@@ -74,6 +76,11 @@ function App() {
   })
 
   const dashboard = useDashboardData()
+  const [tab, setTab] = useStickyTab('algo.tab', 'trade')
+  const openCount = useMemo(
+    () => (dashboard.trades ?? []).filter((t) => t.is_open).length,
+    [dashboard.trades],
+  )
 
   const gateReasons = status.data?.trading_gates?.reasons
   const gates = useMemo(
@@ -120,83 +127,114 @@ function App() {
         </p>
       ) : null}
 
-      <OperationsPanel />
-
-      <StatsOverview
-        period={period}
-        onPeriodChange={setPeriod}
-        updatedLabel={refreshLabel}
-        marketMessage={status.data?.market?.message}
-        marketOpen={status.data?.market?.is_open}
-        analytics={dashboard.analytics}
-        openMtmRupees={dashboard.openMtmRupees}
-        isLoading={dashboard.isLoading}
+      <Tabs
+        tabs={[
+          { id: 'trade', label: 'Trade', badge: openCount || null },
+          { id: 'strategies', label: 'Strategies' },
+          { id: 'research', label: 'Research' },
+          { id: 'setup', label: 'Setup' },
+        ]}
+        value={tab}
+        onChange={setTab}
       />
 
-      <div className="mb-6">
-        <ExecutionPanel
-          tradingMode={status.data?.trading_mode}
-          lotsPerTrade={status.data?.policy?.lots_per_trade}
-          orderQuantities={status.data?.policy?.order_quantities}
-          liveSummary={dashboard.analytics?.live_summary}
-          paperSummary={dashboard.analytics?.paper_summary}
-          gates={gates}
-        />
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
-        <div className="space-y-6">
-          <JournalPanel
-            logRows={dashboard.logRows}
-            trades={dashboard.trades}
+      {tab === 'trade' ? (
+        <>
+          <StatsOverview
             period={period}
-            mtmUpdatedAt={dashboard.mtmUpdatedAt}
+            onPeriodChange={setPeriod}
+            updatedLabel={refreshLabel}
+            marketMessage={status.data?.market?.message}
+            marketOpen={status.data?.market?.is_open}
+            analytics={dashboard.analytics}
+            openMtmRupees={dashboard.openMtmRupees}
+            isLoading={dashboard.isLoading}
           />
+          <div className="mb-6">
+            <ExecutionPanel
+              tradingMode={status.data?.trading_mode}
+              lotsPerTrade={status.data?.policy?.lots_per_trade}
+              orderQuantities={status.data?.policy?.order_quantities}
+              liveSummary={dashboard.analytics?.live_summary}
+              paperSummary={dashboard.analytics?.paper_summary}
+              gates={gates}
+            />
+          </div>
+          <div className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
+            <JournalPanel
+              logRows={dashboard.logRows}
+              trades={dashboard.trades}
+              period={period}
+              mtmUpdatedAt={dashboard.mtmUpdatedAt}
+            />
+            <aside className="space-y-4">
+              <CollapsibleSection title="Auto trader & scanner" defaultOpen>
+                <Suspense fallback={<PanelFallback />}>
+                  <AutoTraderPanel />
+                </Suspense>
+              </CollapsibleSection>
+              <CollapsibleSection title="Dhan broker account" defaultOpen>
+                <Suspense fallback={<PanelFallback />}>
+                  <DhanAccountPanel tradingMode={status.data?.trading_mode} />
+                </Suspense>
+              </CollapsibleSection>
+            </aside>
+          </div>
+        </>
+      ) : null}
+
+      {tab === 'strategies' ? (
+        <div className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
           <CollapsibleSection title="Strategy lanes (paper)" defaultOpen>
             <Suspense fallback={<PanelFallback />}>
               <LanesPanel />
             </Suspense>
           </CollapsibleSection>
+          <aside className="space-y-4">
+            <CollapsibleSection title="AI brain & ML gate" defaultOpen>
+              <Suspense fallback={<PanelFallback />}>
+                <BrainPanel />
+              </Suspense>
+            </CollapsibleSection>
+          </aside>
         </div>
+      ) : null}
 
-        <aside className="space-y-4">
-          <CollapsibleSection title="Dhan broker account" defaultOpen>
-            <Suspense fallback={<PanelFallback />}>
-              <DhanAccountPanel tradingMode={status.data?.trading_mode} />
-            </Suspense>
-          </CollapsibleSection>
-          <CollapsibleSection title="Dhan login & token">
-            <Suspense fallback={<PanelFallback />}>
-              <DhanAuthPanel />
-            </Suspense>
-          </CollapsibleSection>
-          <CollapsibleSection title="AI brain & ML gate" defaultOpen>
-            <Suspense fallback={<PanelFallback />}>
-              <BrainPanel />
-            </Suspense>
-          </CollapsibleSection>
-          <CollapsibleSection title="Auto trader & scanner" defaultOpen>
-            <Suspense fallback={<PanelFallback />}>
-              <AutoTraderPanel />
-            </Suspense>
-          </CollapsibleSection>
-          <CollapsibleSection title="Strategy tuning (.env)">
-            <Suspense fallback={<PanelFallback />}>
-              <StrategyTuningPanel strategy={status.data?.strategy} />
-            </Suspense>
-          </CollapsibleSection>
-          <CollapsibleSection title="Backtest (Dhan intraday)">
+      {tab === 'research' ? (
+        <div className="grid gap-6 xl:grid-cols-2">
+          <CollapsibleSection title="Backtest (Dhan intraday)" defaultOpen>
             <Suspense fallback={<PanelFallback />}>
               <BacktestPanel />
             </Suspense>
           </CollapsibleSection>
-          <CollapsibleSection title="Learning from outcomes">
+          <CollapsibleSection title="Learning from outcomes" defaultOpen>
             <Suspense fallback={<PanelFallback />}>
               <LearningPanel />
             </Suspense>
           </CollapsibleSection>
-        </aside>
-      </div>
+        </div>
+      ) : null}
+
+      {tab === 'setup' ? (
+        <div className="space-y-6">
+          <div className="grid gap-6 xl:grid-cols-2">
+            <CollapsibleSection title="Dhan login & token" defaultOpen>
+              <Suspense fallback={<PanelFallback />}>
+                <DhanAuthPanel />
+              </Suspense>
+            </CollapsibleSection>
+            <CollapsibleSection title="Strategy tuning (.env)" defaultOpen>
+              <Suspense fallback={<PanelFallback />}>
+                <StrategyTuningPanel strategy={status.data?.strategy} />
+              </Suspense>
+            </CollapsibleSection>
+          </div>
+          <CollapsibleSection title="Diagnostics & scanner log">
+            <OperationsPanel />
+          </CollapsibleSection>
+        </div>
+      ) : null}
+
     </main>
   )
 }

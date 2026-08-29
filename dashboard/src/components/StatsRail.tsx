@@ -127,7 +127,7 @@ export function StatsOverview({
       </div>
       {period === 'today' && marketOpen === false && marketMessage ? (
         <p className="mb-2 text-[11px] text-amber-200/70">
-          Market closed — {marketMessage}. Today counts IST session entries only (9:30–15:15 Mon–Fri).
+          Market closed — {marketMessage}. Today counts IST session entries only (9:20–15:10 Mon–Fri).
         </p>
       ) : null}
 

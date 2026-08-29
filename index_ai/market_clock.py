@@ -146,7 +146,7 @@ def is_market_open(when: datetime | None = None) -> bool:
 
 
 def is_pre_open_analysis_window(when: datetime | None = None) -> bool:
-    """9:15–9:30 IST — learning/OI/sentiment brief before first entry."""
+    """9:00–9:20 IST — context/OI/sentiment brief before the first entry."""
     dt = when or now_ist()
     if not is_trading_day(dt):
         return False
@@ -156,7 +156,7 @@ def is_pre_open_analysis_window(when: datetime | None = None) -> bool:
 
 
 def is_trading_entries_allowed(when: datetime | None = None) -> bool:
-    """New entries only between 9:30 and 15:15 IST."""
+    """New entries only between 9:20 and 15:00 IST."""
     dt = when or now_ist()
     if not is_trading_day(dt):
         return False
@@ -171,7 +171,7 @@ def is_entry_session_timestamp(when: datetime | None = None) -> bool:
 
 
 def is_square_off_window(when: datetime | None = None) -> bool:
-    """From 15:15 IST — close all open algo positions (until session end)."""
+    """From 15:10 IST — close all open algo positions (until session end)."""
     dt = when or now_ist()
     if not is_trading_day(dt):
         return False

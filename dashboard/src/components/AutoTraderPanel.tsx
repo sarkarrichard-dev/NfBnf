@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { cn } from '../lib/cn'
+import { Button } from './ui/Button'
 
 type HeatCell = {
   instrument?: string
@@ -134,29 +135,23 @@ export function AutoTraderPanel() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
+        <Button size="md" variant="primary"
           disabled={running || start.isPending}
           onClick={() => start.mutate()}
-          className="rounded-md bg-cyan-500 px-3 py-1.5 text-sm font-medium text-slate-950 disabled:opacity-50"
         >
           Start
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button size="md"
           disabled={!running || stop.isPending}
           onClick={() => stop.mutate()}
-          className="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300 disabled:opacity-50"
         >
           Stop
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button size="md"
           onClick={() => void heatmap.refetch()}
-          className="rounded-md border border-slate-700 px-3 py-1.5 text-sm text-slate-300"
         >
           Refresh heatmap
-        </button>
+        </Button>
       </div>
 
       <p

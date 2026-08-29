@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
+import { Button } from './ui/Button'
 
 export function BacktestPanel() {
   const [instrument, setInstrument] = useState('NIFTY')
@@ -80,22 +81,18 @@ export function BacktestPanel() {
           />
         </label>
         <div className="flex items-end gap-2">
-          <button
-            type="button"
+          <Button
             onClick={() => sync.mutate()}
-            disabled={sync.isPending}
-            className="rounded border border-slate-700 px-3 py-1.5 text-slate-300"
+            pending={sync.isPending}
           >
             Sync cache
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
             onClick={() => run.mutate()}
-            disabled={run.isPending}
-            className="rounded bg-slate-800 px-3 py-1.5 text-slate-200"
+            pending={run.isPending}
           >
             Run backtest
-          </button>
+          </Button>
         </div>
       </div>
       <p className="text-sm text-slate-400">{summary}</p>
