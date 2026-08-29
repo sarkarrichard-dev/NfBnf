@@ -53,7 +53,11 @@ export function StatsOverview({
   return (
     <section className={cn(fx.panel, 'mb-4 px-3 py-2.5')}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <div className="flex items-center gap-1" role="tablist" aria-label="Stats period">
+        <div
+          className="flex items-center gap-0.5 rounded-lg border border-white/[0.06] bg-white/[0.02] p-0.5"
+          role="tablist"
+          aria-label="Stats period"
+        >
           {PERIODS.map((p) => (
             <button
               key={p.id}
@@ -62,8 +66,10 @@ export function StatsOverview({
               aria-selected={period === p.id}
               onClick={() => onPeriodChange(p.id)}
               className={cn(
-                'rounded-md border px-2.5 py-1 text-xs font-medium transition',
-                period === p.id ? fx.tabActive : fx.tabIdle,
+                'rounded-md px-3 py-1 text-xs font-medium transition',
+                period === p.id
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-slate-200',
               )}
             >
               {p.label}

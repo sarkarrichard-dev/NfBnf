@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { cn } from '../lib/cn'
-import { fx } from '../lib/theme'
 
 type Market = {
   message?: string
@@ -15,21 +14,35 @@ type Props = {
   dhanReady?: boolean
 }
 
-function formatIstClock(): string {
-  return new Date().toLocaleString('en-IN', {
+function istParts() {
+  const s = new Date().toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
     hour: 'numeric',
     minute: '2-digit',
     second: '2-digit',
     hour12: true,
   })
+  const hour24 = Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      hour12: false,
+    }).format(new Date()),
+  )
+  return { clock: s, hour24 }
+}
+
+function greeting(hour: number): string {
+  if (hour < 12) return 'Good morning'
+  if (hour < 17) return 'Good afternoon'
+  return 'Good evening'
 }
 
 export function Header({ tradingMode, market, dhanReady }: Props) {
-  const [clock, setClock] = useState(formatIstClock)
+  const [{ clock, hour24 }, setTime] = useState(istParts)
 
   useEffect(() => {
-    const id = setInterval(() => setClock(formatIstClock()), 1000)
+    const id = setInterval(() => setTime(istParts()), 1000)
     return () => clearInterval(id)
   }, [])
 
@@ -39,53 +52,45 @@ export function Header({ tradingMode, market, dhanReady }: Props) {
     (phaseOpen ? 'Market open' : market?.phase === 'square_off' ? 'Square-off' : 'Market closed')
 
   return (
-    <header className={cn(fx.panel, 'mb-6 p-5')}>
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-transparent bg-gradient-to-r from-cyan-100 via-white to-violet-200 bg-clip-text">
-            Index Options AI
-          </h1>
-          <p className="mt-1 text-sm text-cyan-200/45">
-            CPR + EMA + OI · NIFTY &amp; Bank Nifty FNO
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div
-            className="rounded-xl border border-cyan-500/20 bg-black/30 px-3 py-2 font-mono text-sm text-cyan-100/90 shadow-[0_0_20px_-8px_rgba(34,211,238,0.4)]"
-          >
-            <span className="text-cyan-400/50">IST </span>
-            <time>{clock}</time>
-          </div>
-          <span
-            className={cn(
-              'rounded-full border px-3 py-1 text-xs font-medium',
-              phaseOpen
-                ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300 shadow-[0_0_14px_-6px_rgba(52,211,153,0.5)]'
-                : 'border-slate-600/50 bg-black/20 text-slate-400',
-            )}
-          >
-            {phaseLabel}
-          </span>
-          <span
-            className={cn(
-              'rounded-full border px-3 py-1 text-xs font-semibold',
-              fx.tabActive,
-            )}
-          >
-            {tradingMode || '—'}
-          </span>
-          <span
-            className={cn(
-              'rounded-full border px-3 py-1 text-xs font-medium',
-              dhanReady
-                ? 'border-emerald-400/35 bg-emerald-400/10 text-emerald-300'
-                : 'border-amber-400/35 bg-amber-400/10 text-amber-200',
-            )}
-            title="Dhan API connection"
-          >
-            Dhan {dhanReady ? 'OK' : '—'}
-          </span>
-        </div>
+    <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p className="text-sm text-slate-400">{greeting(hour24)}</p>
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-50">
+          Index Options AI
+        </h1>
+        <p className="mt-1 text-[13px] text-slate-500">
+          {phaseLabel} · CPR + EMA + OI · NIFTY &amp; Bank Nifty FNO
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 font-mono text-xs text-slate-300">
+          <span className="text-slate-500">IST </span>
+          <time>{clock}</time>
+        </span>
+        <span
+          className={cn(
+            'rounded-lg border px-3 py-1.5 text-xs font-medium',
+            phaseOpen
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+              : 'border-white/[0.06] bg-white/[0.03] text-slate-400',
+          )}
+        >
+          {phaseOpen ? 'Market open' : 'Market closed'}
+        </span>
+        <span className="rounded-lg border border-blue-500/40 bg-blue-600/15 px-3 py-1.5 text-xs font-semibold text-blue-300">
+          {tradingMode || '—'}
+        </span>
+        <span
+          className={cn(
+            'rounded-lg border px-3 py-1.5 text-xs font-medium',
+            dhanReady
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+              : 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+          )}
+          title="Dhan API connection"
+        >
+          Dhan {dhanReady ? 'OK' : '—'}
+        </span>
       </div>
     </header>
   )
