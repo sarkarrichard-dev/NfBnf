@@ -51,15 +51,51 @@ def _spread_mark(
     return short_px - long_px
 
 
-def _sell_friction(credit_pts: float, wing_pts: float, lot: int, cfg: OptionsCprConfig) -> float:
-    legs = 1 if cfg.sell_naked else 2
-    per_leg = max(credit_pts, wing_pts * 0.25, 2.0)
-    charges = (
-        leg_charge_rupees(per_leg, lot, "SELL", exchange=cfg.exchange)
-        + leg_charge_rupees(per_leg, lot, "BUY", exchange=cfg.exchange)
-    ) * legs
-    slippage = half_spread_points(cfg.key) * max(1, lot) * 2 * legs
-    return charges + slippage
+def _build_spread(
+    spot: float, cfg: OptionsCprConfig, is_put: bool, mte: float
+) -> dict[str, Any]:
+    """Short leg by delta + a far-OTM long wing, wing tightened inward until the
+    defined-risk max loss fits ``sell_margin_budget_rupees``.
+    """
+    t = max(1e-9, mte) / _MINUTES_PER_YEAR
+    step, iv, call = cfg.strike_step, cfg.iv, not is_put
+    short_k = strike_for_delta(spot, step, call, iv, mte, cfg.sell_short_delta)
+    short_px = bs_price_delta(spot, short_k, t, iv, call)[0]
+    if cfg.sell_naked:
+        return {"short_k": short_k, "long_k": None, "short_px": short_px, "long_px": 0.0,
+                "credit": short_px, "max_loss_rupees": None}
+
+    want = spot * (1.0 - cfg.sell_wing_pct) if is_put else spot * (1.0 + cfg.sell_wing_pct)
+    long_k = round(want / step) * step
+    long_k = min(long_k, short_k - step) if is_put else max(long_k, short_k + step)
+    long_px = credit = max_loss = 0.0
+    for _ in range(40):
+        long_px = bs_price_delta(spot, long_k, t, iv, call)[0]
+        credit = short_px - long_px
+        width = abs(short_k - long_k)
+        max_loss = (width - credit) * cfg.lot_size
+        if max_loss <= cfg.sell_margin_budget_rupees or width <= step:
+            break
+        long_k += step if is_put else -step         # pull the wing one strike closer to the short
+    return {"short_k": short_k, "long_k": long_k, "short_px": short_px, "long_px": long_px,
+            "credit": credit, "max_loss_rupees": round(max_loss, 2)}
+
+
+def _sell_friction(short_px: float, long_px: float, lot: int, cfg: OptionsCprConfig) -> float:
+    hs = half_spread_points(cfg.key)
+    f = (
+        leg_charge_rupees(max(short_px, 2.0), lot, "SELL", exchange=cfg.exchange)
+        + leg_charge_rupees(max(short_px, 2.0), lot, "BUY", exchange=cfg.exchange)
+        + hs * lot * 2
+    )
+    if long_px > 0:  # hedged — the far-OTM wing is cheap and trades a tighter book
+        wing_hs = hs * min(1.0, max(0.2, long_px / max(short_px, 1.0)))
+        f += (
+            leg_charge_rupees(max(long_px, 1.0), lot, "BUY", exchange=cfg.exchange)
+            + leg_charge_rupees(max(long_px, 1.0), lot, "SELL", exchange=cfg.exchange)
+            + wing_hs * lot * 2
+        )
+    return f
 
 
 def replay_sell_session(
@@ -94,7 +130,7 @@ def replay_sell_session(
     def close_pos(debit: float, reason: str, ts: pd.Timestamp, spot: float) -> None:
         nonlocal pos, consec_losses, daily_pnl, kill
         gross = (pos["entry_credit"] - debit) * cfg.lot_size
-        fric = _sell_friction(pos["entry_credit"], pos["wing_pts"], cfg.lot_size, cfg)
+        fric = _sell_friction(pos["short_px"], pos["long_px"], cfg.lot_size, cfg)
         net = gross - fric
         daily_pnl += net
         trades.append({
@@ -103,7 +139,8 @@ def replay_sell_session(
             "entry_spot": round(pos["entry_spot"], 2), "exit_spot": round(spot, 2),
             "short_strike": pos["short_k"], "long_strike": pos["long_k"],
             "entry_credit": round(pos["entry_credit"], 2), "exit_debit": round(debit, 2),
-            "wing_pts": round(pos["wing_pts"], 1), "qty": cfg.lot_size,
+            "wing_pts": round(pos["wing_pts"], 1), "max_loss_rupees": pos["max_loss_rupees"],
+            "qty": cfg.lot_size,
             "gross_rupees": round(gross, 2), "friction_rupees": round(fric, 2),
             "net_rupees": round(net, 2), "features": pos["features"],
         })
@@ -162,25 +199,19 @@ def replay_sell_session(
         naked = cfg.sell_naked
         structure = ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL") if naked else (
             "SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD")
-        short_k = strike_for_delta(c, cfg.strike_step, not is_put, cfg.iv, m, cfg.sell_short_delta)
-        if naked:
-            long_k = None
-        else:
-            wing_raw = c * (1.0 - cfg.sell_wing_pct) if is_put else c * (1.0 + cfg.sell_wing_pct)
-            long_k = round(wing_raw / cfg.strike_step) * cfg.strike_step
-            long_k = min(long_k, short_k - cfg.strike_step) if is_put else max(long_k, short_k + cfg.strike_step)
-        entry_credit = _spread_mark(c, short_k, long_k, is_put, cfg.iv, m)
-        wing_pts = abs(short_k - long_k) if long_k is not None else 0.0
-        if entry_credit < cfg.sell_min_credit_pts:
+        sp = _build_spread(c, cfg, is_put, m)
+        if sp["credit"] < cfg.sell_min_credit_pts:
             continue
-        stop_loss_rupees = (cfg.sell_stop_credit_mult - 1.0) * entry_credit * cfg.lot_size
-        if not naked and stop_loss_rupees > cfg.max_loss_pct_of_utilized_capital / 100.0 * cfg.capital:
-            continue
+        if sp["max_loss_rupees"] is not None and sp["max_loss_rupees"] > cfg.sell_margin_budget_rupees * 1.05:
+            continue  # even the tightest wing can't fit the margin budget
 
         pos = {
             "structure": structure, "entry_spot": c, "entry_time": ts,
-            "short_k": short_k, "long_k": long_k, "entry_credit": entry_credit,
-            "wing_pts": wing_pts, "features": entry_features(df, i, cpr, prev_day_ohlc),
+            "short_k": sp["short_k"], "long_k": sp["long_k"], "entry_credit": sp["credit"],
+            "short_px": sp["short_px"], "long_px": sp["long_px"],
+            "wing_pts": abs(sp["short_k"] - sp["long_k"]) if sp["long_k"] is not None else 0.0,
+            "max_loss_rupees": sp["max_loss_rupees"],
+            "features": entry_features(df, i, cpr, prev_day_ohlc),
         }
         trades_today += 1
 

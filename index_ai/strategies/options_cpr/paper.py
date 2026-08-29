@@ -295,8 +295,7 @@ def lanes() -> list[str]:
 
 def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     """Directional wide-spread (or naked, per config) selling — mirrors sell.replay_sell_session."""
-    from index_ai.strategies.options_cpr.sell import _sell_friction, _spread_mark
-    from index_ai.strategies.options_cpr.premium import strike_for_delta
+    from index_ai.strategies.options_cpr.sell import _build_spread, _sell_friction, _spread_mark
 
     cfg = _cfg(key)
     try:
@@ -346,7 +345,7 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
             reason = "square_off"
         if reason:
             gross = (pos["entry_credit"] - debit) * cfg.lot_size
-            fric = _sell_friction(pos["entry_credit"], pos["wing_pts"], cfg.lot_size, cfg)
+            fric = _sell_friction(pos["short_px"], pos.get("long_px", 0.0), cfg.lot_size, cfg)
             net = gross - fric
             ctr["daily_pnl"] = round(ctr["daily_pnl"] + net, 2)
             ctr["consec_losses"] = 0 if net > 0 else ctr["consec_losses"] + 1
@@ -359,6 +358,7 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
                 "entry_spot": round(pos["entry_spot"], 2), "exit_spot": round(spot, 2),
                 "short_strike": pos["short_k"], "long_strike": pos["long_k"],
                 "entry_credit": round(pos["entry_credit"], 2), "exit_debit": round(debit, 2),
+                "max_loss_rupees": pos.get("max_loss_rupees"),
                 "qty": cfg.lot_size, "gross_rupees": round(gross, 2),
                 "friction_rupees": round(fric, 2), "net_rupees": round(net, 2),
             }
@@ -387,23 +387,22 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
     if d15_dir != 0 and d15_dir != (1 if bullish else -1):
         out["reason"] = "15m EMA not aligned"
         return out
-    is_put, naked = bullish, cfg.sell_naked
-    short_k = strike_for_delta(spot, cfg.strike_step, not is_put, cfg.iv, m, cfg.sell_short_delta)
-    if naked:
-        long_k, structure = None, ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL")
-    else:
-        wing_raw = spot * (1.0 - cfg.sell_wing_pct) if is_put else spot * (1.0 + cfg.sell_wing_pct)
-        long_k = round(wing_raw / cfg.strike_step) * cfg.strike_step
-        long_k = min(long_k, short_k - cfg.strike_step) if is_put else max(long_k, short_k + cfg.strike_step)
-        structure = "SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD"
-    credit = _spread_mark(spot, short_k, long_k, is_put, cfg.iv, m)
-    if credit < cfg.sell_min_credit_pts:
-        out["reason"] = f"credit {credit:.1f} < min {cfg.sell_min_credit_pts}"
+    is_put = bullish
+    structure = ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL") if cfg.sell_naked else (
+        "SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD")
+    sp = _build_spread(spot, cfg, is_put, m)
+    if sp["credit"] < cfg.sell_min_credit_pts:
+        out["reason"] = f"credit {sp['credit']:.1f} < min {cfg.sell_min_credit_pts}"
+        return out
+    if sp["max_loss_rupees"] is not None and sp["max_loss_rupees"] > cfg.sell_margin_budget_rupees * 1.05:
+        out["reason"] = f"max loss ₹{sp['max_loss_rupees']:,.0f} over margin budget"
         return out
     inst["sell_position"] = {
         "structure": structure, "entry_spot": spot, "entry_time": now_ist_iso(),
-        "short_k": short_k, "long_k": long_k, "entry_credit": credit,
-        "wing_pts": abs(short_k - long_k) if long_k is not None else 0.0,
+        "short_k": sp["short_k"], "long_k": sp["long_k"], "entry_credit": sp["credit"],
+        "short_px": sp["short_px"], "long_px": sp["long_px"],
+        "wing_pts": abs(sp["short_k"] - sp["long_k"]) if sp["long_k"] is not None else 0.0,
+        "max_loss_rupees": sp["max_loss_rupees"],
     }
     ctr["trades"] += 1
     out.update(event="entry", position=inst["sell_position"], reason=why)

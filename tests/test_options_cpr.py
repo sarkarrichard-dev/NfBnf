@@ -115,6 +115,20 @@ def test_sell_spread_is_directional_and_credit_positive():
     assert tr["entry_credit"] > 0
     assert tr["long_strike"] < tr["short_strike"] < tr["entry_spot"] + cfg.strike_step
     assert "features" in tr
+    # hedged by default, and the wing keeps max loss inside the margin budget
+    assert tr["long_strike"] is not None
+    assert tr["max_loss_rupees"] <= cfg.sell_margin_budget_rupees * 1.05
+
+
+def test_build_spread_wing_fits_margin_budget():
+    from index_ai.strategies.options_cpr.config import with_overrides
+    from index_ai.strategies.options_cpr.sell import _build_spread
+
+    cfg = with_overrides(config_for("BANKNIFTY"), sell_margin_budget_rupees=30000.0)
+    sp = _build_spread(52000.0, cfg, is_put=True, mte=3 * 375.0)
+    assert sp["long_k"] < sp["short_k"]
+    assert sp["max_loss_rupees"] <= 30000.0 * 1.05
+    assert sp["credit"] > 0
 
 
 def test_walk_forward_gate_never_worse_on_separable_data():

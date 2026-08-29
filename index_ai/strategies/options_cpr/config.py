@@ -52,13 +52,19 @@ class OptionsCprConfig:
     iv: float = 0.13                               # annualised, for the BS premium proxy
     assumed_days_to_expiry: float = 3.0            # fixed DTE for the proxy (weekly ~ 3, monthly ~ 8)
 
-    # --- directional-sell lane (wide credit spread) ---
+    # --- directional-sell lane (hedged credit spread) ---
+    # Always long a far-OTM wing: converts the naked short into defined risk, so the
+    # broker margins the spread (~ max loss) not SPAN+exposure — the trade fits a
+    # small account. The wing is sized to the widest distance whose max loss still
+    # fits ``sell_margin_budget_rupees``; a cheaper (further-OTM) wing keeps more
+    # credit but widens max loss, so there is a sweet spot, not "as far as possible".
     sell_short_delta: float = 0.30                 # target delta of the short leg (near-OTM)
-    sell_wing_pct: float = 0.04                    # long-wing distance from spot, fraction (3-5%)
+    sell_wing_pct: float = 0.04                    # desired long-wing distance from spot, fraction
+    sell_margin_budget_rupees: float = 45000.0     # cap on defined-risk max loss (~ margin) per trade
     sell_credit_capture_target: float = 0.50       # exit when this fraction of the entry credit is decayed
-    sell_stop_credit_mult: float = 1.6            # exit when the spread's mark-to-close debit >= this x entry credit
+    sell_stop_credit_mult: float = 1.6            # exit when mark-to-close debit >= this x entry credit
     sell_min_credit_pts: float = 5.0             # skip if the modelled net credit is thinner than this
-    sell_naked: bool = False                     # True = single short leg (2-leg friction), no wing / no defined risk
+    sell_naked: bool = False                     # True = single short leg, no wing (not deployable at small capital)
 
     # --- session, IST (Section 2) ---
     market_open: time = time(9, 15)
