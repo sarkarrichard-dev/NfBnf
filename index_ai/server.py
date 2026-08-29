@@ -294,8 +294,9 @@ def _trading_gates(cfg: Any) -> dict[str, Any]:
             {
                 "title": "Live flag off",
                 "detail": (
-                    "ALLOW_LIVE_TRADING=false. Even with TRADING_MODE=LIVE, broker orders stay blocked "
-                    "until you set ALLOW_LIVE_TRADING=true in .env."
+                    "ALLOW_LIVE_TRADING=false — no broker orders are sent. Note: switching this "
+                    "panel to Live sets BOTH TRADING_MODE=LIVE and ALLOW_LIVE_TRADING=true, so "
+                    "that one click arms real orders. There is no second manual confirmation."
                 ),
             }
         )
@@ -613,29 +614,40 @@ async def update_lots_settings(payload: dict[str, Any] = Body(default_factory=di
     """Set lots per trade (1–10) or adjust with delta (+1 / -1). Re-syncs open journal quantities."""
     from index_ai.learning import reconcile_all_trade_lots
 
-    if "delta" in payload:
-        summary = adjust_lots_per_trade(int(payload.get("delta") or 0))
-    else:
-        raw = payload.get("lots")
-        if raw is None:
-            raise HTTPException(status_code=400, detail="Provide lots (integer) or delta (+1 / -1).")
-        summary = set_lots_per_trade(int(raw))
-    summary["reconcile"] = reconcile_all_trade_lots()
-    summary["policy"] = policy_summary()
-    return summary
+    raw = payload.get("lots")
+    if "delta" not in payload and raw is None:
+        raise HTTPException(status_code=400, detail="Provide lots (integer) or delta (+1 / -1).")
+
+    def _apply() -> dict[str, Any]:
+        # .env write + SQLite, both blocking — off the event loop or every
+        # concurrent dashboard poll queues behind it and the whole UI stalls.
+        if "delta" in payload:
+            out = adjust_lots_per_trade(int(payload.get("delta") or 0))
+        else:
+            out = set_lots_per_trade(int(raw))
+        # only OPEN rows: a closed trade's quantity records what was actually
+        # traded, so rewriting it would falsify the journal
+        out["reconcile"] = reconcile_all_trade_lots(open_only=True)
+        out["policy"] = policy_summary()
+        return out
+
+    return await asyncio.to_thread(_apply)
 
 
 @app.post("/api/trading/mode", include_in_schema=False)
 async def trading_mode(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
-    try:
-        mode = set_trading_mode(str(payload.get("mode") or "PAPER"))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     from index_ai.learning import open_trades_for_mode
 
-    cfg = settings()
-    paper_open = len(open_trades_for_mode("PAPER"))
-    live_open = len(open_trades_for_mode("LIVE"))
+    def _switch() -> tuple[str, Any, int, int]:
+        # set_trading_mode writes .env and settings() re-reads it — both blocking.
+        m = set_trading_mode(str(payload.get("mode") or "PAPER"))
+        c = settings()
+        return m, c, len(open_trades_for_mode("PAPER")), len(open_trades_for_mode("LIVE"))
+
+    try:
+        mode, cfg, paper_open, live_open = await asyncio.to_thread(_switch)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "trading_mode": mode,
         "live_orders_enabled": cfg.risk.allow_live_trading,

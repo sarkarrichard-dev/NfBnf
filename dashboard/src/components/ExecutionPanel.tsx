@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
@@ -52,15 +52,33 @@ export const ExecutionPanel = memo(function ExecutionPanel({
     onError: (e: Error) => toast.error(e.message),
   })
 
+  // Optimistic: the server round trip is fast now, but a counter that waits on
+  // the network still feels broken. Show the new value immediately and reconcile
+  // when the request lands; on failure the pending delta is dropped.
+  const [pendingLots, setPendingLots] = useState<number | null>(null)
   const adjustLots = useMutation({
     mutationFn: (delta: number) =>
       api('/api/settings/lots', {
         method: 'POST',
         body: JSON.stringify({ delta }),
       }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['status'] }),
-    onError: (e: Error) => toast.error(e.message),
+    onSuccess: () => {
+      setPendingLots(null)
+      void qc.invalidateQueries({ queryKey: ['status'] })
+    },
+    onError: (e: Error) => {
+      setPendingLots(null)
+      toast.error(e.message)
+    },
   })
+
+  const shownLots = pendingLots ?? lotsPerTrade
+  const bumpLots = (delta: number) => {
+    const next = Math.min(10, Math.max(1, shownLots + delta))
+    if (next === shownLots) return
+    setPendingLots(next)
+    adjustLots.mutate(delta)
+  }
 
   return (
     <section className={cn(fx.panel, 'p-4')}>
@@ -71,8 +89,9 @@ export const ExecutionPanel = memo(function ExecutionPanel({
           <div className="inline-flex rounded-lg border border-cyan-500/20 bg-black/20 p-0.5">
             {(['PAPER', 'LIVE'] as const).map((mode) => (
               <Button
-            key={mode}
-                pending={setMode.isPending}
+                key={mode}
+                pending={setMode.isPending && setMode.variables === mode}
+                disabled={setMode.isPending || tradingMode === mode}
                 onClick={() => setMode.mutate(mode)}
                 className={cn(
                   'rounded-md px-4 py-1.5 text-sm transition',
@@ -90,13 +109,17 @@ export const ExecutionPanel = memo(function ExecutionPanel({
           <p className="mb-2 text-xs text-cyan-200/45">Lots per trade</p>
           <div className="flex items-center gap-2">
             <Button
-              onClick={() => adjustLots.mutate(-1)}
+              aria-label="Decrease lots per trade"
+              disabled={shownLots <= 1}
+              onClick={() => bumpLots(-1)}
             >
               −
             </Button>
-            <strong className="min-w-[2rem] text-center text-lg">{lotsPerTrade}</strong>
+            <strong className="min-w-[2rem] text-center text-lg tabular-nums">{shownLots}</strong>
             <Button
-              onClick={() => adjustLots.mutate(1)}
+              aria-label="Increase lots per trade"
+              disabled={shownLots >= 10}
+              onClick={() => bumpLots(1)}
             >
               +
             </Button>

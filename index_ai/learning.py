@@ -247,22 +247,32 @@ def resolve_trade_lot_size(trade: dict[str, Any]) -> tuple[int, int]:
     return configured, effective
 
 
-def reconcile_all_trade_lots() -> dict[str, int]:
-    """Persist correct NSE lot quantity on every journal row (open and closed)."""
+def reconcile_all_trade_lots(*, open_only: bool = False) -> dict[str, int]:
+    """Persist correct NSE lot quantity on journal rows.
+
+    Reads every row through ONE connection instead of opening two per trade — the
+    old form did 2N connections (362 for a 181-row journal, ~290ms) and made the
+    lots endpoint feel broken.
+
+    ``open_only`` skips closed trades, which is what an interactive lot change
+    wants: a closed row's quantity is a historical record of what was actually
+    traded, so rewriting it would falsify the journal.
+    """
     updated = 0
+    q = "SELECT * FROM trades"
+    if open_only:
+        q += " WHERE pnl IS NULL"
     with connect() as db:
-        rows = db.execute("SELECT id FROM trades").fetchall()
-    for row in rows:
-        trade_id = str(row["id"])
-        with connect() as db:
-            raw = db.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
-        if not raw:
-            continue
-        before_qty = int((json.loads(raw["option_json"]).get("quantity") or 0))
-        synced = sync_option_lot_size(_row_to_trade(raw), persist=True)
-        after_qty = int((synced.get("option") or {}).get("quantity") or 0)
-        if after_qty and after_qty != before_qty:
-            updated += 1
+        rows = db.execute(q).fetchall()
+        for raw in rows:
+            try:
+                before_qty = int((json.loads(raw["option_json"]).get("quantity") or 0))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            synced = sync_option_lot_size(_row_to_trade(raw), persist=True)
+            after_qty = int((synced.get("option") or {}).get("quantity") or 0)
+            if after_qty and after_qty != before_qty:
+                updated += 1
     return {"trades_checked": len(rows), "quantities_updated": updated}
 
 
