@@ -828,6 +828,26 @@ async def options_cpr_paper_status_api() -> dict[str, Any]:
     return options_cpr_paper_status()
 
 
+@app.get("/api/brain/status", include_in_schema=False)
+async def brain_status_api() -> dict[str, Any]:
+    """Unified ML brain: dataset size, walk-forward verdict, whether the gate is armed."""
+    from index_ai.brain.gate import status
+
+    return status()
+
+
+@app.post("/api/brain/train", include_in_schema=False)
+async def brain_train_api(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Retrain on every lane's closed trades. The gate arms only if walk-forward earns it."""
+    from index_ai.brain.model import train
+
+    return await asyncio.to_thread(
+        train,
+        include_backtest=payload.get("include_backtest"),
+        force=bool(payload.get("force")),
+    )
+
+
 @app.api_route("/api/learning/optimize", methods=["GET", "POST"], include_in_schema=False)
 async def learning_optimize_api() -> dict[str, Any]:
     """Recompute learning + OI/strategy insights from closed trades and journal."""

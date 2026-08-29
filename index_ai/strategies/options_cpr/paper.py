@@ -28,7 +28,12 @@ from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.instruments import get_instrument
 from index_ai.market_clock import is_market_open, now_ist, now_ist_iso
 from index_ai.strategies.options_cpr.config import OptionsCprConfig, config_for, with_overrides
-from index_ai.strategies.options_cpr.engine import add_indicators, cpr_context, evaluate_entry
+from index_ai.strategies.options_cpr.engine import (
+    add_indicators,
+    cpr_context,
+    entry_features,
+    evaluate_entry,
+)
 from index_ai.strategies.options_cpr.premium import premium_at, select_strike
 
 STATE_PATH = MEMORY_DIR / "options_cpr_paper.json"
@@ -107,6 +112,19 @@ def _day_counters(state: dict[str, Any], key: str, today: str) -> dict[str, Any]
         c = {"date": today, "trades": 0, "consec_losses": 0, "daily_pnl": 0.0, "kill": False}
         state[key]["day"] = c
     return c
+
+
+def _brain_check(trade_like: dict[str, Any], lane: str, df, today5, prev5, cpr) -> dict[str, Any]:
+    """Regime + learned win-probability gate. Never raises — a broken brain must
+    not stop the lane, so any failure falls open with the reason recorded."""
+    try:
+        from index_ai.brain.gate import check
+        from index_ai.brain.regime import classify
+
+        read = classify(today5, prev5, cpr_width_pct=cpr.width_pct)
+        return check(trade_like, lane=lane, regime=read)
+    except Exception as exc:
+        return {"allowed": True, "reason": f"brain unavailable: {exc}", "win_probability": None}
 
 
 def _chain_book(client: Any, key: str):
@@ -197,6 +215,7 @@ def _close(pos: dict[str, Any], exit_prem: float, reason: str, spot: float,
         "entry_premium": round(pos["entry_premium"], 2), "exit_premium": round(exit_prem, 2),
         "qty": qty, "gross_rupees": round(gross, 2), "friction_rupees": round(fric, 2),
         "charges_breakdown": breakdown, "net_rupees": round(net, 2),
+        "lane": "buy", "features": pos.get("features"), "brain": pos.get("brain"),
     }
     _journal(trade)
     state[cfg.key]["position"] = None
@@ -334,10 +353,16 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         "qty_open": cfg.lot_size, "stage": 0, "peak_premium": entry_prem, "peak_spot": spot,
         "partial_booked": False, "premium_model": model, "security_id": sid,
         "expiry": getattr(book, "expiry", None),
+        "features": entry_features(df, i, cpr, prev5),
     }
+    verdict = _brain_check(pos | {"instrument": key, "lane": "buy"}, "buy", df, today5, prev5, cpr)
+    if not verdict["allowed"]:
+        out["reason"] = f"brain: {verdict['reason']}"
+        return out
+    pos["brain"] = verdict
     inst_state["position"] = pos
     ctr["trades"] += 1
-    out.update(event="entry", position=pos, reason=why)
+    out.update(event="entry", position=pos, reason=why, brain=verdict)
     return out
 
 
@@ -452,6 +477,7 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
                 "qty": cfg.lot_size, "gross_rupees": round(gross, 2),
                 "friction_rupees": round(fric, 2), "charges_breakdown": breakdown,
                 "net_rupees": round(net, 2),
+                "features": pos.get("features"), "brain": pos.get("brain"),
             }
             _journal(trade)
             inst["sell_position"] = None
@@ -496,16 +522,26 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
     if max_loss is not None and max_loss > cfg.sell_margin_budget_rupees * 1.05:
         out["reason"] = f"max loss ₹{max_loss:,.0f} over margin budget"
         return out
-    inst["sell_position"] = {
+    sell_pos = {
         "structure": structure, "entry_spot": spot, "entry_time": now_ist_iso(),
         "short_k": sp["short_k"], "long_k": sp["long_k"], "entry_credit": credit,
         "short_px": short_px, "long_px": long_px,
         "wing_pts": abs(sp["short_k"] - sp["long_k"]) if sp["long_k"] is not None else 0.0,
         "max_loss_rupees": max_loss, "premium_model": model,
         "expiry": getattr(book, "expiry", None),
+        "features": entry_features(df, i, cpr, prev5),
     }
+    verdict = _brain_check(
+        sell_pos | {"instrument": key, "lane": "sell", "long_strike": sp["long_k"]},
+        "sell", df, today5, prev5, cpr,
+    )
+    if not verdict["allowed"]:
+        out["reason"] = f"brain: {verdict['reason']}"
+        return out
+    sell_pos["brain"] = verdict
+    inst["sell_position"] = sell_pos
     ctr["trades"] += 1
-    out.update(event="entry", position=inst["sell_position"], reason=why)
+    out.update(event="entry", position=inst["sell_position"], reason=why, brain=verdict)
     return out
 
 

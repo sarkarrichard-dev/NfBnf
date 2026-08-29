@@ -122,11 +122,29 @@ def _close(pos: dict[str, Any], px: float, reason: str, cfg: FuturesConfig,
         "gross_rupees": round(gross, 2),
         "friction_rupees": round(cost, 2),
         "net_rupees": round(gross - cost, 2),
+        "lane": "futures",
+        "brain": pos.get("brain"),
     }
     _journal(trade)
     state.setdefault(cfg.key, {})["position"] = None
     state[cfg.key]["last_exit_at"] = trade["exit_time"]
     return trade
+
+
+def _brain_check(trade_like: dict[str, Any], today5, prev5, prev_day_ohlc) -> dict[str, Any]:
+    """Regime + learned win-probability gate. Falls open on any failure so a broken
+    brain can never stop the lane."""
+    try:
+        from index_ai.brain.gate import check
+        from index_ai.brain.regime import classify
+        from index_ai.strategies.strategy import previous_day_cpr
+
+        pivot, bc, tc = previous_day_cpr(prev_day_ohlc)
+        width_pct = (tc - bc) / max(pivot, 1.0) * 100.0
+        read = classify(today5, prev5, cpr_width_pct=width_pct) if prev5 is not None else None
+        return check(trade_like, lane="futures", regime=read)
+    except Exception as exc:
+        return {"allowed": True, "reason": f"brain unavailable: {exc}", "win_probability": None}
 
 
 def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
@@ -187,7 +205,7 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         out["reason"] = why
         return out
     d = tr.direction
-    inst_state["position"] = {
+    pos = {
         "dir": "LONG" if d == LONG else "SHORT",
         "entry": price,
         "entry_time": now_ist_iso(),
@@ -196,8 +214,19 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         "armed": False,
         "trend_reason": tr.reason,
     }
+    verdict = _brain_check(
+        {**pos, "instrument": key, "lane": "futures",
+         "direction": pos["dir"], "entry_spot": price},
+        today5, d5.get(prev), prev15,
+    )
+    if not verdict["allowed"]:
+        out["reason"] = f"brain: {verdict['reason']}"
+        return out
+    pos["brain"] = verdict
+    inst_state["position"] = pos
     out["event"] = "entry"
-    out["position"] = inst_state["position"]
+    out["position"] = pos
+    out["brain"] = verdict
     return out
 
 
