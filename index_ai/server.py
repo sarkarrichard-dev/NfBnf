@@ -821,6 +821,13 @@ async def futures_paper_status_api() -> dict[str, Any]:
     return futures_paper_status()
 
 
+@app.get("/api/options-cpr/status", include_in_schema=False)
+async def options_cpr_paper_status_api() -> dict[str, Any]:
+    from index_ai.strategies.options_cpr.paper import options_cpr_paper_status
+
+    return options_cpr_paper_status()
+
+
 @app.api_route("/api/learning/optimize", methods=["GET", "POST"], include_in_schema=False)
 async def learning_optimize_api() -> dict[str, Any]:
     """Recompute learning + OI/strategy insights from closed trades and journal."""

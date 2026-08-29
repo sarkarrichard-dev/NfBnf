@@ -289,6 +289,22 @@ async def _run_futures_paper(client: DhanClient) -> None:
         _log("futures_paper_error", error=_friendly_error(exc))
 
 
+async def _run_options_cpr_paper(client: DhanClient) -> None:
+    """CPR + EMA option-buying paper strategy — separate from the options-sell path."""
+    try:
+        from index_ai.strategies.options_cpr.paper import enabled, scan_options_cpr_paper
+
+        if not enabled():
+            return
+        events = await asyncio.to_thread(scan_options_cpr_paper, client)
+        for e in events:
+            if e.get("event") in {"entry", "exit", "partial"}:
+                _log("options_cpr_paper", **e)
+    except Exception as exc:  # never let this break the options scanner
+        _note_auth_failure(exc)
+        _log("options_cpr_paper_error", error=_friendly_error(exc))
+
+
 async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
     open_list = open_trades_for_mode(cfg.risk.trading_mode)
     prices = await _fetch_index_prices(client, open_list=open_list)
@@ -577,6 +593,7 @@ async def _run_loop() -> None:
             await _close_stale_session_positions(client, cfg)
             await _check_trails(client, cfg)
             await _run_futures_paper(client)
+            await _run_options_cpr_paper(client)
 
             if is_square_off_window():
                 await _square_off_open(client, cfg)
