@@ -133,6 +133,26 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     boot_scanner_task = asyncio.create_task(schedule_boot_auto_start())
     renew_task = asyncio.create_task(_auto_renew_loop())
     cache_task = asyncio.create_task(_candle_cache_loop())
+
+    async def _tick_feed_loop() -> None:
+        """Live websocket tick stream — opt-in, reconnects itself, never fatal."""
+        from index_ai.tick_feed import enabled as tick_enabled, run_feed
+
+        if not tick_enabled():
+            return
+        while True:
+            c = settings()
+            if c.dhan.ready and c.dhan.access_token and c.dhan.client_id:
+                try:
+                    await run_feed(c.dhan.access_token, str(c.dhan.client_id), stop=tick_stop)
+                except Exception:
+                    logging.getLogger(__name__).warning("tick feed loop error", exc_info=True)
+            if tick_stop.is_set():
+                return
+            await asyncio.sleep(30)
+
+    tick_stop = asyncio.Event()
+    tick_task = asyncio.create_task(_tick_feed_loop())
     if cfg.dhan.ready:
         try:
             from index_ai.candle_cache import ensure_active_interval_cache, sync_all_configured
@@ -144,10 +164,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         except Exception:
             pass
     yield
+    tick_stop.set()
     renew_task.cancel()
     boot_scanner_task.cancel()
     cache_task.cancel()
-    for task in (renew_task, boot_scanner_task, cache_task):
+    tick_task.cancel()
+    for task in (renew_task, boot_scanner_task, cache_task, tick_task):
         try:
             await task
         except asyncio.CancelledError:
@@ -840,6 +862,14 @@ async def reconcile_api(repair: bool = Query(False)) -> dict[str, Any]:
     return await asyncio.to_thread(
         reconcile, client, mode=cfg.risk.trading_mode, repair=repair or None
     )
+
+
+@app.get("/api/tick-feed", include_in_schema=False)
+async def tick_feed_api() -> dict[str, Any]:
+    """Live websocket feed health: connected, ticks seen, stall detection."""
+    from index_ai.tick_feed import status
+
+    return status()
 
 
 @app.get("/api/market-log", include_in_schema=False)

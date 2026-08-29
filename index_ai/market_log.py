@@ -1,7 +1,7 @@
 """
 Time-series log of what the system saw and what it decided, in SQLite.
 
-Two tables, kept in their own database so the trade journal stays small:
+Three tables, kept in their own database so the trade journal stays small:
 
   ``observations``  what the market looked like at a moment — spot, ATM IV, PCR,
                     max pain, call/put OI, measured spreads, VIX, the signal
@@ -15,12 +15,13 @@ setup leaves nothing behind except a line in an 80-item in-memory deque, so
 refusals is what lets you later ask whether the filters were right — a filter
 that blocks winners is invisible unless you record what it blocked.
 
-**On "tick by tick":** the Dhan client here is REST polling, so this records at
-scan cadence (a row per instrument per cycle), not per exchange tick. True tick
-data needs Dhan's websocket feed (wss://api-feed.dhan.co) — a separate build.
-Cycle-level resolution is enough to reconstruct a session and to train on;
-it is not enough for microstructure work, and this docstring is the honest
-statement of that rather than a claim in a UI.
+  ``ticks``         real exchange ticks from Dhan's websocket feed, written in
+                    batches by ``tick_feed`` (opt-in via ENABLE_TICK_FEED).
+
+Two resolutions, deliberately: ``observations`` is one row per instrument per
+scan cycle and always available; ``ticks`` is per exchange update and only when
+the websocket is running. ``stats()["resolution"]`` reports which you actually
+have, so nothing infers tick data that was never collected.
 """
 
 from __future__ import annotations
@@ -95,11 +96,36 @@ def _migrate(db: sqlite3.Connection) -> None:
             extra TEXT
         )
     """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS ticks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            session TEXT NOT NULL,
+            instrument TEXT,
+            security_id INTEGER NOT NULL,
+            exchange_segment INTEGER,
+            kind TEXT NOT NULL,
+            ltp REAL,
+            ltq INTEGER,
+            ltt INTEGER,
+            atp REAL,
+            volume INTEGER,
+            buy_qty INTEGER,
+            sell_qty INTEGER,
+            oi INTEGER,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL
+        )
+    """)
     for stmt in (
         "CREATE INDEX IF NOT EXISTS idx_obs_session ON observations(session, instrument)",
         "CREATE INDEX IF NOT EXISTS idx_obs_ts ON observations(ts)",
         "CREATE INDEX IF NOT EXISTS idx_dec_session ON decisions(session, instrument, lane)",
         "CREATE INDEX IF NOT EXISTS idx_dec_traded ON decisions(traded, session)",
+        "CREATE INDEX IF NOT EXISTS idx_tick_session ON ticks(session, instrument)",
+        "CREATE INDEX IF NOT EXISTS idx_tick_ltt ON ticks(security_id, ltt)",
     ):
         db.execute(stmt)
 
@@ -158,6 +184,65 @@ def record_decision(instrument: str, lane: str, event: str, *, traded: bool,
         pass
 
 
+_TICK_COLS = ("kind", "ltp", "ltq", "ltt", "atp", "volume",
+              "buy_qty", "sell_qty", "oi", "open", "high", "low", "close")
+
+
+def record_tick_batch(packets: list[dict[str, Any]], sec_map: dict[int, str] | None = None) -> int:
+    """Insert a batch of decoded websocket packets. Returns rows written.
+
+    Batched in one transaction: a liquid index option prints hundreds of ticks a
+    second, and an INSERT per tick would make the writer the bottleneck.
+    """
+    if not enabled() or not packets:
+        return 0
+    smap = sec_map or {}
+    ts, session = now_ist().isoformat(timespec="seconds"), today_ist_date()
+    rows = []
+    for p in packets:
+        sid = p.get("security_id")
+        if sid is None:
+            continue
+        rows.append((
+            ts, session, smap.get(int(sid)), int(sid), p.get("exchange_segment"),
+            str(p.get("type") or "tick"),
+            _f(p.get("ltp")), p.get("ltq"), p.get("ltt"), _f(p.get("atp")),
+            p.get("volume"), p.get("total_buy_quantity"), p.get("total_sell_quantity"),
+            p.get("oi"), _f(p.get("open")), _f(p.get("high")), _f(p.get("low")), _f(p.get("close")),
+        ))
+    if not rows:
+        return 0
+    try:
+        with connect() as db:
+            db.executemany(
+                f"""INSERT INTO ticks
+                    (ts, session, instrument, security_id, exchange_segment, {", ".join(_TICK_COLS)})
+                    VALUES ({",".join("?" * (5 + len(_TICK_COLS)))})""",
+                rows,
+            )
+        return len(rows)
+    except Exception:
+        return 0
+
+
+def ticks(session: str | None = None, instrument: str | None = None,
+          limit: int = 500) -> list[dict[str, Any]]:
+    try:
+        with connect() as db:
+            q, args = "SELECT * FROM ticks WHERE 1=1", []
+            if session:
+                q += " AND session=?"
+                args.append(session)
+            if instrument:
+                q += " AND instrument=?"
+                args.append(str(instrument).upper())
+            q += " ORDER BY id DESC LIMIT ?"
+            args.append(limit)
+            return [dict(r) for r in db.execute(q, args).fetchall()]
+    except Exception:
+        return []
+
+
 def skip_reasons(session: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
     """Most common reasons a lane did NOT trade — where the filters actually bite."""
     try:
@@ -201,14 +286,19 @@ def stats() -> dict[str, Any]:
         with connect() as db:
             obs = db.execute("SELECT COUNT(*) c, MIN(session) a, MAX(session) b FROM observations").fetchone()
             dec = db.execute("SELECT COUNT(*) c, SUM(traded) t FROM decisions").fetchone()
+            tk = db.execute("SELECT COUNT(*) c, MAX(session) s FROM ticks").fetchone()
             size = DB_PATH.stat().st_size if DB_PATH.is_file() else 0
             return {
                 "enabled": enabled(),
                 "observations": obs["c"], "first_session": obs["a"], "last_session": obs["b"],
                 "decisions": dec["c"], "traded": dec["t"] or 0,
                 "skipped": (dec["c"] or 0) - (dec["t"] or 0),
+                "ticks": tk["c"], "last_tick_session": tk["s"],
                 "db_mb": round(size / 1e6, 2),
-                "resolution": "scan cycle (REST polling) — not exchange tick",
+                "resolution": (
+                    "exchange ticks (websocket) + scan-cycle observations"
+                    if tk["c"] else "scan cycle (REST polling) — enable ENABLE_TICK_FEED for ticks"
+                ),
             }
     except Exception as exc:
         return {"enabled": enabled(), "error": str(exc)[:200]}
@@ -222,7 +312,7 @@ def prune(days: int = RETENTION_DAYS) -> int:
     removed = 0
     try:
         with connect() as db:
-            for table in ("observations", "decisions"):
+            for table in ("observations", "decisions", "ticks"):
                 cur = db.execute(f"DELETE FROM {table} WHERE session < ?", (cutoff,))
                 removed += cur.rowcount or 0
     except Exception:

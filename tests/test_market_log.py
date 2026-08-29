@@ -69,7 +69,9 @@ def test_prune_drops_old_sessions(db):
 
 
 def test_stats_is_honest_about_resolution(db):
-    assert "not exchange tick" in market_log.stats()["resolution"]
+    # with no ticks collected, stats must not imply tick resolution exists
+    r = market_log.stats()["resolution"]
+    assert "scan cycle" in r and "ENABLE_TICK_FEED" in r
 
 
 def test_paper_lanes_default_on(monkeypatch):
@@ -87,3 +89,30 @@ def test_db_lives_apart_from_the_trade_journal():
     from index_ai.config import DB_PATH as JOURNAL_DB
 
     assert Path(market_log.DB_PATH).name != Path(JOURNAL_DB).name
+
+
+def test_tick_batch_persists_and_maps_instrument(db):
+    from index_ai.tick_feed import parse_packet
+    import struct
+
+    payload = struct.pack("<fHIfIIIffff", 24180.5, 50, 1756400001, 24170.0,
+                          123456, 700, 800, 24100.0, 24050.0, 24250.0, 24000.0)
+    frame = struct.pack("<BHBI", 4, 8 + len(payload), 0, 13) + payload
+    packets = parse_packet(frame)
+    n = market_log.record_tick_batch(packets, {13: "NIFTY"})
+    assert n == 1
+    rows = market_log.ticks(instrument="NIFTY")
+    assert len(rows) == 1
+    assert rows[0]["ltp"] == 24180.5 and rows[0]["volume"] == 123456
+    assert rows[0]["kind"] == "quote" and rows[0]["security_id"] == 13
+    s = market_log.stats()
+    assert s["ticks"] == 1 and "exchange ticks" in s["resolution"]
+
+
+def test_tick_batch_is_noop_when_logging_disabled(db, monkeypatch):
+    monkeypatch.setenv("ENABLE_MARKET_LOG", "false")
+    assert market_log.record_tick_batch([{"security_id": 1, "type": "ticker", "ltp": 1.0}]) == 0
+
+
+def test_tick_batch_skips_packets_without_a_security_id(db):
+    assert market_log.record_tick_batch([{"type": "ticker", "ltp": 1.0}]) == 0
