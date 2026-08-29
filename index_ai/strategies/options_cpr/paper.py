@@ -114,6 +114,30 @@ def _day_counters(state: dict[str, Any], key: str, today: str) -> dict[str, Any]
     return c
 
 
+def require_viable() -> bool:
+    """Block lanes whose measured gross edge cannot cover their measured costs.
+
+    On by default: a structure that provably loses to its own friction should not
+    be quietly burning paper (or real) trades. Set OPTIONS_CPR_REQUIRE_VIABLE=false
+    to trade a not-viable lane deliberately, e.g. to gather data on it.
+    """
+    return os.getenv("OPTIONS_CPR_REQUIRE_VIABLE", "true").strip().lower() in {
+        "1", "true", "yes", "on"}
+
+
+def _viability_block(key: str, lane: str, cfg: OptionsCprConfig) -> str | None:
+    """Reason this lane must not trade on this index, or None."""
+    if not require_viable():
+        return None
+    try:
+        from index_ai.strategies.options_cpr.viability import NOT_VIABLE, viability
+
+        v = viability(key, lane, cfg=cfg)
+        return f"{v.verdict}: {v.reason}" if v.verdict == NOT_VIABLE else None
+    except Exception:
+        return None       # never let the check itself stop a lane
+
+
 def _brain_check(trade_like: dict[str, Any], lane: str, df, today5, prev5, cpr,
                  *, key: str = "") -> dict[str, Any]:
     """Regime + market context + learned win-probability gate.
@@ -367,6 +391,10 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     if not (cfg.first_entry_time <= ts.time() <= cfg.last_entry_time):
         out["reason"] = "outside entry window"
         return out
+    blocked = _viability_block(key, "buy", cfg)
+    if blocked:
+        out["reason"] = blocked
+        return out
     side, why = evaluate_entry(df, i, cpr, cfg)
     if side is None:
         out["reason"] = why
@@ -546,6 +574,10 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
     if not (cfg.first_entry_time <= ts.time() <= cfg.last_entry_time):
         out["reason"] = "outside entry window"
         return out
+    blocked = _viability_block(key, "sell", cfg)
+    if blocked:
+        out["reason"] = blocked
+        return out
     side, why = evaluate_entry(df, i, cpr, cfg)
     if side is None:
         out["reason"] = why
@@ -617,6 +649,19 @@ def _recent_trades(limit: int = 60) -> list[dict[str, Any]]:
     return [json.loads(x) for x in lines[-limit:] if x.strip()][::-1]
 
 
+def _viability_summary() -> dict[str, Any]:
+    """Per-index, per-lane economics: what a round trip costs vs the edge measured."""
+    try:
+        from index_ai.strategies.options_cpr.viability import viability
+
+        return {
+            key: {ln: viability(key, ln).to_dict() for ln in ("buy", "sell")}
+            for key in instruments()
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 def options_cpr_paper_status() -> dict[str, Any]:
     state = _load_state()
     trades = _recent_trades(300)
@@ -634,6 +679,7 @@ def options_cpr_paper_status() -> dict[str, Any]:
         "enabled": enabled(),
         "instruments": instruments(),
         "lanes": lanes(),
+        "viability": _viability_summary(),
         "open_positions": open_pos,
         "today": {
             "closed": len(todays),

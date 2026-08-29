@@ -25,6 +25,7 @@ from index_ai.config import MEMORY_DIR
 from index_ai.market_clock import now_ist
 
 SAMPLES_PATH = MEMORY_DIR / "spread_samples.jsonl"
+SKIPS_PATH = MEMORY_DIR / "spread_skips.json"
 MIN_SAMPLES = 30
 _MAX_KEEP = 4000
 # strikes within this % of spot count as "near" (the short leg); beyond is a wing
@@ -46,15 +47,27 @@ def observe(book: Any, instrument: str, spot: float, *, strikes: list[tuple[floa
     never be able to break a trading tick.
     """
     rows: list[dict[str, Any]] = []
+    skipped: dict[str, int] = {}
     for strike, is_call in strikes:
         try:
             q = book.quote(strike, is_call)
         except Exception:
+            skipped["quote_error"] = skipped.get("quote_error", 0) + 1
             continue
         if q is None:
+            skipped["no_strike"] = skipped.get("no_strike", 0) + 1
             continue
         bid, ask, ltp = _f(q.bid), _f(q.ask), _f(q.ltp)
-        if not bid or not ask or ask <= bid or not ltp or ltp <= 0:
+        if not ltp or ltp <= 0:
+            skipped["no_ltp"] = skipped.get("no_ltp", 0) + 1
+            continue
+        if not bid or not ask:
+            # depth absent — the exchange is closed, or the feed does not carry
+            # book depth for this segment (BSE/SENSEX has shown this)
+            skipped["no_depth"] = skipped.get("no_depth", 0) + 1
+            continue
+        if ask <= bid:
+            skipped["crossed_book"] = skipped.get("crossed_book", 0) + 1
             continue
         half = (ask - bid) / 2.0
         moneyness = abs(strike - spot) / max(spot, 1.0) * 100.0
@@ -71,6 +84,8 @@ def observe(book: Any, instrument: str, spot: float, *, strikes: list[tuple[floa
             "moneyness_pct": round(moneyness, 3),
             "bucket": "near" if moneyness <= NEAR_PCT else "wing",
         })
+    if skipped:
+        _record_skips(str(instrument).upper(), skipped)
     if not rows:
         return 0
     try:
@@ -81,6 +96,33 @@ def observe(book: Any, instrument: str, spot: float, *, strikes: list[tuple[floa
     except Exception:
         return 0
     return len(rows)
+
+
+def _record_skips(instrument: str, skipped: dict[str, int]) -> None:
+    """Why samples were rejected. Distinguishes "market closed" from "this feed
+    never carries depth for this segment" — the difference between waiting and
+    needing a different data source."""
+    try:
+        cur = json.loads(SKIPS_PATH.read_text(encoding="utf-8")) if SKIPS_PATH.is_file() else {}
+    except Exception:
+        cur = {}
+    bucket = cur.setdefault(instrument, {})
+    for k, v in skipped.items():
+        bucket[k] = int(bucket.get(k, 0)) + v
+    bucket["last_at"] = now_ist().isoformat(timespec="seconds")
+    try:
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        SKIPS_PATH.write_text(json.dumps(cur, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def skips(instrument: str | None = None) -> dict[str, Any]:
+    try:
+        cur = json.loads(SKIPS_PATH.read_text(encoding="utf-8")) if SKIPS_PATH.is_file() else {}
+    except Exception:
+        cur = {}
+    return cur.get(str(instrument).upper(), {}) if instrument else cur
 
 
 def _samples() -> list[dict[str, Any]]:
@@ -176,7 +218,8 @@ def status() -> dict[str, Any]:
     for key in ("NIFTY", "BANKNIFTY", "SENSEX"):
         hs, src = calibrated_half_spread(key)
         out["instruments"][key] = {
-            "half_spread_pts": round(hs, 4), "source": src, **summary(key)
+            "half_spread_pts": round(hs, 4), "source": src,
+            "skipped": skips(key), **summary(key)
         }
     return out
 

@@ -3,7 +3,7 @@ import pandas as pd
 
 from index_ai.strategies.options_cpr import paper
 from index_ai.strategies.options_cpr.backtest import replay_session
-from index_ai.strategies.options_cpr.config import config_for
+from index_ai.strategies.options_cpr.config import config_for, with_overrides
 from index_ai.strategies.options_cpr.engine import add_indicators, cpr_context, evaluate_entry
 from index_ai.strategies.options_cpr.premium import bs_price_delta, select_strike
 
@@ -167,3 +167,42 @@ def test_walk_forward_gate_never_worse_on_separable_data():
         })
     out = walk_forward_gate(trades)
     assert out["oos_gated_net"] >= out["oos_static_net"] - 2000  # gate helps or is ~neutral
+
+
+def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch):
+    from index_ai.strategies.options_cpr.viability import (
+        NOT_VIABLE,
+        UNMEASURED,
+        VIABLE,
+        friction_floor,
+        viability,
+    )
+
+    monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_NIFTY", "0.20")
+    monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY", "4.06")
+
+    n, b = viability("NIFTY", "sell"), viability("BANKNIFTY", "sell")
+    # BANKNIFTY's book is far wider -> a much higher cost floor
+    assert b.friction_floor_rupees > 2 * n.friction_floor_rupees
+    assert n.verdict == VIABLE and b.verdict == NOT_VIABLE
+    # a lane with negative gross edge is never viable
+    assert viability("NIFTY", "buy").verdict == NOT_VIABLE
+    # an unmeasured spread must not produce a confident verdict
+    monkeypatch.delenv("SLIPPAGE_HALF_SPREAD_POINTS_SENSEX", raising=False)
+    assert viability("SENSEX", "sell").verdict == UNMEASURED
+
+    # dropping the hedge halves the order count and the floor
+    naked = with_overrides(config_for("BANKNIFTY"), sell_naked=True)
+    floor_naked, legs_naked, _ = friction_floor(naked, lane="sell")
+    assert legs_naked == 2 and floor_naked < b.friction_floor_rupees
+
+
+def test_viability_gate_is_opt_out(monkeypatch):
+    from index_ai.strategies.options_cpr.paper import _viability_block, require_viable
+
+    monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY", "4.06")
+    cfg = config_for("BANKNIFTY")
+    assert require_viable() is True
+    assert _viability_block("BANKNIFTY", "sell", cfg) is not None
+    monkeypatch.setenv("OPTIONS_CPR_REQUIRE_VIABLE", "false")
+    assert _viability_block("BANKNIFTY", "sell", cfg) is None
