@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
@@ -24,7 +25,7 @@ type Props = {
   gates?: Gate[]
 }
 
-export function ExecutionPanel({
+export const ExecutionPanel = memo(function ExecutionPanel({
   tradingMode,
   lotsPerTrade = 1,
   orderQuantities,
@@ -145,4 +146,4 @@ export function ExecutionPanel({
       ) : null}
     </section>
   )
-}
+})

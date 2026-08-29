@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CollapsibleSection } from './components/CollapsibleSection'
 import { OperationsPanel } from './components/OperationsPanel'
@@ -69,6 +69,22 @@ function App() {
 
   const dashboard = useDashboardData()
 
+  const gateReasons = status.data?.trading_gates?.reasons
+  const gates = useMemo(
+    () =>
+      gateReasons?.map((r) => ({
+        title: r.title,
+        detail: r.detail,
+        ok:
+          r.title === 'Paper mode (default)' ||
+          r.title === 'Buy options' ||
+          r.title === 'Sell options' ||
+          r.title === 'Kill switch (Live only)' ||
+          r.title === 'Kill switch (would block Live)',
+      })),
+    [gateReasons],
+  )
+
   const ks = status.data?.kill_switch
   const refreshLabel = [
     dashboard.statsUpdatedAt ? `Stats ${dashboard.statsUpdatedAt}` : '',
@@ -118,16 +134,7 @@ function App() {
           orderQuantities={status.data?.policy?.order_quantities}
           liveSummary={dashboard.analytics?.live_summary}
           paperSummary={dashboard.analytics?.paper_summary}
-          gates={status.data?.trading_gates?.reasons?.map((r) => ({
-            title: r.title,
-            detail: r.detail,
-            ok:
-              r.title === 'Paper mode (default)' ||
-              r.title === 'Buy options' ||
-              r.title === 'Sell options' ||
-              r.title === 'Kill switch (Live only)' ||
-              r.title === 'Kill switch (would block Live)',
-          }))}
+          gates={gates}
         />
       </div>
 

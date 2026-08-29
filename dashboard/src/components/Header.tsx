@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { cn } from '../lib/cn'
 
 type Market = {
@@ -38,7 +38,7 @@ function greeting(hour: number): string {
   return 'Good evening'
 }
 
-export function Header({ tradingMode, market, dhanReady }: Props) {
+export const Header = memo(function Header({ tradingMode, market, dhanReady }: Props) {
   const [{ clock, hour24 }, setTime] = useState(istParts)
 
   useEffect(() => {
@@ -94,4 +94,4 @@ export function Header({ tradingMode, market, dhanReady }: Props) {
       </div>
     </header>
   )
-}
+})

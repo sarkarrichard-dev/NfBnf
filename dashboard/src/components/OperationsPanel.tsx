@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
@@ -43,7 +44,7 @@ function formatEvent(e: Record<string, unknown>): string {
   return parts.filter(Boolean).join(' · ')
 }
 
-export function OperationsPanel() {
+export const OperationsPanel = memo(function OperationsPanel() {
   const qc = useQueryClient()
   const poll = usePollMs(2_000)
 
@@ -146,8 +147,16 @@ export function OperationsPanel() {
         <button
           type="button"
           onClick={() => {
-            void qc.invalidateQueries({ queryKey: ['ops-status'] })
-            void qc.invalidateQueries({ queryKey: ['auto-status'] })
+            for (const key of [
+              'ops-status',
+              'auto-status',
+              'status',
+              'analytics',
+              'journal',
+              'live-mtm',
+            ]) {
+              void qc.invalidateQueries({ queryKey: [key] })
+            }
           }}
           className="rounded border border-slate-600 px-2.5 py-1 text-xs text-slate-300"
         >
@@ -180,4 +189,4 @@ export function OperationsPanel() {
       </details>
     </section>
   )
-}
+})
