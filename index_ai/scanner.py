@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import os
 from collections import deque
 from dataclasses import dataclass, field
@@ -38,13 +39,18 @@ from index_ai.position_exits import (
     is_intraday_stale_open,
     strategy_exit_reason,
 )
+from index_ai.scan_health import ScanHealth, gather_limited, run_stage
 from index_ai.trailing import evaluate_open_trade
 
 _log_py = logging.getLogger(__name__)
+_health = ScanHealth()
 
 SCAN_INTERVAL_SECONDS = 90
 COOLDOWN_MINUTES = 20
 INDEX_SCAN_GAP_SECONDS = 5
+# Indices scanned concurrently. Dhan rate-limits per second, so keep this small;
+# 2-3 covers the configured universe in one round instead of N serial rounds.
+INDEX_SCAN_CONCURRENCY = int(os.getenv("INDEX_SCAN_CONCURRENCY", "2"))
 TRAIL_INDEX_GAP_SECONDS = 0.8
 BOOT_AUTO_START_DELAY_SECONDS = 1.5
 
@@ -71,6 +77,7 @@ class ScannerState:
     executions: int = 0
     pre_open_brief_date: str | None = None
     pre_open_brief: dict[str, Any] | None = None
+    last_reconcile: dict[str, Any] | None = None
     events: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=80))
 
 
@@ -121,6 +128,9 @@ def scanner_status() -> dict[str, Any]:
         "pre_open_brief": _state.pre_open_brief,
         "pre_open_brief_date": _state.pre_open_brief_date,
         "market": mkt,
+        "health": _health.as_dict(),
+        "index_scan_concurrency": INDEX_SCAN_CONCURRENCY,
+        "last_reconcile": _state.last_reconcile,
         "events": list(_state.events),
     }
 
@@ -303,6 +313,20 @@ async def _run_options_cpr_paper(client: DhanClient) -> None:
     except Exception as exc:  # never let this break the options scanner
         _note_auth_failure(exc)
         _log("options_cpr_paper_error", error=_friendly_error(exc))
+
+
+async def _run_reconcile(client: DhanClient, cfg: AppSettings) -> None:
+    """Broker-vs-journal drift check. Read-only unless RECONCILE_AUTO_REPAIR."""
+    if cfg.risk.trading_mode != "LIVE":
+        return
+    from index_ai.reconcile import reconcile
+
+    result = await asyncio.to_thread(reconcile, client, mode="LIVE")
+    _state.last_reconcile = result
+    if result.get("issues"):
+        _log("reconcile_drift", issues=len(result["issues"]),
+             kinds=sorted({i["kind"] for i in result["issues"]}),
+             repaired=len(result.get("repaired") or []))
 
 
 async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
@@ -582,30 +606,59 @@ async def _run_loop() -> None:
         client = DhanClient(cfg.dhan)
         rate_limited = False
         entries_ok = is_trading_entries_allowed()
-        try:
-            if cfg.risk.trading_mode == "LIVE":
-                from index_ai.dhan_orders import sync_open_live_trades
+        cycle_started = time.monotonic()
 
-                synced = sync_open_live_trades(client)
-                if synced:
-                    _log("live_orders_synced", updated=synced)
-            await _run_pre_open_brief_if_due(client, cfg)
-            await _close_stale_session_positions(client, cfg)
-            await _check_trails(client, cfg)
-            await _run_futures_paper(client)
-            await _run_options_cpr_paper(client)
+        def _stage_failed(name: str, exc: BaseException) -> None:
+            _note_auth_failure(exc)
+            _log("stage_error", stage=name, error=_friendly_error(exc))
+
+        async def _sync_live() -> None:
+            if cfg.risk.trading_mode != "LIVE":
+                return
+            from index_ai.dhan_orders import sync_open_live_trades
+
+            synced = await asyncio.to_thread(sync_open_live_trades, client)
+            if synced:
+                _log("live_orders_synced", updated=synced)
+
+        try:
+            # Stages are isolated: one failing step no longer aborts the cycle,
+            # so a flaky lane can't stop trailing stops from being checked.
+            for name, factory in (
+                ("live_order_sync", _sync_live),
+                ("pre_open_brief", lambda: _run_pre_open_brief_if_due(client, cfg)),
+                ("stale_positions", lambda: _close_stale_session_positions(client, cfg)),
+                ("trails", lambda: _check_trails(client, cfg)),
+                ("futures_paper", lambda: _run_futures_paper(client)),
+                ("options_cpr_paper", lambda: _run_options_cpr_paper(client)),
+                ("reconcile", lambda: _run_reconcile(client, cfg)),
+            ):
+                if not _state.running:
+                    break
+                await run_stage(_health, name, factory, on_error=_stage_failed)
 
             if is_square_off_window():
-                await _square_off_open(client, cfg)
+                await run_stage(_health, "square_off",
+                                lambda: _square_off_open(client, cfg), on_error=_stage_failed)
             else:
-                for key in configured_index_keys():
-                    if not _state.running:
-                        break
-                    await _scan_index(client, cfg, key, allow_entries=entries_ok)
-                    await asyncio.sleep(INDEX_SCAN_GAP_SECONDS)
+                keys = [k for k in configured_index_keys()]
+                await run_stage(
+                    _health,
+                    "index_scans",
+                    lambda: gather_limited(
+                        [
+                            (lambda k=k: _scan_index(client, cfg, k, allow_entries=entries_ok))
+                            for k in keys
+                        ],
+                        limit=INDEX_SCAN_CONCURRENCY,
+                    ),
+                    timeout=SCAN_INTERVAL_SECONDS,
+                    on_error=_stage_failed,
+                )
 
             _state.cycles += 1
             _state.last_cycle_at = now_ist_iso()
+            _health.last_cycle_ms = (time.monotonic() - cycle_started) * 1000
             backoff = SCAN_INTERVAL_SECONDS
         except DhanRateLimitError as exc:
             rate_limited = True

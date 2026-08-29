@@ -828,6 +828,20 @@ async def options_cpr_paper_status_api() -> dict[str, Any]:
     return options_cpr_paper_status()
 
 
+@app.get("/api/reconcile", include_in_schema=False)
+async def reconcile_api(repair: bool = Query(False)) -> dict[str, Any]:
+    """Broker-vs-journal drift check. Read-only unless repair=true (journal only)."""
+    cfg = settings()
+    if not cfg.dhan.ready:
+        raise HTTPException(status_code=400, detail=_dhan_setup_message())
+    from index_ai.reconcile import reconcile
+
+    client = DhanClient(cfg.dhan)
+    return await asyncio.to_thread(
+        reconcile, client, mode=cfg.risk.trading_mode, repair=repair or None
+    )
+
+
 @app.get("/api/brain/status", include_in_schema=False)
 async def brain_status_api() -> dict[str, Any]:
     """Unified ML brain: dataset size, walk-forward verdict, whether the gate is armed."""
