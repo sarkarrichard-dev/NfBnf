@@ -850,6 +850,20 @@ async def brain_status_api() -> dict[str, Any]:
     return status()
 
 
+@app.get("/api/brain/commentary", include_in_schema=False)
+async def brain_commentary_api(
+    kind: str = Query("pre_open"), refresh: bool = Query(False)
+) -> dict[str, Any]:
+    """Advisory-only AI commentary. Never gates or places a trade."""
+    from index_ai.brain.commentary import generate, latest
+
+    if not refresh:
+        cached = latest(kind)
+        if cached:
+            return cached
+    return await asyncio.to_thread(generate, kind)
+
+
 @app.post("/api/brain/train", include_in_schema=False)
 async def brain_train_api(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     """Retrain on every lane's closed trades. The gate arms only if walk-forward earns it."""

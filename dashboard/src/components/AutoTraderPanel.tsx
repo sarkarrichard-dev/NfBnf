@@ -41,6 +41,26 @@ type AutoStatus = {
   open_trades_live?: number
   events?: Array<Record<string, unknown>>
   market?: { is_open?: boolean; phase?: string; message?: string }
+  index_scan_concurrency?: number
+  health?: {
+    last_cycle_ms?: number
+    tripped?: string[]
+    stages?: Array<{
+      name: string
+      ok: number
+      failed: number
+      last_ms: number
+      avg_ms: number
+      tripped: boolean
+      last_error?: string | null
+      cooldown_remaining_s?: number
+    }>
+  }
+  last_reconcile?: {
+    ok?: boolean
+    issues?: Array<{ kind: string; security_id: number; expected_qty: number; broker_qty: number }>
+    skipped?: string
+  } | null
 }
 
 function actionClass(action?: string): string {
@@ -101,7 +121,12 @@ export function AutoTraderPanel() {
     openJournal != null ? `${openJournal} open in journal` : null,
     status?.auth_blocked ? 'Dhan token expired' : null,
     status?.last_error ? `⚠ ${status.last_error}` : null,
+    status?.health?.last_cycle_ms ? `cycle ${Math.round(status.health.last_cycle_ms)}ms` : null,
   ].filter(Boolean)
+
+  const stages = status?.health?.stages ?? []
+  const tripped = status?.health?.tripped ?? []
+  const drift = status?.last_reconcile?.issues ?? []
 
   const cells = heatmap.data?.cells || []
   const summary = heatmap.data?.summary || {}
@@ -142,6 +167,39 @@ export function AutoTraderPanel() {
       >
         {parts.join(' · ')}
       </p>
+
+      {tripped.length ? (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-sm text-amber-200">
+          Circuit breaker open on {tripped.join(', ')} — skipped until cooldown clears.
+        </p>
+      ) : null}
+
+      {drift.length ? (
+        <p className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-sm text-amber-200">
+          Broker/journal drift: {drift.map((d) => `${d.kind} on ${d.security_id} (${d.expected_qty}→${d.broker_qty})`).join('; ')}
+        </p>
+      ) : null}
+
+      {stages.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {stages.map((st) => (
+            <span
+              key={st.name}
+              title={st.last_error ?? `${st.ok} ok / ${st.failed} failed · avg ${Math.round(st.avg_ms)}ms`}
+              className={cn(
+                'rounded border px-1.5 py-0.5 font-mono text-[10px]',
+                st.tripped
+                  ? 'border-amber-700 text-amber-300'
+                  : st.failed > 0
+                    ? 'border-rose-800 text-rose-300'
+                    : 'border-slate-700 text-slate-400',
+              )}
+            >
+              {st.name} {Math.round(st.last_ms)}ms
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {heatmap.data?.error ? (
         <p className="text-sm text-red-300">{heatmap.data.error}</p>

@@ -29,6 +29,12 @@ const BacktestPanel = lazy(() =>
 const LearningPanel = lazy(() =>
   import('./components/LearningPanel').then((m) => ({ default: m.LearningPanel })),
 )
+const BrainPanel = lazy(() =>
+  import('./components/BrainPanel').then((m) => ({ default: m.BrainPanel })),
+)
+const LanesPanel = lazy(() =>
+  import('./components/LanesPanel').then((m) => ({ default: m.LanesPanel })),
+)
 
 type StatusResponse = {
   trading_mode: string
@@ -146,6 +152,11 @@ function App() {
             period={period}
             mtmUpdatedAt={dashboard.mtmUpdatedAt}
           />
+          <CollapsibleSection title="Strategy lanes (paper)" defaultOpen>
+            <Suspense fallback={<PanelFallback />}>
+              <LanesPanel />
+            </Suspense>
+          </CollapsibleSection>
         </div>
 
         <aside className="space-y-4">
@@ -157,6 +168,11 @@ function App() {
           <CollapsibleSection title="Dhan login & token">
             <Suspense fallback={<PanelFallback />}>
               <DhanAuthPanel />
+            </Suspense>
+          </CollapsibleSection>
+          <CollapsibleSection title="AI brain & ML gate" defaultOpen>
+            <Suspense fallback={<PanelFallback />}>
+              <BrainPanel />
             </Suspense>
           </CollapsibleSection>
           <CollapsibleSection title="Auto trader & scanner" defaultOpen>
