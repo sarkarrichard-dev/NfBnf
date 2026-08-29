@@ -288,11 +288,139 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def lanes() -> list[str]:
+    raw = os.getenv("OPTIONS_CPR_PAPER_LANES", "buy,sell")
+    return [x.strip().lower() for x in raw.split(",") if x.strip() in {"buy", "sell"}]
+
+
+def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
+    """Directional wide-spread (or naked, per config) selling — mirrors sell.replay_sell_session."""
+    from index_ai.strategies.options_cpr.sell import _sell_friction, _spread_mark
+    from index_ai.strategies.options_cpr.premium import strike_for_delta
+
+    cfg = _cfg(key)
+    try:
+        s5, s15 = _fetch(client, key, "5"), _fetch(client, key, "15")
+    except Exception as exc:
+        return {"instrument": key, "lane": "sell", "event": "fetch_error", "error": str(exc)}
+    if s5.empty or s15.empty:
+        return {"instrument": key, "lane": "sell", "event": "no_data"}
+    d5, d15 = _sessions(s5), _sessions(s15)
+    days = sorted(set(d5) & set(d15))
+    if len(days) < 2:
+        return {"instrument": key, "lane": "sell", "event": "need_two_sessions"}
+    today, prev = days[-1], days[-2]
+    today5, prev5 = d5[today], d5[prev]
+    d15_dir = _dir_15m(d15[prev], d15[today], cfg)
+    cpr = cpr_context(prev5, cfg)
+    df = add_indicators(pd.concat([prev5.tail(cfg.warmup_bars + 5), today5], ignore_index=True), cfg)
+    i = len(df) - 1
+    ts = now_ist()
+    spot = float(df.iloc[i]["close"])
+    open_ts = pd.to_datetime(today5["datetime"]).iloc[0]
+    m = _mte(cfg, ts, open_ts)
+
+    inst = state.setdefault(key, {})
+    ctr = inst.get("sell_day")
+    if not ctr or ctr.get("date") != str(today):
+        ctr = {"date": str(today), "trades": 0, "consec_losses": 0, "daily_pnl": 0.0, "kill": False}
+        inst["sell_day"] = ctr
+    pos = inst.get("sell_position")
+    out: dict[str, Any] = {"instrument": key, "lane": "sell", "event": "none"}
+
+    if pos:
+        is_put = pos["structure"] in ("SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT")
+        debit = _spread_mark(spot, pos["short_k"], pos["long_k"], is_put, cfg.iv, m)
+        broke = (spot < cpr.tc) if is_put else (spot > cpr.bc)
+        flip = d15_dir != 0 and d15_dir != (1 if is_put else -1)
+        reason = None
+        if debit >= cfg.sell_stop_credit_mult * pos["entry_credit"]:
+            reason, debit = "spread_stop", cfg.sell_stop_credit_mult * pos["entry_credit"]
+        elif debit <= (1.0 - cfg.sell_credit_capture_target) * pos["entry_credit"]:
+            reason = "credit_capture"
+        elif broke:
+            reason = "structural_sl"
+        elif flip:
+            reason = "trend_flip_15m"
+        elif ts.time() >= cfg.square_off_time:
+            reason = "square_off"
+        if reason:
+            gross = (pos["entry_credit"] - debit) * cfg.lot_size
+            fric = _sell_friction(pos["entry_credit"], pos["wing_pts"], cfg.lot_size, cfg)
+            net = gross - fric
+            ctr["daily_pnl"] = round(ctr["daily_pnl"] + net, 2)
+            ctr["consec_losses"] = 0 if net > 0 else ctr["consec_losses"] + 1
+            if ctr["consec_losses"] >= cfg.max_consecutive_losses:
+                ctr["kill"] = True
+            trade = {
+                "instrument": key, "mode": "PAPER", "premium_model": "bs_proxy", "lane": "sell",
+                "structure": pos["structure"], "exit_reason": reason,
+                "entry_time": pos["entry_time"], "exit_time": now_ist_iso(),
+                "entry_spot": round(pos["entry_spot"], 2), "exit_spot": round(spot, 2),
+                "short_strike": pos["short_k"], "long_strike": pos["long_k"],
+                "entry_credit": round(pos["entry_credit"], 2), "exit_debit": round(debit, 2),
+                "qty": cfg.lot_size, "gross_rupees": round(gross, 2),
+                "friction_rupees": round(fric, 2), "net_rupees": round(net, 2),
+            }
+            _journal(trade)
+            inst["sell_position"] = None
+            out.update(event="exit", trade=trade)
+        else:
+            out["event"] = "hold"
+        return out
+
+    if ctr["kill"] or ctr["trades"] >= cfg.max_trades_per_day:
+        out["reason"] = "kill switch" if ctr["kill"] else "max trades/day"
+        return out
+    cap = cfg.daily_loss_cap_rupees or (cfg.max_daily_loss_pct / 100.0 * cfg.capital)
+    if ctr["daily_pnl"] <= -cap:
+        out["reason"] = "daily loss circuit breaker"
+        return out
+    if not (cfg.first_entry_time <= ts.time() <= cfg.last_entry_time):
+        out["reason"] = "outside entry window"
+        return out
+    side, why = evaluate_entry(df, i, cpr, cfg)
+    if side is None:
+        out["reason"] = why
+        return out
+    bullish = side == "CE"
+    if d15_dir != 0 and d15_dir != (1 if bullish else -1):
+        out["reason"] = "15m EMA not aligned"
+        return out
+    is_put, naked = bullish, cfg.sell_naked
+    short_k = strike_for_delta(spot, cfg.strike_step, not is_put, cfg.iv, m, cfg.sell_short_delta)
+    if naked:
+        long_k, structure = None, ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL")
+    else:
+        wing_raw = spot * (1.0 - cfg.sell_wing_pct) if is_put else spot * (1.0 + cfg.sell_wing_pct)
+        long_k = round(wing_raw / cfg.strike_step) * cfg.strike_step
+        long_k = min(long_k, short_k - cfg.strike_step) if is_put else max(long_k, short_k + cfg.strike_step)
+        structure = "SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD"
+    credit = _spread_mark(spot, short_k, long_k, is_put, cfg.iv, m)
+    if credit < cfg.sell_min_credit_pts:
+        out["reason"] = f"credit {credit:.1f} < min {cfg.sell_min_credit_pts}"
+        return out
+    inst["sell_position"] = {
+        "structure": structure, "entry_spot": spot, "entry_time": now_ist_iso(),
+        "short_k": short_k, "long_k": long_k, "entry_credit": credit,
+        "wing_pts": abs(short_k - long_k) if long_k is not None else 0.0,
+    }
+    ctr["trades"] += 1
+    out.update(event="entry", position=inst["sell_position"], reason=why)
+    return out
+
+
 def scan_options_cpr_paper(client: DhanClient) -> list[dict[str, Any]]:
     if not enabled():
         return []
     state = _load_state()
-    events = [tick(client, key, state) for key in instruments()]
+    active = lanes()
+    events: list[dict[str, Any]] = []
+    for key in instruments():
+        if "buy" in active:
+            events.append(tick(client, key, state))
+        if "sell" in active:
+            events.append(tick_sell(client, key, state))
     _save_state(state)
     return events
 
@@ -309,13 +437,19 @@ def options_cpr_paper_status() -> dict[str, Any]:
     trades = _recent_trades(300)
     today = now_ist().date().isoformat()
     todays = [t for t in trades if str(t.get("exit_time", ""))[:10] == today]
+    open_pos: dict[str, Any] = {}
+    for k, v in state.items():
+        if not isinstance(v, dict):
+            continue
+        if v.get("position"):
+            open_pos[f"{k}:buy"] = v["position"]
+        if v.get("sell_position"):
+            open_pos[f"{k}:sell"] = v["sell_position"]
     return {
         "enabled": enabled(),
         "instruments": instruments(),
-        "open_positions": {
-            k: v.get("position") for k, v in state.items()
-            if isinstance(v, dict) and v.get("position")
-        },
+        "lanes": lanes(),
+        "open_positions": open_pos,
         "today": {
             "closed": len(todays),
             "net_rupees": round(sum(float(t["net_rupees"]) for t in todays), 2),

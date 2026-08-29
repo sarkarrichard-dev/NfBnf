@@ -92,19 +92,12 @@ def pick_auto_credit(
         )
 
     if bias == "SIDEWAYS":
-        if ema_bull or ema_bear:
-            return (
-                None,
-                (
-                    f"AUTO: Sideways CPR but EMA {aligned} — "
-                    f"wait for cross or range (no iron condor vs trend)."
-                ),
-                "wait",
-            )
-        return _gate_volume(
-            "SELL_IRON_CONDOR",
-            f"AUTO [range]: Sideways CPR — iron condor (EMA {aligned or 'flat'}). {regime.note}",
-            "cpr_sideways",
+        # Directional-only credit policy: no range selling (iron condor). A sideways
+        # CPR is a no-trade for the sell lane — wait for a directional break.
+        return (
+            None,
+            f"AUTO: Sideways CPR — directional-only credit policy, no range sell. {regime.note}",
+            "wait",
         )
 
     if bias == "TRENDING_BULL" and ema_bull:

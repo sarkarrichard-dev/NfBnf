@@ -19,7 +19,12 @@ import pandas as pd
 
 from index_ai.charges import half_spread_points, leg_charge_rupees
 from index_ai.strategies.options_cpr.config import OptionsCprConfig, config_for
-from index_ai.strategies.options_cpr.engine import add_indicators, cpr_context, evaluate_entry
+from index_ai.strategies.options_cpr.engine import (
+    add_indicators,
+    cpr_context,
+    entry_features,
+    evaluate_entry,
+)
 from index_ai.strategies.options_cpr.premium import premium_at, select_strike
 
 _MINS = 375.0  # trading minutes per session
@@ -111,6 +116,7 @@ def replay_session(
                 "gross_rupees": round(gross, 2),
                 "friction_rupees": round(fric, 2),
                 "net_rupees": round(net, 2),
+                "features": pos["features"],
             }
         )
         pos["qty_open"] -= qty
@@ -245,6 +251,7 @@ def replay_session(
             "entry_spot": c,
             "entry_premium": entry_prem,
             "entry_time": ts,
+            "features": entry_features(df, i, cpr, prev_day_ohlc),
             "sl_premium": sl_premium,
             "r_unit": r_unit,
             "target_premium": entry_prem + cfg.risk_reward_ratio * r_unit,

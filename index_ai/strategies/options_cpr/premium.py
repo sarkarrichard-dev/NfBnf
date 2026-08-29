@@ -57,6 +57,28 @@ def premium_at(
     return bs_price_delta(spot, strike, t, iv, is_call)[0]
 
 
+def strike_for_delta(
+    spot: float, step: int, is_call: bool, iv: float, minutes_to_expiry: float, target_delta: float
+) -> float:
+    """Nearest strike (rounded to ``step``) whose |delta| is closest to ``target_delta``."""
+    t = max(1e-9, minutes_to_expiry) / _MINUTES_PER_YEAR
+    atm = atm_strike(spot, step)
+    best, best_err = atm, 9.9
+    for k in range(-12, 13):
+        strike = atm + k * step
+        if strike <= 0:
+            continue
+        d = abs(bs_price_delta(spot, strike, t, iv, is_call)[1])
+        # for a call, delta falls as strike rises; only consider OTM strikes
+        if is_call and strike < atm - step:
+            continue
+        if not is_call and strike > atm + step:
+            continue
+        if abs(d - target_delta) < best_err:
+            best, best_err = strike, abs(d - target_delta)
+    return best
+
+
 if __name__ == "__main__":  # ponytail self-check
     # ATM call ~ 0.4 * sigma * S * sqrt(T) (Brenner-Subrahmanyam)
     S, T, IV = 24000.0, 2.0 / 365.0, 0.12

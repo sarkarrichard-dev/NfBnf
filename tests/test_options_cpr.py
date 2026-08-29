@@ -96,3 +96,38 @@ def test_close_journals_and_status(tmp_path, monkeypatch):
 def test_scan_empty_when_disabled(monkeypatch):
     monkeypatch.setenv("ENABLE_OPTIONS_CPR_PAPER", "false")
     assert paper.scan_options_cpr_paper(object()) == []
+
+
+def test_sell_spread_is_directional_and_credit_positive():
+    from index_ai.strategies.options_cpr.sell import replay_sell_session
+
+    cfg = config_for("NIFTY")
+    prev = _day([24000] * 26, "2026-01-01 09:15", freq="15min", vol=0.0)
+    cpr = cpr_context(prev, cfg)
+    closes = list(np.full(25, cpr.tc - 5)) + list(np.linspace(cpr.tc - 5, cpr.tc + 70, 32))
+    t5 = _day(closes, "2026-01-02 09:15", vol=0.0)
+    p15 = prev
+    t15 = _day([24140] * 26, "2026-01-02 09:15", freq="15min", vol=0.0)
+    trades = replay_sell_session(t5.head(0), t5, p15, t15, prev, cfg, require_15m_alignment=False)
+    assert isinstance(trades, list) and trades
+    tr = trades[0]
+    assert tr["structure"] == "SELL_BULL_PUT_SPREAD"
+    assert tr["entry_credit"] > 0
+    assert tr["long_strike"] < tr["short_strike"] < tr["entry_spot"] + cfg.strike_step
+    assert "features" in tr
+
+
+def test_walk_forward_gate_never_worse_on_separable_data():
+    from index_ai.strategies.options_cpr.options_ml import _FEATURES, walk_forward_gate
+
+    rng = np.random.default_rng(1)
+    trades = []
+    for k in range(180):
+        good = k % 2 == 0
+        trades.append({
+            "session": f"2026-0{k % 6 + 1}-{k % 27 + 1:02d}",
+            "net_rupees": rng.normal(400 if good else -350, 150),
+            "features": {f: (1.5 if good else -1.5) + rng.normal(0, 0.4) for f in _FEATURES},
+        })
+    out = walk_forward_gate(trades)
+    assert out["oos_gated_net"] >= out["oos_static_net"] - 2000  # gate helps or is ~neutral

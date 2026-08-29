@@ -65,7 +65,8 @@ def test_auto_engine_never_uses_apex(monkeypatch) -> None:
     assert choice.engine in {"ema_credit", "wait"}
 
 
-def test_auto_engine_picks_credit_inside_range(monkeypatch) -> None:
+def test_auto_engine_no_range_credit_inside_range(monkeypatch) -> None:
+    # Directional-only credit policy: inside a sideways range AUTO waits, no iron condor.
     monkeypatch.setenv("AUTO_INCLUDE_APEX", "true")
     reload_strategy_params()
     previous = _previous()
@@ -93,5 +94,5 @@ def test_auto_engine_picks_credit_inside_range(monkeypatch) -> None:
         params=get_strategy_params(),
         close=float(mid),
     )
-    assert choice.engine == "ema_credit"
-    assert choice.action == "SELL_IRON_CONDOR"
+    assert choice.action != "SELL_IRON_CONDOR"
+    assert choice.engine in {"wait", "buy", "apex"}

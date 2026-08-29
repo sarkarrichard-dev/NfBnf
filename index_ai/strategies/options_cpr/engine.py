@@ -107,6 +107,30 @@ def evaluate_entry(
     return None, "no CPR breakout with EMA + volume confirmation"
 
 
+def entry_features(
+    df: pd.DataFrame, i: int, cpr: CprContext, prev_day: pd.DataFrame
+) -> dict[str, float]:
+    """Signal-state snapshot at bar ``i`` — the ML feature vector for one entry."""
+    row = df.iloc[i]
+    c = float(row["close"])
+    ts = pd.to_datetime(row["datetime"])
+    p_hi, p_lo = float(prev_day["high"].max()), float(prev_day["low"].min())
+    p_close = float(prev_day["close"].iloc[-1])
+    ret_15m = (c / float(df["close"].iloc[max(0, i - 3)]) - 1.0) * 100.0
+    return {
+        "minute_of_day": float(ts.hour * 60 + ts.minute),
+        "weekday": float(ts.weekday()),
+        "cpr_width_pct": cpr.width_pct,
+        "dist_tc_pct": (c - cpr.tc) / c * 100.0,
+        "dist_bc_pct": (c - cpr.bc) / c * 100.0,
+        "ema_spread_pct": (float(row["ema_fast"]) - float(row["ema_slow"])) / c * 100.0,
+        "atr_pct": float(row["atr"]) / c * 100.0,
+        "prev_day_range_pct": (p_hi - p_lo) / max(p_close, 1.0) * 100.0,
+        "ret_15m_pct": ret_15m,
+        "vol_ratio": float(row["volume"]) / max(float(row["vol_avg"]), 1.0),
+    }
+
+
 if __name__ == "__main__":  # ponytail self-check
     import numpy as np
 

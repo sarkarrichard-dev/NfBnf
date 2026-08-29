@@ -59,6 +59,8 @@ def _agg(trades: list[dict]) -> dict:
     for t in trades:
         by_year[str(t.get("session"))[:4]] += t["net_rupees"]
         by_reason[t.get("reason", "?")] += 1
+    long_tag = sum(1 for t in trades if t.get("side") == "CE" or t.get("structure") == "SELL_BULL_PUT_SPREAD")
+    short_tag = sum(1 for t in trades if t.get("side") == "PE" or t.get("structure") == "SELL_BEAR_CALL_SPREAD")
     return {
         "trades": len(nets),
         "win_rate_pct": round(100 * len(wins) / len(nets), 1),
@@ -71,8 +73,8 @@ def _agg(trades: list[dict]) -> dict:
         "profit_factor": round(sum(wins) / abs(sum(losses)), 2) if losses and sum(losses) else None,
         "max_drawdown": round(maxdd),
         "net_by_year": {k: round(v) for k, v in sorted(by_year.items()) if k and k != "None"},
-        "ce": sum(1 for t in trades if t["side"] == "CE"),
-        "pe": sum(1 for t in trades if t["side"] == "PE"),
+        "ce": long_tag,
+        "pe": short_tag,
         "by_reason": dict(sorted(by_reason.items(), key=lambda kv: -kv[1])),
     }
 
@@ -83,15 +85,22 @@ def main() -> None:
     ap.add_argument("--sessions", type=int, default=0)
     ap.add_argument("--param", action="append", default=[], metavar="FIELD=VAL")
     ap.add_argument("--no-15m", action="store_true", help="drop the 15m EMA-alignment gate")
+    ap.add_argument("--lane", choices=["buy", "sell", "both"], default="both")
+    ap.add_argument("--walkforward", action="store_true",
+                    help="also run the walk-forward ML win-probability gate on each lane")
     args = ap.parse_args()
 
     from index_ai.candle_cache import load_cached_range
     from index_ai.strategies.options_cpr.backtest import run
     from index_ai.strategies.options_cpr.config import config_for, with_overrides
+    from index_ai.strategies.options_cpr.options_ml import walk_forward_gate
+    from index_ai.strategies.options_cpr.sell import run_sell
 
     overrides = {k: _num(v) for k, v in (p.split("=", 1) for p in args.param if "=" in p)}
     OUT.mkdir(parents=True, exist_ok=True)
     summary: dict[str, dict] = {}
+    lanes = ["buy", "sell"] if args.lane == "both" else [args.lane]
+    lane_fn = {"buy": run, "sell": run_sell}
 
     for key in [i.upper() for i in args.instruments]:
         b5 = load_cached_range(key, "5")
@@ -100,31 +109,40 @@ def main() -> None:
             print(f"{key}: no 5m/15m cache — skip")
             continue
         cfg = with_overrides(config_for(key), **overrides) if overrides else config_for(key)
-        print(f"{key}: replaying...", flush=True)
-        trades = run(key, b5, b15, cfg=cfg, sessions=args.sessions,
-                     require_15m_alignment=not args.no_15m)
-        a = _agg(trades)
-        a["span"] = f"{trades[0]['session']} .. {trades[-1]['session']}" if trades else "—"
-        summary[key] = a
-        (OUT / f"{key}.json").write_text(
-            json.dumps({"summary": a, "trades": trades}, indent=2), encoding="utf-8"
-        )
-        print(
-            f"  {key} ({a['span']}): {a['trades']} trades ({a['ce']}CE/{a['pe']}PE), "
-            f"{a['win_rate_pct']}% win, PF {a['profit_factor']}, "
-            f"net Rs {a['net_rupees']:,} (gross {a['gross_rupees']:,}, friction {a['friction_rupees']:,}), "
-            f"maxDD Rs {a['max_drawdown']:,}",
-            flush=True,
-        )
+        for lane in lanes:
+            tag = f"{key}:{lane}"
+            print(f"{tag}: replaying...", flush=True)
+            trades = lane_fn[lane](key, b5, b15, cfg=cfg, sessions=args.sessions,
+                                   require_15m_alignment=not args.no_15m)
+            a = _agg(trades)
+            a["span"] = f"{trades[0]['session']} .. {trades[-1]['session']}" if trades else "—"
+            a["lane"] = lane
+            if args.walkforward:
+                a["walkforward"] = walk_forward_gate(trades)
+            summary[tag] = a
+            (OUT / f"{tag.replace(':', '_')}.json").write_text(
+                json.dumps({"summary": a, "trades": trades}, indent=2), encoding="utf-8"
+            )
+            print(
+                f"  {tag} ({a['span']}): {a['trades']} trades, "
+                f"{a['win_rate_pct']}% win, PF {a['profit_factor']}, "
+                f"net Rs {a['net_rupees']:,} (gross {a['gross_rupees']:,}, friction {a['friction_rupees']:,}), "
+                f"maxDD Rs {a['max_drawdown']:,}",
+                flush=True,
+            )
+            if args.walkforward and "oos_gated_net" in a["walkforward"]:
+                w = a["walkforward"]
+                print(f"    walk-forward gate: OOS static {w['oos_static_net']:,} -> "
+                      f"gated {w['oos_gated_net']:,} (delta {w['oos_delta']:,})", flush=True)
 
     lines = [
-        "# CPR + EMA option-buying backtest\n",
+        "# CPR + EMA directional options backtest — naked buy + directional wide-spread sell\n",
         "_Spot-replay with a Black-Scholes premium proxy (no historical option chain). "
         "Signal stats are meaningful; rupee P&L is indicative — calibrate vs the paper journal. "
-        "Per-trade loss is capped at 5% of **utilised** capital (premium x lot), per spec Section 4 — "
-        "this makes every stop <= 5% of premium, which is tight; flip `max_loss_pct_of_utilized_capital` "
-        "or the basis if that is not intended._\n",
-        "| Instrument | Span | Trades | CE/PE | Win% | PF | Net ₹ | Gross ₹ | Friction ₹ | Expectancy ₹ | Max DD ₹ |",
+        "Buy lane: per-trade loss capped at 5% of **utilised** capital (premium x lot) per spec Section 4 "
+        "(=> stop <= 5% of premium). Sell lane: directional bull-put / bear-call, stopped at "
+        "`sell_stop_credit_mult` x entry credit._\n",
+        "| Lane | Span | Trades | L/S | Win% | PF | Net ₹ | Gross ₹ | Friction ₹ | Expectancy ₹ | Max DD ₹ |",
         "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|",
     ]
     for k, a in summary.items():
@@ -138,6 +156,11 @@ def main() -> None:
             lines.append(f"\n*{k} by year* — " + "  ".join(f"{y}: ₹{v:,}" for y, v in a["net_by_year"].items()))
         if a.get("by_reason"):
             lines.append(f"*{k} exits* — " + "  ".join(f"{r}: {n}" for r, n in a["by_reason"].items()))
+        w = a.get("walkforward") or {}
+        if "oos_gated_net" in w:
+            lines.append(f"*{k} walk-forward ML gate* — OOS static ₹{w['oos_static_net']:,} → "
+                         f"gated ₹{w['oos_gated_net']:,} (Δ ₹{w['oos_delta']:,}, "
+                         f"{w['gated_trade_count']}/{w['trades']} trades kept)")
     (OUT / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (OUT / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print("\nWrote research/options_cpr/report.md")

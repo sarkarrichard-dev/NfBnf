@@ -52,6 +52,14 @@ class OptionsCprConfig:
     iv: float = 0.13                               # annualised, for the BS premium proxy
     assumed_days_to_expiry: float = 3.0            # fixed DTE for the proxy (weekly ~ 3, monthly ~ 8)
 
+    # --- directional-sell lane (wide credit spread) ---
+    sell_short_delta: float = 0.30                 # target delta of the short leg (near-OTM)
+    sell_wing_pct: float = 0.04                    # long-wing distance from spot, fraction (3-5%)
+    sell_credit_capture_target: float = 0.50       # exit when this fraction of the entry credit is decayed
+    sell_stop_credit_mult: float = 1.6            # exit when the spread's mark-to-close debit >= this x entry credit
+    sell_min_credit_pts: float = 5.0             # skip if the modelled net credit is thinner than this
+    sell_naked: bool = False                     # True = single short leg (2-leg friction), no wing / no defined risk
+
     # --- session, IST (Section 2) ---
     market_open: time = time(9, 15)
     first_entry_time: time = time(9, 20)
