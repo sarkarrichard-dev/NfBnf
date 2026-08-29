@@ -17,7 +17,11 @@ def _bars(closes, start="2026-08-05 09:15", freq="5min"):
 
 
 def test_enabled_and_instruments_from_env(monkeypatch):
+    # paper trading is ON by default so a fresh launch logs data without setup;
+    # live trading stays separately gated by TRADING_MODE + ALLOW_LIVE_TRADING
     monkeypatch.delenv("ENABLE_FUTURES_PAPER", raising=False)
+    assert paper.enabled() is True
+    monkeypatch.setenv("ENABLE_FUTURES_PAPER", "false")
     assert paper.enabled() is False
     monkeypatch.setenv("ENABLE_FUTURES_PAPER", "true")
     monkeypatch.setenv("FUTURES_PAPER_INSTRUMENTS", "NIFTY, SENSEX")

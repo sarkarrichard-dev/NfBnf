@@ -842,6 +842,22 @@ async def reconcile_api(repair: bool = Query(False)) -> dict[str, Any]:
     )
 
 
+@app.get("/api/market-log", include_in_schema=False)
+async def market_log_api(
+    session: str | None = Query(None),
+    instrument: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=2000),
+) -> dict[str, Any]:
+    """Time-series of what the system saw, plus why lanes did or didn't trade."""
+    from index_ai.market_log import observations, skip_reasons, stats
+
+    return {
+        "stats": stats(),
+        "observations": observations(session=session, instrument=instrument, limit=limit),
+        "top_skip_reasons": skip_reasons(session=session),
+    }
+
+
 @app.get("/api/daily-report", include_in_schema=False)
 async def daily_report_api(run: bool = Query(False)) -> dict[str, Any]:
     """Latest end-of-day report. run=true regenerates it now instead of waiting."""

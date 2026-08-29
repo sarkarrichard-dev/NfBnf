@@ -97,9 +97,41 @@ def sample_spreads(client: Any) -> dict[str, Any]:
             rows = getattr(book, "_rows", None)
             if rows:
                 oi_flow.record_snapshot(key, getattr(book, "expiry", ""), rows, spot)
+            _log_observation(key, book, spot, rows)
         except Exception as exc:
             out["sampled"][key] = {"error": str(exc)[:160]}
     return out
+
+
+def _log_observation(key: str, book: Any, spot: float, rows: Any) -> None:
+    """One market snapshot per index per cycle into the time-series log."""
+    try:
+        from index_ai.market_context import context as mkt
+        from index_ai.market_context.oi_flow import chain_oi, max_pain
+        from index_ai.market_context.spread_calib import bucket_half_spreads
+        from index_ai.market_log import record_observation
+        from index_ai.strategies.options_cpr.config import config_for
+
+        cfg = config_for(key)
+        atm = round(spot / cfg.strike_step) * cfg.strike_step
+        q = book.quote(atm, True)
+        near, wing = bucket_half_spreads(key)
+        ce = pe = pcr = mp = None
+        if rows:
+            oi = chain_oi(rows)
+            ce, pe = sum(oi["ce"].values()), sum(oi["pe"].values())
+            pcr = (pe / ce) if ce else None
+            mp = max_pain(rows)
+        ctx = mkt.latest() or {}
+        record_observation(
+            key, spot=spot, atm_iv=(q.iv if q else None), pcr=pcr, max_pain=mp,
+            ce_oi=ce, pe_oi=pe, near_half_spread=near, wing_half_spread=wing,
+            vix=(ctx.get("vix") or {}).get("last"),
+            regime=((ctx.get("conditions") or {}).get("allow_selling") and "sell_ok") or "sell_blocked",
+            expiry=getattr(book, "expiry", None),
+        )
+    except Exception:
+        pass
 
 
 def eod_due() -> bool:

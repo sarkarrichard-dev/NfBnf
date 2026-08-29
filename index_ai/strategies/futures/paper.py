@@ -36,7 +36,7 @@ JOURNAL_PATH = MEMORY_DIR / "futures_journal.jsonl"
 
 
 def enabled() -> bool:
-    return os.getenv("ENABLE_FUTURES_PAPER", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("ENABLE_FUTURES_PAPER", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def instruments() -> list[str]:

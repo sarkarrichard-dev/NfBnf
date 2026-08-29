@@ -42,7 +42,7 @@ _MINS = 375.0
 
 
 def enabled() -> bool:
-    return os.getenv("ENABLE_OPTIONS_CPR_PAPER", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("ENABLE_OPTIONS_CPR_PAPER", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def instruments() -> list[str]:
@@ -136,6 +136,22 @@ def _viability_block(key: str, lane: str, cfg: OptionsCprConfig) -> str | None:
         return f"{v.verdict}: {v.reason}" if v.verdict == NOT_VIABLE else None
     except Exception:
         return None       # never let the check itself stop a lane
+
+
+def _log_decision(key: str, lane: str, out: dict[str, Any]) -> dict[str, Any]:
+    """Persist why this evaluation did or did not trade — the retrospect record."""
+    try:
+        from index_ai.market_log import record_decision
+
+        ev = str(out.get("event") or "none")
+        traded = ev in {"entry", "partial"}
+        brain = out.get("brain") or {}
+        record_decision(key, lane, ev, traded=traded,
+                        reason=out.get("reason") or brain.get("reason"),
+                        win_probability=brain.get("win_probability"))
+    except Exception:
+        pass
+    return out
 
 
 def _brain_check(trade_like: dict[str, Any], lane: str, df, today5, prev5, cpr,
@@ -327,6 +343,7 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     ctr = _day_counters(state, key, str(today))
     pos = inst_state.get("position")
     book = _chain_book(client, key, spot=spot)
+    lane_tag = "buy"
     out: dict[str, Any] = {"instrument": key, "event": "none"}
 
     if pos:
@@ -378,31 +395,31 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         else:
             state[key]["position"] = pos
             out["event"] = "hold"
-        return out
+        return _log_decision(key, lane_tag, out)
 
     # entry
     if ctr["kill"] or ctr["trades"] >= cfg.max_trades_per_day:
         out["reason"] = "kill switch" if ctr["kill"] else "max trades/day"
-        return out
+        return _log_decision(key, lane_tag, out)
     cap = cfg.daily_loss_cap_rupees or (cfg.max_daily_loss_pct / 100.0 * cfg.capital)
     if ctr["daily_pnl"] <= -cap:
         out["reason"] = "daily loss circuit breaker"
-        return out
+        return _log_decision(key, lane_tag, out)
     if not (cfg.first_entry_time <= ts.time() <= cfg.last_entry_time):
         out["reason"] = "outside entry window"
-        return out
+        return _log_decision(key, lane_tag, out)
     blocked = _viability_block(key, "buy", cfg)
     if blocked:
         out["reason"] = blocked
-        return out
+        return _log_decision(key, lane_tag, out)
     side, why = evaluate_entry(df, i, cpr, cfg)
     if side is None:
         out["reason"] = why
-        return out
+        return _log_decision(key, lane_tag, out)
     is_call = side == "CE"
     if d15_dir != 0 and d15_dir != (1 if is_call else -1):
         out["reason"] = "15m EMA not aligned"
-        return out
+        return _log_decision(key, lane_tag, out)
 
     want_strike = select_strike(spot, cfg.strike_step, is_call, cfg.strike_selection)
     mte = _mte(cfg, ts, open_ts)
@@ -410,7 +427,7 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
                                                spot=spot, ts=ts, open_ts=open_ts)
     if entry_prem <= 1.0:
         out["reason"] = "premium ~0 (no quote)"
-        return out
+        return _log_decision(key, lane_tag, out)
     # structural stop premium: proxy the premium at the CPR line (the chain has no
     # such hypothetical quote), floored by the % premium stop.
     struct_level = cpr.tc if is_call else cpr.bc
@@ -422,7 +439,7 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     r_unit = entry_prem - sl_premium
     if r_unit < entry_prem * 0.02:
         out["reason"] = "capital cap forces stop too tight"
-        return out
+        return _log_decision(key, lane_tag, out)
 
     pos = {
         "side": side, "is_call": is_call, "strike": strike, "entry_spot": spot,
@@ -436,12 +453,12 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     verdict = _brain_check(pos | {"instrument": key, "lane": "buy"}, "buy", df, today5, prev5, cpr, key=key)
     if not verdict["allowed"]:
         out["reason"] = f"brain: {verdict['reason']}"
-        return out
+        return _log_decision(key, lane_tag, out)
     pos["brain"] = verdict
     inst_state["position"] = pos
     ctr["trades"] += 1
     out.update(event="entry", position=pos, reason=why, brain=verdict)
-    return out
+    return _log_decision(key, lane_tag, out)
 
 
 def lanes() -> list[str]:
@@ -508,6 +525,7 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
         inst["sell_day"] = ctr
     pos = inst.get("sell_position")
     book = _chain_book(client, key, spot=spot)
+    lane_tag = "sell"
     out: dict[str, Any] = {"instrument": key, "lane": "sell", "event": "none"}
 
     if pos:
@@ -562,30 +580,30 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
             out.update(event="exit", trade=trade)
         else:
             out["event"] = "hold"
-        return out
+        return _log_decision(key, lane_tag, out)
 
     if ctr["kill"] or ctr["trades"] >= cfg.max_trades_per_day:
         out["reason"] = "kill switch" if ctr["kill"] else "max trades/day"
-        return out
+        return _log_decision(key, lane_tag, out)
     cap = cfg.daily_loss_cap_rupees or (cfg.max_daily_loss_pct / 100.0 * cfg.capital)
     if ctr["daily_pnl"] <= -cap:
         out["reason"] = "daily loss circuit breaker"
-        return out
+        return _log_decision(key, lane_tag, out)
     if not (cfg.first_entry_time <= ts.time() <= cfg.last_entry_time):
         out["reason"] = "outside entry window"
-        return out
+        return _log_decision(key, lane_tag, out)
     blocked = _viability_block(key, "sell", cfg)
     if blocked:
         out["reason"] = blocked
-        return out
+        return _log_decision(key, lane_tag, out)
     side, why = evaluate_entry(df, i, cpr, cfg)
     if side is None:
         out["reason"] = why
-        return out
+        return _log_decision(key, lane_tag, out)
     bullish = side == "CE"
     if d15_dir != 0 and d15_dir != (1 if bullish else -1):
         out["reason"] = "15m EMA not aligned"
-        return out
+        return _log_decision(key, lane_tag, out)
     is_put = bullish
     structure = ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL") if cfg.sell_naked else (
         "SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD")
@@ -597,13 +615,13 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
         spot=spot, ts=ts, open_ts=open_ts, mode="entry")
     if credit < cfg.sell_min_credit_pts:
         out["reason"] = f"credit {credit:.1f} < min {cfg.sell_min_credit_pts}"
-        return out
+        return _log_decision(key, lane_tag, out)
     max_loss = sp["max_loss_rupees"]
     if sp["long_k"] is not None:
         max_loss = round((abs(sp["short_k"] - sp["long_k"]) - credit) * cfg.lot_size, 2)
     if max_loss is not None and max_loss > cfg.sell_margin_budget_rupees * 1.05:
         out["reason"] = f"max loss ₹{max_loss:,.0f} over margin budget"
-        return out
+        return _log_decision(key, lane_tag, out)
     sell_pos = {
         "structure": structure, "entry_spot": spot, "entry_time": now_ist_iso(),
         "short_k": sp["short_k"], "long_k": sp["long_k"], "entry_credit": credit,
@@ -619,12 +637,12 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
     )
     if not verdict["allowed"]:
         out["reason"] = f"brain: {verdict['reason']}"
-        return out
+        return _log_decision(key, lane_tag, out)
     sell_pos["brain"] = verdict
     inst["sell_position"] = sell_pos
     ctr["trades"] += 1
     out.update(event="entry", position=inst["sell_position"], reason=why, brain=verdict)
-    return out
+    return _log_decision(key, lane_tag, out)
 
 
 def scan_options_cpr_paper(client: DhanClient) -> list[dict[str, Any]]:
