@@ -13,12 +13,13 @@ def test_sell_leg_carries_stt_buy_leg_carries_stamp():
     buy = leg_charge_rupees(200.0, 30, "BUY", rates=r)
     # turnover 6000: STT sell = 6, stamp buy = 0.18 -> sell strictly costlier
     assert sell > buy
+    # F&O options: flat brokerage per order (not min with a percentage).
     assert sell == round(
-        min(r.brokerage_per_order_rupees, r.brokerage_pct * 6000)
+        r.brokerage_per_order_rupees
         + r.exch_txn_pct_nse * 6000
         + r.sebi_pct * 6000
         + r.stt_sell_pct * 6000
-        + r.gst_pct * (min(20, 1.8) + r.exch_txn_pct_nse * 6000 + r.sebi_pct * 6000),
+        + r.gst_pct * (r.brokerage_per_order_rupees + r.exch_txn_pct_nse * 6000 + r.sebi_pct * 6000),
         2,
     )
 

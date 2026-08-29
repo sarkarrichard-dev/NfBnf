@@ -131,6 +131,28 @@ def test_build_spread_wing_fits_margin_budget():
     assert sp["credit"] > 0
 
 
+def test_live_chain_quotes_and_real_charges(monkeypatch):
+    from index_ai.strategies.options_cpr import paper
+    from index_ai.strategies.options_cpr.live_chain import ChainBook
+
+    rows = {
+        24000.0: {"ce": {"last_price": 120.0, "top_bid_price": 119.0, "top_ask_price": 122.0,
+                         "security_id": 1, "greeks": {"delta": 0.5}}},
+    }
+    book = ChainBook("2026-09-02", rows)
+    q = book.quote(24000.0, is_call=True)
+    assert q.fill("BUY") == 122.0 and q.fill("SELL") == 119.0
+
+    cfg = config_for("NIFTY")
+    # real (dhan_ltp) fills: spread is in the price, so no extra half-spread term
+    real, br = paper._leg_friction(122.0, 119.0, cfg.lot_size, cfg, "dhan_ltp", "BUY")
+    proxy, _ = paper._leg_friction(122.0, 119.0, cfg.lot_size, cfg, "bs_proxy", "BUY")
+    assert proxy > real
+    # a Dhan contract note: two ₹20 orders dominate a small-premium leg
+    assert 35 <= br["brokerage"] <= 40
+    assert br["stt"] > 0 and br["total"] == round(sum(v for k, v in br.items() if k != "total"), 2)
+
+
 def test_walk_forward_gate_never_worse_on_separable_data():
     from index_ai.strategies.options_cpr.options_ml import _FEATURES, walk_forward_gate
 

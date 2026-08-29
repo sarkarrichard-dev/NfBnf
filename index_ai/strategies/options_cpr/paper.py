@@ -1,12 +1,15 @@
 """
-Live paper-trading for the CPR + EMA option-buying strategy.
+Live paper-trading for the CPR + EMA option lanes (naked buy + directional sell).
 
 Runs inside the scanner loop (behind ENABLE_OPTIONS_CPR_PAPER). Same signal +
-state machine as the backtest; the option premium is the same Black-Scholes
-proxy off spot (``premium.py``) — real Dhan option LTP is the obvious upgrade if
-premium-level accuracy matters. State in memory/options_cpr_paper.json, closed
-trades in memory/options_cpr_journal.jsonl. Separate from the options-sell
-executor / journal.
+state machine as the backtest, but the option premium comes from Dhan's **live
+option chain** (real LTP / bid / ask) whenever the market is open and a chain is
+reachable — entry fills at the ask, exits at the bid, and friction is the real
+itemised Dhan charge on the actual premiums. If a chain fetch fails it falls
+back to the Black-Scholes proxy (flagged ``premium_model: "bs_proxy"``).
+
+State in memory/options_cpr_paper.json, closed trades in
+memory/options_cpr_journal.jsonl. Separate from the options-sell executor.
 """
 
 from __future__ import annotations
@@ -19,11 +22,11 @@ from typing import Any
 import pandas as pd
 
 from index_ai.candle_cache import to_ist_session_frame
-from index_ai.charges import half_spread_points, leg_charge_rupees
+from index_ai.charges import half_spread_points, leg_charge_breakdown
 from index_ai.config import MEMORY_DIR
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.instruments import get_instrument
-from index_ai.market_clock import now_ist, now_ist_iso
+from index_ai.market_clock import is_market_open, now_ist, now_ist_iso
 from index_ai.strategies.options_cpr.config import OptionsCprConfig, config_for, with_overrides
 from index_ai.strategies.options_cpr.engine import add_indicators, cpr_context, evaluate_entry
 from index_ai.strategies.options_cpr.premium import premium_at, select_strike
@@ -106,12 +109,54 @@ def _day_counters(state: dict[str, Any], key: str, today: str) -> dict[str, Any]
     return c
 
 
-def _friction(entry_prem: float, exit_prem: float, qty: int, cfg: OptionsCprConfig) -> float:
-    return (
-        leg_charge_rupees(entry_prem, qty, "BUY", exchange=cfg.exchange)
-        + leg_charge_rupees(exit_prem, qty, "SELL", exchange=cfg.exchange)
-        + half_spread_points(cfg.key) * max(1, qty) * 2
-    )
+def _chain_book(client: Any, key: str):
+    """Live ChainBook when the market is open and a chain is reachable, else None."""
+    if not is_market_open():
+        return None
+    try:
+        from index_ai.strategies.options_cpr.live_chain import ChainBook
+
+        return ChainBook.fetch(client, get_instrument(key))
+    except Exception:
+        return None
+
+
+def _mark_leg(book, strike: float, is_call: bool, cfg: OptionsCprConfig,
+              *, spot: float, ts, open_ts) -> tuple[float, str]:
+    """Current premium of one leg — real LTP from the live chain, else BS proxy."""
+    if book is not None:
+        q = book.quote(strike, is_call)
+        if q is not None:
+            return float(q.ltp), "dhan_ltp"
+    return premium_at(spot, strike, is_call, cfg.iv, _mte(cfg, ts, open_ts)), "bs_proxy"
+
+
+def _fill_leg(book, strike: float, is_call: bool, side: str, cfg: OptionsCprConfig,
+              *, spot: float, ts, open_ts) -> tuple[float, str, float, int | None]:
+    """Marketable fill for one leg — (premium, model, resolved_strike, security_id).
+    Ask (BUY) / bid (SELL) from the live chain, else the BS proxy."""
+    if book is not None:
+        q = book.quote(strike, is_call)
+        if q is not None:
+            return q.fill(side), "dhan_ltp", q.strike, q.security_id
+    return premium_at(spot, strike, is_call, cfg.iv, _mte(cfg, ts, open_ts)), "bs_proxy", strike, None
+
+
+def _leg_friction(open_prem: float, close_prem: float, qty: int, cfg: OptionsCprConfig,
+                  model: str, open_side: str = "BUY") -> tuple[float, dict[str, Any]]:
+    """One-leg round-trip cost + itemised breakdown. ``open_side`` is BUY for a long
+    leg, SELL for a short leg (STT lands on the sell). For real (bid/ask) fills the
+    spread is already in the price, so no separate slippage term."""
+    close_side = "SELL" if open_side.upper() == "BUY" else "BUY"
+    open_b = leg_charge_breakdown(open_prem, qty, open_side.upper(), exchange=cfg.exchange)
+    close_b = leg_charge_breakdown(close_prem, qty, close_side, exchange=cfg.exchange)
+    total = open_b["total"] + close_b["total"]
+    if model != "dhan_ltp":
+        total += half_spread_points(cfg.key) * max(1, qty) * 2
+    breakdown = {k: round(open_b[k] + close_b[k], 2) for k in open_b}
+    return round(total, 2), breakdown
+
+
 
 
 def _mte(cfg: OptionsCprConfig, ts, open_ts) -> float:
@@ -132,8 +177,9 @@ def _dir_15m(prev15: pd.DataFrame, today15: pd.DataFrame, cfg: OptionsCprConfig)
 def _close(pos: dict[str, Any], exit_prem: float, reason: str, spot: float,
            cfg: OptionsCprConfig, ctr: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     qty = pos["qty_open"]
+    model = pos.get("premium_model", "bs_proxy")
     gross = (exit_prem - pos["entry_premium"]) * qty
-    fric = _friction(pos["entry_premium"], exit_prem, qty, cfg)
+    fric, breakdown = _leg_friction(pos["entry_premium"], exit_prem, qty, cfg, model)
     net = gross - fric
     ctr["daily_pnl"] = round(ctr["daily_pnl"] + net, 2)
     if net > 0:
@@ -143,13 +189,14 @@ def _close(pos: dict[str, Any], exit_prem: float, reason: str, spot: float,
     if ctr["consec_losses"] >= cfg.max_consecutive_losses:
         ctr["kill"] = True
     trade = {
-        "instrument": cfg.key, "mode": "PAPER", "premium_model": "bs_proxy",
+        "instrument": cfg.key, "mode": "PAPER", "premium_model": model,
         "side": pos["side"], "strike": pos["strike"], "stage": pos["stage"], "exit_reason": reason,
+        "expiry": pos.get("expiry"), "security_id": pos.get("security_id"),
         "entry_time": pos["entry_time"], "exit_time": now_ist_iso(),
         "entry_spot": round(pos["entry_spot"], 2), "exit_spot": round(spot, 2),
         "entry_premium": round(pos["entry_premium"], 2), "exit_premium": round(exit_prem, 2),
         "qty": qty, "gross_rupees": round(gross, 2), "friction_rupees": round(fric, 2),
-        "net_rupees": round(net, 2),
+        "charges_breakdown": breakdown, "net_rupees": round(net, 2),
     }
     _journal(trade)
     state[cfg.key]["position"] = None
@@ -186,10 +233,12 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     inst_state = state.setdefault(key, {"position": None})
     ctr = _day_counters(state, key, str(today))
     pos = inst_state.get("position")
+    book = _chain_book(client, key)
     out: dict[str, Any] = {"instrument": key, "event": "none"}
 
     if pos:
-        p_now = premium_at(spot, pos["strike"], pos["is_call"], cfg.iv, _mte(cfg, ts, open_ts))
+        p_now, _m = _mark_leg(book, pos["strike"], pos["is_call"], cfg,
+                              spot=spot, ts=ts, open_ts=open_ts)
         e, r = pos["entry_premium"], pos["r_unit"]
         pos["peak_premium"] = max(pos["peak_premium"], p_now)
         pos["peak_spot"] = max(pos["peak_spot"], spot) if pos["is_call"] else min(pos["peak_spot"], spot)
@@ -258,12 +307,15 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         out["reason"] = "15m EMA not aligned"
         return out
 
-    strike = select_strike(spot, cfg.strike_step, is_call, cfg.strike_selection)
+    want_strike = select_strike(spot, cfg.strike_step, is_call, cfg.strike_selection)
     mte = _mte(cfg, ts, open_ts)
-    entry_prem = premium_at(spot, strike, is_call, cfg.iv, mte)
+    entry_prem, model, strike, sid = _fill_leg(book, want_strike, is_call, "BUY", cfg,
+                                               spot=spot, ts=ts, open_ts=open_ts)
     if entry_prem <= 1.0:
-        out["reason"] = "premium model returned ~0"
+        out["reason"] = "premium ~0 (no quote)"
         return out
+    # structural stop premium: proxy the premium at the CPR line (the chain has no
+    # such hypothetical quote), floored by the % premium stop.
     struct_level = cpr.tc if is_call else cpr.bc
     sl_premium = max(premium_at(struct_level, strike, is_call, cfg.iv, mte),
                      entry_prem * (1.0 - cfg.initial_sl_premium_pct / 100.0))
@@ -280,7 +332,8 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         "entry_premium": entry_prem, "entry_time": now_ist_iso(), "sl_premium": sl_premium,
         "r_unit": r_unit, "target_premium": entry_prem + cfg.risk_reward_ratio * r_unit,
         "qty_open": cfg.lot_size, "stage": 0, "peak_premium": entry_prem, "peak_spot": spot,
-        "partial_booked": False,
+        "partial_booked": False, "premium_model": model, "security_id": sid,
+        "expiry": getattr(book, "expiry", None),
     }
     inst_state["position"] = pos
     ctr["trades"] += 1
@@ -293,9 +346,35 @@ def lanes() -> list[str]:
     return [x.strip().lower() for x in raw.split(",") if x.strip() in {"buy", "sell"}]
 
 
+def _spread_quote(book, short_k, long_k, is_put, cfg, *, spot, ts, open_ts, mode):
+    """Net premium of the spread — real chain fills when live, else the BS proxy.
+
+    mode: 'entry' -> credit received (short bid - wing ask);
+          'mark'  -> debit to close at LTP (short ltp - wing ltp);
+          'exit'  -> debit to close marketable (short ask - wing bid).
+    Returns (value, model, short_px, long_px).
+    """
+    call_leg = not is_put
+    if book is not None:
+        qs = book.quote(short_k, call_leg)
+        ql = book.quote(long_k, call_leg) if long_k is not None else None
+        if qs is not None and (long_k is None or ql is not None):
+            if mode == "entry":
+                s_px, w_px = qs.fill("SELL"), (ql.fill("BUY") if ql else 0.0)
+            elif mode == "exit":
+                s_px, w_px = qs.fill("BUY"), (ql.fill("SELL") if ql else 0.0)
+            else:
+                s_px, w_px = qs.ltp, (ql.ltp if ql else 0.0)
+            return (s_px - w_px), "dhan_ltp", s_px, w_px
+    from index_ai.strategies.options_cpr.sell import _spread_mark
+
+    val = _spread_mark(spot, short_k, long_k, is_put, cfg.iv, _mte(cfg, ts, open_ts))
+    return val, "bs_proxy", val, 0.0
+
+
 def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     """Directional wide-spread (or naked, per config) selling — mirrors sell.replay_sell_session."""
-    from index_ai.strategies.options_cpr.sell import _build_spread, _sell_friction, _spread_mark
+    from index_ai.strategies.options_cpr.sell import _build_spread
 
     cfg = _cfg(key)
     try:
@@ -325,16 +404,18 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
         ctr = {"date": str(today), "trades": 0, "consec_losses": 0, "daily_pnl": 0.0, "kill": False}
         inst["sell_day"] = ctr
     pos = inst.get("sell_position")
+    book = _chain_book(client, key)
     out: dict[str, Any] = {"instrument": key, "lane": "sell", "event": "none"}
 
     if pos:
         is_put = pos["structure"] in ("SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT")
-        debit = _spread_mark(spot, pos["short_k"], pos["long_k"], is_put, cfg.iv, m)
+        debit, _mdl, _sx, _lx = _spread_quote(book, pos["short_k"], pos["long_k"], is_put, cfg,
+                                              spot=spot, ts=ts, open_ts=open_ts, mode="mark")
         broke = (spot < cpr.tc) if is_put else (spot > cpr.bc)
         flip = d15_dir != 0 and d15_dir != (1 if is_put else -1)
         reason = None
         if debit >= cfg.sell_stop_credit_mult * pos["entry_credit"]:
-            reason, debit = "spread_stop", cfg.sell_stop_credit_mult * pos["entry_credit"]
+            reason = "spread_stop"
         elif debit <= (1.0 - cfg.sell_credit_capture_target) * pos["entry_credit"]:
             reason = "credit_capture"
         elif broke:
@@ -344,23 +425,33 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
         elif ts.time() >= cfg.square_off_time:
             reason = "square_off"
         if reason:
-            gross = (pos["entry_credit"] - debit) * cfg.lot_size
-            fric = _sell_friction(pos["short_px"], pos.get("long_px", 0.0), cfg.lot_size, cfg)
+            exit_debit, model, sx, lx = _spread_quote(
+                book, pos["short_k"], pos["long_k"], is_put, cfg,
+                spot=spot, ts=ts, open_ts=open_ts, mode="exit")
+            gross = (pos["entry_credit"] - exit_debit) * cfg.lot_size
+            f_short, b_short = _leg_friction(pos["short_px"], sx, cfg.lot_size, cfg, model, "SELL")
+            fric, breakdown = f_short, b_short
+            if pos["long_k"] is not None:
+                f_long, b_long = _leg_friction(pos.get("long_px", 0.0), lx, cfg.lot_size, cfg, model, "BUY")
+                fric += f_long
+                breakdown = {k: round(b_short[k] + b_long[k], 2) for k in b_short}
             net = gross - fric
             ctr["daily_pnl"] = round(ctr["daily_pnl"] + net, 2)
             ctr["consec_losses"] = 0 if net > 0 else ctr["consec_losses"] + 1
             if ctr["consec_losses"] >= cfg.max_consecutive_losses:
                 ctr["kill"] = True
             trade = {
-                "instrument": key, "mode": "PAPER", "premium_model": "bs_proxy", "lane": "sell",
+                "instrument": key, "mode": "PAPER", "premium_model": model, "lane": "sell",
                 "structure": pos["structure"], "exit_reason": reason,
+                "expiry": pos.get("expiry"),
                 "entry_time": pos["entry_time"], "exit_time": now_ist_iso(),
                 "entry_spot": round(pos["entry_spot"], 2), "exit_spot": round(spot, 2),
                 "short_strike": pos["short_k"], "long_strike": pos["long_k"],
-                "entry_credit": round(pos["entry_credit"], 2), "exit_debit": round(debit, 2),
+                "entry_credit": round(pos["entry_credit"], 2), "exit_debit": round(exit_debit, 2),
                 "max_loss_rupees": pos.get("max_loss_rupees"),
                 "qty": cfg.lot_size, "gross_rupees": round(gross, 2),
-                "friction_rupees": round(fric, 2), "net_rupees": round(net, 2),
+                "friction_rupees": round(fric, 2), "charges_breakdown": breakdown,
+                "net_rupees": round(net, 2),
             }
             _journal(trade)
             inst["sell_position"] = None
@@ -390,19 +481,28 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
     is_put = bullish
     structure = ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL") if cfg.sell_naked else (
         "SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD")
+    # strike selection (short by delta, wing sized to the margin budget) from the proxy;
+    # then price it with the real chain.
     sp = _build_spread(spot, cfg, is_put, m)
-    if sp["credit"] < cfg.sell_min_credit_pts:
-        out["reason"] = f"credit {sp['credit']:.1f} < min {cfg.sell_min_credit_pts}"
+    credit, model, short_px, long_px = _spread_quote(
+        book, sp["short_k"], sp["long_k"], is_put, cfg,
+        spot=spot, ts=ts, open_ts=open_ts, mode="entry")
+    if credit < cfg.sell_min_credit_pts:
+        out["reason"] = f"credit {credit:.1f} < min {cfg.sell_min_credit_pts}"
         return out
-    if sp["max_loss_rupees"] is not None and sp["max_loss_rupees"] > cfg.sell_margin_budget_rupees * 1.05:
-        out["reason"] = f"max loss ₹{sp['max_loss_rupees']:,.0f} over margin budget"
+    max_loss = sp["max_loss_rupees"]
+    if sp["long_k"] is not None:
+        max_loss = round((abs(sp["short_k"] - sp["long_k"]) - credit) * cfg.lot_size, 2)
+    if max_loss is not None and max_loss > cfg.sell_margin_budget_rupees * 1.05:
+        out["reason"] = f"max loss ₹{max_loss:,.0f} over margin budget"
         return out
     inst["sell_position"] = {
         "structure": structure, "entry_spot": spot, "entry_time": now_ist_iso(),
-        "short_k": sp["short_k"], "long_k": sp["long_k"], "entry_credit": sp["credit"],
-        "short_px": sp["short_px"], "long_px": sp["long_px"],
+        "short_k": sp["short_k"], "long_k": sp["long_k"], "entry_credit": credit,
+        "short_px": short_px, "long_px": long_px,
         "wing_pts": abs(sp["short_k"] - sp["long_k"]) if sp["long_k"] is not None else 0.0,
-        "max_loss_rupees": sp["max_loss_rupees"],
+        "max_loss_rupees": max_loss, "premium_model": model,
+        "expiry": getattr(book, "expiry", None),
     }
     ctr["trades"] += 1
     out.update(event="entry", position=inst["sell_position"], reason=why)
