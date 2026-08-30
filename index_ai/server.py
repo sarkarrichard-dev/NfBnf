@@ -52,7 +52,12 @@ from index_ai.dhan_auth import (
     verify_access_token,
 )
 from index_ai.executor import build_execution_plan, execute_plan
-from index_ai.instruments import configured_index_keys, get_instrument, instruments, unconfigured_index_keys
+from index_ai.instruments import (
+    configured_index_keys,
+    get_instrument,
+    instruments,
+    unconfigured_index_keys,
+)
 from index_ai.learning import (
     format_trade_for_ui,
     init_db,
@@ -124,6 +129,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             auto_refresh_dhan_token(cfg.dhan, reason="startup")
     elif totp_credentials_configured():
         auto_refresh_dhan_token(cfg.dhan, force=True, reason="startup_totp")
+
     async def _candle_cache_loop() -> None:
         from index_ai.candle_cache import sync_all_configured
         from index_ai.dhan import DhanClient
@@ -171,6 +177,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         Without this the first mode switch or lot change pays ~2.5s of pool
         startup and lazy imports, which reads as a hung button on a fresh server.
         """
+
         def _touch() -> None:
             from index_ai.learning import open_trades_for_mode
             from index_ai.trade_lots import lots_settings_summary
@@ -328,17 +335,21 @@ def _trading_gates(cfg: Any) -> dict[str, Any]:
                 "title": "Live flag off",
                 "detail": (
                     "ALLOW_LIVE_TRADING=false — no broker orders are sent. Switching to Live "
-                    "sets the mode only; real orders stay blocked until you arm them with the "
-                    'confirmation phrase. Switching back to Paper always disarms.'
+                    "arms real orders only after you confirm in the dialog. Switching back to "
+                    "Paper always disarms."
                 ),
             }
         )
     if cfg.risk.allow_option_buying:
         reasons.append({"title": "Buy options", "detail": "BUY legs enabled (long premium)."})
     if cfg.risk.allow_option_selling:
-        reasons.append({"title": "Sell options", "detail": "SELL legs enabled (short premium, more margin)."})
+        reasons.append(
+            {"title": "Sell options", "detail": "SELL legs enabled (short premium, more margin)."}
+        )
     if not cfg.risk.allow_option_buying and not cfg.risk.allow_option_selling:
-        reasons.append({"title": "No option legs", "detail": "Enable buy and/or sell in Risk controls."})
+        reasons.append(
+            {"title": "No option legs", "detail": "Enable buy and/or sell in Risk controls."}
+        )
     ks = kill_switch_state(cfg.risk)
     reasons.append(
         {
@@ -403,6 +414,12 @@ async def ops_scan_preview(instrument: str = Query("NIFTY")) -> dict[str, Any]:
 
 @app.get("/api/status", include_in_schema=False)
 async def status() -> dict[str, Any]:
+    # ~250ms of synchronous SQLite + checklist work. Off the event loop, or every
+    # concurrent dashboard poll queues behind it and the whole UI stutters.
+    return await asyncio.to_thread(_status_payload)
+
+
+def _status_payload() -> dict[str, Any]:
     cfg = settings()
     return {
         "dhan_ready": cfg.dhan.ready,
@@ -430,16 +447,16 @@ async def status() -> dict[str, Any]:
         "dhan_health": check_dhan_health(cfg.dhan) if cfg.dhan.ready else None,
         "token_renew": token_renew_status(),
         "dhan_account_hint": (
-            "GET /api/dhan/account for live funds and trade book"
-            if cfg.dhan.ready
-            else None
+            "GET /api/dhan/account for live funds and trade book" if cfg.dhan.ready else None
         ),
         "api_capabilities": API_CAPABILITIES,
     }
 
 
 @app.get("/api/analytics", include_in_schema=False)
-async def analytics(enrich_mtm: bool = Query(True, description="Fetch live LTP for open legs")) -> dict[str, Any]:
+async def analytics(
+    enrich_mtm: bool = Query(True, description="Fetch live LTP for open legs"),
+) -> dict[str, Any]:
     cfg = settings()
     client = DhanClient(cfg.dhan) if cfg.dhan.ready and enrich_mtm else None
     return build_analytics(client=client, enrich_mtm=enrich_mtm)
@@ -643,7 +660,9 @@ async def get_lots_settings() -> dict[str, Any]:
 
 
 @app.post("/api/settings/lots", include_in_schema=False)
-async def update_lots_settings(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+async def update_lots_settings(
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
     """Set lots per trade (1–10) or adjust with delta (+1 / -1). Re-syncs open journal quantities."""
     from index_ai.learning import reconcile_all_trade_lots
 
@@ -715,7 +734,9 @@ async def auth_generate_consent() -> dict[str, Any]:
 
 
 @app.post("/api/auth/consume-consent", include_in_schema=False)
-async def auth_consume_consent(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+async def auth_consume_consent(
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
     try:
         reconcile_env_with_jwt()
         result = save_token_from_user_input(settings().dhan, str(payload.get("token_id") or ""))
@@ -778,7 +799,11 @@ async def auth_renew_token() -> dict[str, Any]:
     clear_auth_block()
     queue_bootstrap_scanner()
     cfg = settings()
-    return {**result, "health": check_dhan_health(cfg.dhan), "jwt": jwt_token_status(cfg.dhan.access_token)}
+    return {
+        **result,
+        "health": check_dhan_health(cfg.dhan),
+        "jwt": jwt_token_status(cfg.dhan.access_token),
+    }
 
 
 @app.post("/api/auth/totp-login", include_in_schema=False)
@@ -789,7 +814,11 @@ async def auth_totp_login() -> dict[str, Any]:
         clear_auth_block()
         queue_bootstrap_scanner()
         cfg = settings()
-        return {**result, "health": check_dhan_health(cfg.dhan), "jwt": jwt_token_status(cfg.dhan.access_token)}
+        return {
+            **result,
+            "health": check_dhan_health(cfg.dhan),
+            "jwt": jwt_token_status(cfg.dhan.access_token),
+        }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -817,13 +846,19 @@ async def research_backtest_dhan(
         raise HTTPException(
             status_code=400,
             detail="Dhan Data API / intraday charts required for backtest. "
-            + "; ".join(health.get("actions") or health.get("issues") or ["Enable Data API on Dhan Web."]),
+            + "; ".join(
+                health.get("actions") or health.get("issues") or ["Enable Data API on Dhan Web."]
+            ),
         )
     instrument = str(payload.get("instrument") or payload.get("index") or "NIFTY").strip().upper()
     lookback = int(payload.get("days") or payload.get("lookback_days") or 5)
     interval = str(payload.get("interval") or candle_interval_minutes())
     use_cache = str(payload.get("use_cache", "true")).strip().lower() not in {"0", "false", "no"}
-    refresh_cache = str(payload.get("refresh_cache", "false")).strip().lower() in {"1", "true", "yes"}
+    refresh_cache = str(payload.get("refresh_cache", "false")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     pnl_mode = str(payload.get("pnl_mode") or "option_proxy")
     from index_ai.backtest import run_dhan_intraday_backtest
 
@@ -1141,7 +1176,10 @@ async def live_plan(payload: dict[str, Any] = Body(default_factory=dict)) -> dic
     cfg = settings()
     instrument_key = str(payload.get("instrument") or "NIFTY")
     if not cfg.dhan.ready:
-        return {"instrument": get_instrument(instrument_key).__dict__, "error": _dhan_setup_message()}
+        return {
+            "instrument": get_instrument(instrument_key).__dict__,
+            "error": _dhan_setup_message(),
+        }
     try:
         return plan_instrument(
             client=DhanClient(cfg.dhan),
@@ -1233,7 +1271,9 @@ async def execute(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
 
 
 @app.post("/api/trades/check-trails", include_in_schema=False)
-async def check_trailing_stops(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+async def check_trailing_stops(
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
     """Update trailing stops on open trades using latest index price from Dhan."""
     cfg = settings()
     if not cfg.dhan.ready:
@@ -1250,9 +1290,7 @@ async def check_trailing_stops(payload: dict[str, Any] = Body(default_factory=di
         quote = client.index_ltp(inst)
         price = float(quote.get("last_price") or quote.get("ltp") or trade["signal"]["price"])
         fresh_st = fetch_supertrend_snapshot(client, instrument_key)
-        evaluation = evaluate_open_trade(
-            trade, price, cfg.risk, fresh_supertrend=fresh_st
-        )
+        evaluation = evaluate_open_trade(trade, price, cfg.risk, fresh_supertrend=fresh_st)
         update_trade_trail_meta(str(trade["id"]), evaluation["trail"])
         closed = None
         if evaluation.get("should_exit"):
@@ -1348,6 +1386,7 @@ async def dashboard_v2_redirect() -> RedirectResponse:
 if (DASHBOARD_DIR / "index.html").is_file():
     app.mount("/", StaticFiles(directory=str(DASHBOARD_DIR), html=True), name="dashboard")
 else:
+
     @app.get("/", include_in_schema=False)
     async def dashboard_missing() -> Response:
         html = """<!doctype html>
@@ -1399,7 +1438,9 @@ def run() -> None:
     log_path = configure_server_logging()
     import logging
 
-    logging.getLogger(__name__).info("Index Options AI — dashboard http://127.0.0.1:8000/ log=%s", log_path)
+    logging.getLogger(__name__).info(
+        "Index Options AI — dashboard http://127.0.0.1:8000/ log=%s", log_path
+    )
     uvicorn.run(
         "index_ai.server:app",
         host="127.0.0.1",

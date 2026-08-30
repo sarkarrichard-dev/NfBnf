@@ -6,17 +6,18 @@ type Size = 'sm' | 'md'
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    'bg-cyan-500 text-slate-950 border-cyan-400 hover:bg-cyan-400 ' +
-    'active:bg-cyan-600 shadow-sm shadow-cyan-500/20 active:shadow-none',
+    'bg-[var(--acc)] text-[var(--acc-ink)] border-[var(--acc)] ' +
+    'hover:bg-[var(--acc-strong)] hover:border-[var(--acc-strong)] ' +
+    'active:brightness-90 shadow-[0_0_14px_-3px_var(--acc)] active:shadow-none',
   secondary:
-    'bg-white/[0.04] text-slate-200 border-slate-700 hover:bg-white/[0.08] ' +
-    'hover:border-slate-600 active:bg-white/[0.02]',
+    'bg-white/[0.05] text-slate-100 border-white/15 hover:bg-white/[0.1] ' +
+    'hover:border-white/25 active:bg-white/[0.03]',
   danger:
-    'bg-rose-500/10 text-rose-200 border-rose-800 hover:bg-rose-500/20 ' +
-    'active:bg-rose-500/30',
+    'bg-[var(--armed)]/15 text-rose-100 border-[var(--armed)]/60 ' +
+    'hover:bg-[var(--armed)]/25 active:bg-[var(--armed)]/35',
   ghost:
-    'bg-transparent text-slate-400 border-transparent hover:text-slate-200 ' +
-    'hover:bg-white/[0.05] active:bg-white/[0.02]',
+    'bg-transparent text-slate-400 border-transparent hover:text-slate-100 ' +
+    'hover:bg-white/[0.06] active:bg-white/[0.02]',
 }
 
 const SIZES: Record<Size, string> = {
@@ -62,9 +63,12 @@ export function Button({
         'inline-flex select-none items-center justify-center rounded-md border font-medium',
         'transition-[transform,background-color,border-color,box-shadow] duration-100 ease-out',
         'active:scale-[0.97] motion-reduce:active:scale-100 motion-reduce:transition-none',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70',
-        'focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950',
-        'disabled:pointer-events-none disabled:opacity-45',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--acc)]/70',
+        'focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0d14]',
+        // Visibly disabled on a near-black ground: dim alone reads as "gone", so
+        // also flatten the fill and switch the cursor.
+        'disabled:pointer-events-none disabled:opacity-55 disabled:saturate-50 disabled:cursor-not-allowed',
+        'aria-[busy=true]:opacity-100 aria-[busy=true]:saturate-100',
         VARIANTS[variant],
         SIZES[size],
         className,
