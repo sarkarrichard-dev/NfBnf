@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from index_ai.analytics import _filter_period, _parse_created_at, _period_stats
+from index_ai.analytics import _filter_period, _period_stats
 from index_ai.dhan import DhanClient
 from index_ai.learning import format_trade_for_ui, recent_trades
 from index_ai.market_clock import format_ist_display, now_ist_iso

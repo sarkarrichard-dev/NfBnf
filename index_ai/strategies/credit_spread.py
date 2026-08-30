@@ -256,7 +256,6 @@ def fetch_leg_ltps(
         key = instrument_key or str(option.get("instrument") or "")
         if key:
             try:
-                from index_ai.dhan import DhanClient
                 from index_ai.instruments import get_instrument
                 from index_ai.options_expiry import resolve_trade_expiry
 

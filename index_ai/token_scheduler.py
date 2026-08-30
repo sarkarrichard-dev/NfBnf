@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime, time
+from datetime import datetime, time
 from typing import Any
 
 from index_ai.config import MEMORY_DIR

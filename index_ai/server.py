@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -14,7 +14,7 @@ import httpx
 import pandas as pd
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
 from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
 
@@ -33,9 +33,9 @@ from index_ai.config import (
     settings,
 )
 from index_ai.risk import kill_switch_state
-from index_ai.risk_policy import HARDCODED_RISK, policy_summary
+from index_ai.risk_policy import policy_summary
 from index_ai.strategies.strategy_params import strategy_tuning_summary
-from index_ai.dhan import DhanClient, chart_response_to_frame
+from index_ai.dhan import DhanClient
 from index_ai.dhan_auth import (
     auto_refresh_dhan_token,
     auth_setup_checklist,
@@ -114,7 +114,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     repair_closed_trade_prices()
     cfg = settings()
-    from index_ai.dhan_auth import auto_refresh_dhan_token, jwt_token_status, totp_credentials_configured
+    from index_ai.dhan_auth import jwt_token_status, totp_credentials_configured
 
     if cfg.dhan.ready:
         jwt = jwt_token_status(cfg.dhan.access_token) if cfg.dhan.access_token else {}
@@ -519,7 +519,7 @@ async def trades_live_mtm(sync_broker: bool = Query(False)) -> dict[str, Any]:
     if not cfg.dhan.ready:
         return {"error": _dhan_setup_message(), "trades": []}
     from index_ai.dhan_orders import sync_open_live_trades
-    from index_ai.learning import expand_trades_to_log_rows, open_trades
+    from index_ai.learning import expand_trades_to_log_rows
     from index_ai.mtm import enrich_open_trades_mtm
 
     client = DhanClient(cfg.dhan)
@@ -1173,7 +1173,7 @@ async def analyze(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
         raise RuntimeError("Provide candles and previous_day arrays for signal analysis.")
     today = pd.DataFrame(candles)
     prev = pd.DataFrame(previous)
-    from index_ai.strategies.strategy import intraday_strategy_signal
+    from index_ai.strategies.strategy import choose_option_from_chain, intraday_strategy_signal
 
     signal = intraday_strategy_signal(today, prev)
 

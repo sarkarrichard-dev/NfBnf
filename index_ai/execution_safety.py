@@ -10,7 +10,7 @@ from typing import Any
 from index_ai.charges import estimate_trade_cost
 from index_ai.config import AppSettings
 from index_ai.strategies.credit_spread import CREDIT_ACTIONS, credit_spread_entry_ready, is_credit_action
-from index_ai.strategies.premium_sell import PREMIUM_SELL_ACTIONS, is_premium_sell_action, premium_sell_entry_ready
+from index_ai.strategies.premium_sell import is_premium_sell_action, premium_sell_entry_ready
 from index_ai.instruments import IndexInstrument, get_instrument
 from index_ai.learning import is_broker_filled_open, open_trades_for_mode
 from index_ai.risk import check_execution_gates, kill_switch_state
