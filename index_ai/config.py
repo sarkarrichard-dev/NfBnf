@@ -161,7 +161,9 @@ def _build_risk_settings() -> RiskSettings:
         allow_live_trading=live_orders,
         allow_option_buying=p.allow_option_buying,
         allow_option_selling=p.allow_option_selling,
-        max_losing_trades_per_day=int(limits["max_consecutive_losing_trades"] or p.max_losing_trades_per_day),
+        max_losing_trades_per_day=int(
+            limits["max_consecutive_losing_trades"] or p.max_losing_trades_per_day
+        ),
         max_daily_loss_rupees=float(limits["max_daily_loss_rupees"]),
         trailing_stop_index_points=p.trailing_stop_index_points,
         min_confidence=p.min_confidence,
@@ -219,6 +221,7 @@ TOGGLEABLE_FLAGS: dict[str, str] = {
     "ENABLE_BRAIN_GATE": "ML win-probability entry gate",
     "ENABLE_AI_COMMENTARY": "LLM session commentary (advisory only)",
     "AUTO_START_SCANNER": "Start the scanner automatically at launch",
+    "ENABLE_S3_BACKUP": "Back up the journals, models and reports to S3 after the close",
 }
 
 
@@ -236,12 +239,16 @@ def feature_flags() -> list[dict[str, Any]]:
     out = []
     for key, desc in TOGGLEABLE_FLAGS.items():
         raw = os.getenv(key)
-        default_on = key in {"ENABLE_MARKET_LOG", "ENABLE_SPREAD_SAMPLING",
-                             "ENABLE_OPTIONS_CPR_PAPER", "ENABLE_FUTURES_PAPER",
-                             "ENABLE_BRAIN_GATE", "AUTO_START_SCANNER"}
+        default_on = key in {
+            "ENABLE_MARKET_LOG",
+            "ENABLE_SPREAD_SAMPLING",
+            "ENABLE_OPTIONS_CPR_PAPER",
+            "ENABLE_FUTURES_PAPER",
+            "ENABLE_BRAIN_GATE",
+            "AUTO_START_SCANNER",
+        }
         on = (raw.strip().lower() in {"1", "true", "yes", "on"}) if raw else default_on
-        out.append({"flag": key, "enabled": on, "description": desc,
-                    "set_in_env": raw is not None})
+        out.append({"flag": key, "enabled": on, "description": desc, "set_in_env": raw is not None})
     return out
 
 

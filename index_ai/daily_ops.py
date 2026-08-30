@@ -88,11 +88,19 @@ def sample_spreads(client: Any) -> dict[str, Any]:
             atm = round(spot / step) * step
             wing_dn = round(spot * (1 - cfg.sell_wing_pct) / step) * step
             wing_up = round(spot * (1 + cfg.sell_wing_pct) / step) * step
-            n = observe(book, key, spot, strikes=[
-                (atm, True), (atm, False),
-                (atm + step, True), (atm - step, False),
-                (wing_dn, False), (wing_up, True),
-            ])
+            n = observe(
+                book,
+                key,
+                spot,
+                strikes=[
+                    (atm, True),
+                    (atm, False),
+                    (atm + step, True),
+                    (atm - step, False),
+                    (wing_dn, False),
+                    (wing_up, True),
+                ],
+            )
             out["sampled"][key] = {"samples": n, "spot": round(spot, 2)}
             rows = getattr(book, "_rows", None)
             if rows:
@@ -124,10 +132,18 @@ def _log_observation(key: str, book: Any, spot: float, rows: Any) -> None:
             mp = max_pain(rows)
         ctx = mkt.latest() or {}
         record_observation(
-            key, spot=spot, atm_iv=(q.iv if q else None), pcr=pcr, max_pain=mp,
-            ce_oi=ce, pe_oi=pe, near_half_spread=near, wing_half_spread=wing,
+            key,
+            spot=spot,
+            atm_iv=(q.iv if q else None),
+            pcr=pcr,
+            max_pain=mp,
+            ce_oi=ce,
+            pe_oi=pe,
+            near_half_spread=near,
+            wing_half_spread=wing,
             vix=(ctx.get("vix") or {}).get("last"),
-            regime=((ctx.get("conditions") or {}).get("allow_selling") and "sell_ok") or "sell_blocked",
+            regime=((ctx.get("conditions") or {}).get("allow_selling") and "sell_ok")
+            or "sell_blocked",
             expiry=getattr(book, "expiry", None),
         )
     except Exception:
@@ -148,7 +164,10 @@ def eod_due() -> bool:
 def run_eod() -> dict[str, Any]:
     """Retrain the brain on today's closed trades, then write the day's report."""
     today = today_ist_date()
-    report: dict[str, Any] = {"date": today, "generated_at_ist": now_ist().isoformat(timespec="seconds")}
+    report: dict[str, Any] = {
+        "date": today,
+        "generated_at_ist": now_ist().isoformat(timespec="seconds"),
+    }
 
     try:
         from index_ai.brain.model import train
@@ -171,8 +190,10 @@ def run_eod() -> dict[str, Any]:
     except Exception as exc:
         report["viability"] = {"error": str(exc)[:200]}
 
-    for name, path in (("options_cpr", "index_ai.strategies.options_cpr.paper:options_cpr_paper_status"),
-                       ("futures", "index_ai.strategies.futures.paper:futures_paper_status")):
+    for name, path in (
+        ("options_cpr", "index_ai.strategies.options_cpr.paper:options_cpr_paper_status"),
+        ("futures", "index_ai.strategies.futures.paper:futures_paper_status"),
+    ):
         try:
             mod_name, attr = path.split(":")
             mod = __import__(mod_name, fromlist=[attr])
@@ -188,18 +209,30 @@ def run_eod() -> dict[str, Any]:
     except Exception as exc:
         report["commentary"] = f"(unavailable: {exc})"
 
+    # Off-machine backup before the report is written, so the snapshot it uploads
+    # is of a settled memory/ dir; the report's own backup status is one run behind.
+    try:
+        from index_ai.cloud_backup import run_backup
+
+        report["backup"] = run_backup()
+    except Exception as exc:
+        report["backup"] = {"error": str(exc)[:200]}
+
     try:
         REPORT_DIR.mkdir(parents=True, exist_ok=True)
         (REPORT_DIR / f"{today}.json").write_text(
-            json.dumps(report, indent=2, default=str), encoding="utf-8")
+            json.dumps(report, indent=2, default=str), encoding="utf-8"
+        )
         (REPORT_DIR / f"{today}.md").write_text(render_markdown(report), encoding="utf-8")
     except Exception:
         pass
 
     st = _state()
     st["eod_date"] = today
-    st["last_eod"] = {"at": report["generated_at_ist"],
-                      "brain_trained": bool((report.get("brain") or {}).get("trained"))}
+    st["last_eod"] = {
+        "at": report["generated_at_ist"],
+        "brain_trained": bool((report.get("brain") or {}).get("trained")),
+    }
     _save(st)
     return report
 
@@ -225,7 +258,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         for lane, d in lanes.items():
             lines.append(
                 f"- **{key} {lane}**: floor ₹{d.get('friction_floor_rupees')}, "
-                f"gross/trade ₹{d.get('gross_per_trade_rupees')} → **{d.get('verdict')}**")
+                f"gross/trade ₹{d.get('gross_per_trade_rupees')} → **{d.get('verdict')}**"
+            )
 
     lines.append("\n## Brain\n")
     if b.get("trained"):
@@ -233,7 +267,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(
             f"- Retrained on {b.get('rows')} rows ({b.get('live_rows')} live). "
             f"Gate {'ARMED' if b.get('gate_armed') else 'not armed'}; "
-            f"walk-forward OOS {wf.get('oos_static_rupees')} → {wf.get('oos_gated_rupees')}.")
+            f"walk-forward OOS {wf.get('oos_static_rupees')} → {wf.get('oos_gated_rupees')}."
+        )
     else:
         lines.append(f"- Not retrained: {b.get('reason')}")
 
@@ -243,7 +278,8 @@ def render_markdown(report: dict[str, Any]) -> str:
             t, a = d.get("today") or {}, d.get("all_time") or {}
             lines.append(
                 f"\n## {lane}\n- Today: {t.get('closed', 0)} closed, ₹{t.get('net_rupees', 0):,.0f}"
-                f"\n- All time: {a.get('closed', 0)} trades, ₹{a.get('net_rupees', 0):,.0f}")
+                f"\n- All time: {a.get('closed', 0)} trades, ₹{a.get('net_rupees', 0):,.0f}"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -260,27 +296,58 @@ def latest_report() -> dict[str, Any] | None:
 
 
 if __name__ == "__main__":  # ponytail self-check
-    md = render_markdown({
-        "date": "2026-08-31",
-        "commentary": "Quiet session.",
-        "spreads": {"instruments": {"NIFTY": {"samples": 48, "source": "observed (48 samples)",
-                                              "near": {"median_pts": 0.2},
-                                              "wing": {"median_pts": 0.6}}}},
-        "viability": {"instruments": {"NIFTY": {"sell": {
-            "friction_floor_rupees": 154, "gross_per_trade_rupees": 211, "verdict": "VIABLE"}}}},
-        "brain": {"trained": True, "rows": 200, "live_rows": 200, "gate_armed": False,
-                  "walk_forward": {"oos_static_rupees": 100, "oos_gated_rupees": 50}},
-        "options_cpr": {"enabled": True, "today": {"closed": 2, "net_rupees": 300.0},
-                        "all_time": {"closed": 9, "net_rupees": -120.0}},
-    })
+    md = render_markdown(
+        {
+            "date": "2026-08-31",
+            "commentary": "Quiet session.",
+            "spreads": {
+                "instruments": {
+                    "NIFTY": {
+                        "samples": 48,
+                        "source": "observed (48 samples)",
+                        "near": {"median_pts": 0.2},
+                        "wing": {"median_pts": 0.6},
+                    }
+                }
+            },
+            "viability": {
+                "instruments": {
+                    "NIFTY": {
+                        "sell": {
+                            "friction_floor_rupees": 154,
+                            "gross_per_trade_rupees": 211,
+                            "verdict": "VIABLE",
+                        }
+                    }
+                }
+            },
+            "brain": {
+                "trained": True,
+                "rows": 200,
+                "live_rows": 200,
+                "gate_armed": False,
+                "walk_forward": {"oos_static_rupees": 100, "oos_gated_rupees": 50},
+            },
+            "options_cpr": {
+                "enabled": True,
+                "today": {"closed": 2, "net_rupees": 300.0},
+                "all_time": {"closed": 9, "net_rupees": -120.0},
+            },
+        }
+    )
     assert "NIFTY" in md and "VIABLE" in md and "near 0.2pt" in md
     assert "Gate not armed" in md
-    assert render_markdown({"date": "x", "brain": {"trained": False, "reason": "too few rows"}}) \
-        .count("too few rows") == 1
+    assert (
+        render_markdown({"date": "x", "brain": {"trained": False, "reason": "too few rows"}}).count(
+            "too few rows"
+        )
+        == 1
+    )
     assert sampling_instruments() == ["NIFTY", "BANKNIFTY", "SENSEX"]
 
     class _NoClient:
         pass
-    out = sample_spreads(_NoClient())          # market closed -> clean skip, no raise
+
+    out = sample_spreads(_NoClient())  # market closed -> clean skip, no raise
     assert "skipped" in out or out["sampled"] == {}
     print("daily_ops.py self-check ok")
