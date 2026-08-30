@@ -90,6 +90,10 @@ from index_ai.exit import close_open_trade
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    from index_ai.single_instance import acquire_or_exit
+
+    acquire_or_exit()  # a second instance sharing this .env + DB is the switch-lag cause
+
     from index_ai.learning import reconcile_all_trade_lots
 
     async def _auto_renew_loop() -> None:
@@ -399,7 +403,7 @@ def _trading_gates(cfg: Any) -> dict[str, Any]:
 
 
 @app.get("/api/ops/status", include_in_schema=False)
-async def ops_status() -> dict[str, Any]:
+def ops_status() -> dict[str, Any]:  # sync
     from index_ai.ops_status import build_ops_status
 
     return build_ops_status()
@@ -454,7 +458,7 @@ def _status_payload() -> dict[str, Any]:
 
 
 @app.get("/api/analytics", include_in_schema=False)
-async def analytics(
+def analytics(  # sync: SQLite + pandas (+ Dhan when enrich_mtm) — Starlette threadpools it
     enrich_mtm: bool = Query(True, description="Fetch live LTP for open legs"),
 ) -> dict[str, Any]:
     cfg = settings()
@@ -487,7 +491,7 @@ async def trades_cleanup(payload: dict[str, Any] = Body(default_factory=dict)) -
 
 
 @app.get("/api/trades/recent", include_in_schema=False)
-async def trades_recent(limit: int = Query(80, ge=1, le=200)) -> dict[str, Any]:
+def trades_recent(limit: int = Query(80, ge=1, le=200)) -> dict[str, Any]:  # sync SQLite
     """Fast journal poll — no Dhan LTP calls (use /api/trades/live-mtm for open MTM)."""
     from index_ai.learning import expand_trades_to_log_rows, repair_rejected_journal_prices
 
@@ -530,7 +534,7 @@ async def export_report(
 
 
 @app.get("/api/trades/live-mtm", include_in_schema=False)
-async def trades_live_mtm(sync_broker: bool = Query(False)) -> dict[str, Any]:
+def trades_live_mtm(sync_broker: bool = Query(False)) -> dict[str, Any]:  # sync Dhan + SQLite
     """Fast MTM poll for open trades (paper + live). Use sync_broker=true only occasionally."""
     cfg = settings()
     if not cfg.dhan.ready:
@@ -554,7 +558,7 @@ async def trades_live_mtm(sync_broker: bool = Query(False)) -> dict[str, Any]:
 
 
 @app.get("/api/dhan/account", include_in_schema=False)
-async def dhan_account_snapshot(sync_broker: bool = Query(False)) -> dict[str, Any]:
+def dhan_account_snapshot(sync_broker: bool = Query(False)) -> dict[str, Any]:  # sync Dhan calls
     """Live Dhan portal data: fund limits, today's trade book, open positions."""
     cfg = settings()
     if not cfg.dhan.ready:
@@ -591,7 +595,7 @@ async def dhan_account_snapshot(sync_broker: bool = Query(False)) -> dict[str, A
 
 
 @app.get("/api/dhan/funds", include_in_schema=False)
-async def dhan_funds() -> dict[str, Any]:
+def dhan_funds() -> dict[str, Any]:  # sync Dhan call
     cfg = settings()
     if not cfg.dhan.ready:
         raise HTTPException(status_code=400, detail=_dhan_setup_message())
@@ -608,7 +612,7 @@ async def dhan_funds() -> dict[str, Any]:
 
 
 @app.get("/api/dhan/tradebook", include_in_schema=False)
-async def dhan_tradebook() -> dict[str, Any]:
+def dhan_tradebook() -> dict[str, Any]:  # sync Dhan call
     cfg = settings()
     if not cfg.dhan.ready:
         raise HTTPException(status_code=400, detail=_dhan_setup_message())
@@ -901,7 +905,7 @@ async def research_candle_cache_status() -> dict[str, Any]:
 
 
 @app.get("/api/heatmap", include_in_schema=False)
-async def heatmap() -> dict[str, Any]:
+def heatmap() -> dict[str, Any]:  # sync: 6+ blocking Dhan calls — Starlette threadpools it
     cfg = settings()
     if not cfg.dhan.ready:
         return {"error": _dhan_setup_message(), "cells": []}
@@ -912,19 +916,19 @@ async def heatmap() -> dict[str, Any]:
 
 
 @app.get("/api/learning", include_in_schema=False)
-async def learning_status_api() -> dict[str, Any]:
+def learning_status_api() -> dict[str, Any]:  # sync SQLite
     return learning_report()
 
 
 @app.get("/api/futures/status", include_in_schema=False)
-async def futures_paper_status_api() -> dict[str, Any]:
+def futures_paper_status_api() -> dict[str, Any]:  # sync
     from index_ai.strategies.futures.paper import futures_paper_status
 
     return futures_paper_status()
 
 
 @app.get("/api/options-cpr/status", include_in_schema=False)
-async def options_cpr_paper_status_api() -> dict[str, Any]:
+def options_cpr_paper_status_api() -> dict[str, Any]:  # sync
     from index_ai.strategies.options_cpr.paper import options_cpr_paper_status
 
     return options_cpr_paper_status()
@@ -1028,7 +1032,7 @@ async def market_context_api(refresh: bool = Query(False)) -> dict[str, Any]:
 
 
 @app.get("/api/market-context/spreads", include_in_schema=False)
-async def spread_calibration_api() -> dict[str, Any]:
+def spread_calibration_api() -> dict[str, Any]:  # sync
     """Observed option bid-ask half-spread per index vs the assumed default."""
     from index_ai.market_context.spread_calib import status
 
@@ -1036,7 +1040,7 @@ async def spread_calibration_api() -> dict[str, Any]:
 
 
 @app.get("/api/brain/status", include_in_schema=False)
-async def brain_status_api() -> dict[str, Any]:
+def brain_status_api() -> dict[str, Any]:  # sync
     """Unified ML brain: dataset size, walk-forward verdict, whether the gate is armed."""
     from index_ai.brain.gate import status
 
@@ -1167,7 +1171,7 @@ async def auto_stop() -> dict[str, Any]:
 
 
 @app.get("/api/auto/status", include_in_schema=False)
-async def auto_status() -> dict[str, Any]:
+def auto_status() -> dict[str, Any]:  # polled every 3s — keep it off the loop
     return scanner_status()
 
 

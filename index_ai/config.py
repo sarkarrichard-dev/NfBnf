@@ -341,4 +341,8 @@ def _update_env_values_locked(values: dict[str, str]) -> None:
     if parts and parts[-1].strip():
         parts.append("")
     parts.extend(body)
-    ENV_PATH.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    # Atomic: readers (settings() -> load_dotenv, polled from many threads) must
+    # never see a half-written .env, or TRADING_MODE briefly reads as default.
+    tmp = ENV_PATH.with_suffix(ENV_PATH.suffix + ".tmp")
+    tmp.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    os.replace(tmp, ENV_PATH)
