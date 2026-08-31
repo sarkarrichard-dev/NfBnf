@@ -53,8 +53,10 @@ def sample_spreads_enabled() -> bool:
 
 
 def sampling_instruments() -> list[str]:
+    from index_ai.instruments import index_paused
+
     raw = os.getenv("SPREAD_SAMPLE_INSTRUMENTS", "NIFTY,BANKNIFTY,SENSEX")
-    return [x.strip().upper() for x in raw.split(",") if x.strip()]
+    return [x.strip().upper() for x in raw.split(",") if x.strip() and not index_paused(x.strip())]
 
 
 def sample_spreads(client: Any) -> dict[str, Any]:

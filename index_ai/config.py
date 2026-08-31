@@ -222,6 +222,7 @@ TOGGLEABLE_FLAGS: dict[str, str] = {
     "ENABLE_AI_COMMENTARY": "LLM session commentary (advisory only)",
     "AUTO_START_SCANNER": "Start the scanner automatically at launch",
     "ENABLE_S3_BACKUP": "Back up the journals, models and reports to S3 after the close",
+    "ENABLE_SENSEX": "Scan and trade SENSEX (off = NIFTY + BANKNIFTY only)",
 }
 
 
@@ -246,6 +247,7 @@ def feature_flags() -> list[dict[str, Any]]:
             "ENABLE_FUTURES_PAPER",
             "ENABLE_BRAIN_GATE",
             "AUTO_START_SCANNER",
+            "ENABLE_SENSEX",
         }
         on = (raw.strip().lower() in {"1", "true", "yes", "on"}) if raw else default_on
         out.append({"flag": key, "enabled": on, "description": desc, "set_in_env": raw is not None})
