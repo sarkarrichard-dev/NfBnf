@@ -63,6 +63,64 @@ def _sum_credit(legs: list[dict[str, Any]]) -> float:
     return max(0.0, round(credit, 2))
 
 
+# Hedge (long) leg picked by its *own* premium, not a fixed strike distance —
+# a far, cheap hedge so the short's decay isn't masked by the hedge's.
+_HEDGE_PREMIUM_BAND: dict[str, tuple[float, float]] = {
+    "NIFTY": (5.0, 10.0),
+    "BANKNIFTY": (30.0, 80.0),
+    "SENSEX": (20.0, 60.0),
+}
+
+
+def _row_ltp(
+    rows: dict[float, dict[str, Any]], strike: float, side: str
+) -> tuple[float | None, float]:
+    row = rows.get(strike)
+    if row is None:
+        nearest = min(rows.keys(), key=lambda k: abs(k - strike), default=None)
+        if nearest is None:
+            return None, strike
+        row, strike = rows[nearest], nearest
+    px = (row.get(side) or {}).get("last_price")
+    return (float(px) if px is not None else None), strike
+
+
+def _pick_hedge_strike(
+    rows: dict[float, dict[str, Any]],
+    short_strike: float,
+    short_px: float | None,
+    side: str,
+    step: int,
+    direction: int,
+    band: tuple[float, float],
+) -> float | None:
+    """Walk OTM from the short leg; return the hedge strike whose premium sits in
+    the band, else the nearest strike just above the band that is still <= half
+    the short premium. None => caller falls back to fixed wing steps."""
+    if not rows or not short_px or short_px <= 0:
+        return None
+    lo, hi = band
+    cap = 0.5 * float(short_px)
+    if cap < lo:
+        return None  # short premium too small for a meaningful far hedge
+    above_band: float | None = None
+    k = float(short_strike)
+    for _ in range(25):
+        k += direction * step
+        px, k_res = _row_ltp(rows, k, side)
+        if px is None:
+            continue
+        if px > cap:
+            continue  # hedge still richer than half the short — keep walking out
+        if px >= lo:
+            if px <= hi:
+                return k_res  # in band
+            above_band = k_res  # just above the band, under the cap — remember it
+            continue
+        return above_band if above_band is not None else k_res  # walked past the band
+    return above_band
+
+
 def build_iron_condor(
     chain: dict[str, Any],
     signal: StrategySignal,
@@ -125,7 +183,10 @@ def build_bull_put_spread(
     wings = params.credit_wing_strikes
     atm = nearest_strike(signal.price, instrument)
     sell_put = atm - step * params.credit_short_strike_steps
-    buy_put = sell_put - step * wings
+    short_px, sell_put = _row_ltp(rows, sell_put, "pe")
+    band = _HEDGE_PREMIUM_BAND.get(instrument.key)
+    hedge_k = _pick_hedge_strike(rows, sell_put, short_px, "pe", step, -1, band) if band else None
+    buy_put = hedge_k if hedge_k is not None else sell_put - step * wings
     legs_raw = [
         _leg(rows, buy_put, "pe", "BUY", instrument),
         _leg(rows, sell_put, "pe", "SELL", instrument),
@@ -166,7 +227,10 @@ def build_bear_call_spread(
     wings = params.credit_wing_strikes
     atm = nearest_strike(signal.price, instrument)
     sell_call = atm + step * params.credit_short_strike_steps
-    buy_call = sell_call + step * wings
+    short_px, sell_call = _row_ltp(rows, sell_call, "ce")
+    band = _HEDGE_PREMIUM_BAND.get(instrument.key)
+    hedge_k = _pick_hedge_strike(rows, sell_call, short_px, "ce", step, +1, band) if band else None
+    buy_call = hedge_k if hedge_k is not None else sell_call + step * wings
     legs_raw = [
         _leg(rows, buy_call, "ce", "BUY", instrument),
         _leg(rows, sell_call, "ce", "SELL", instrument),
