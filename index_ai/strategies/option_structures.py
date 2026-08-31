@@ -65,10 +65,12 @@ def _sum_credit(legs: list[dict[str, Any]]) -> float:
 
 # Hedge (long) leg picked by its *own* premium, not a fixed strike distance —
 # a far, cheap hedge so the short's decay isn't masked by the hedge's.
-_HEDGE_PREMIUM_BAND: dict[str, tuple[float, float]] = {
-    "NIFTY": (5.0, 10.0),
-    "BANKNIFTY": (30.0, 80.0),
-    "SENSEX": (20.0, 60.0),
+# (lo, hi, max_width_pts): band for the hedge premium, and a hard cap on how far
+# the hedge may sit from the short so structural max loss stays bounded even
+# though the trailing stop is the real per-trade risk control.
+_HEDGE_PREMIUM_BAND: dict[str, tuple[float, float, float]] = {
+    "NIFTY": (5.0, 10.0, 300.0),
+    "BANKNIFTY": (30.0, 80.0, 700.0),
 }
 
 
@@ -92,32 +94,34 @@ def _pick_hedge_strike(
     side: str,
     step: int,
     direction: int,
-    band: tuple[float, float],
+    band: tuple[float, float, float],
 ) -> float | None:
     """Walk OTM from the short leg; return the hedge strike whose premium sits in
-    the band, else the nearest strike just above the band that is still <= half
-    the short premium. None => caller falls back to fixed wing steps."""
+    the band, else the furthest reachable strike within max_width_pts whose
+    premium is still <= half the short. None => caller falls back to fixed wings."""
     if not rows or not short_px or short_px <= 0:
         return None
-    lo, hi = band
+    lo, hi, max_width = band
     cap = 0.5 * float(short_px)
     if cap < lo:
         return None  # short premium too small for a meaningful far hedge
-    above_band: float | None = None
+    above_band: float | None = None  # affordable strike just above the band, within the cap
     k = float(short_strike)
-    for _ in range(25):
+    max_steps = max(1, int(max_width // step))
+    for _ in range(max_steps):
         k += direction * step
         px, k_res = _row_ltp(rows, k, side)
         if px is None:
             continue
         if px > cap:
             continue  # hedge still richer than half the short — keep walking out
-        if px >= lo:
-            if px <= hi:
-                return k_res  # in band
-            above_band = k_res  # just above the band, under the cap — remember it
+        if lo <= px <= hi:
+            return k_res  # in band — done
+        if px > hi:
+            above_band = k_res  # remember, but keep looking for an in-band strike
             continue
-        return above_band if above_band is not None else k_res  # walked past the band
+        # px < lo : too cheap. Prefer the last above-band strike; else this one.
+        return above_band if above_band is not None else k_res
     return above_band
 
 

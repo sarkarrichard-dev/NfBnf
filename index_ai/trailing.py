@@ -225,11 +225,12 @@ def evaluate_open_trade(
         update_premium_trail,
     )
 
-    pt_active = premium_trail_enabled(instrument_key)
-    if pt_active:
+    pt_evaluated = False
+    if premium_trail_enabled(instrument_key):
         entry_px = float(option.get("ltp") or 0)
         cur_px = option.get("last_option_ltp")
         if entry_px > 0 and cur_px is not None:
+            pt_evaluated = True
             if "pt_entry" not in updated:
                 updated.update(init_premium_trail(entry_premium=entry_px, direction=1))
             updated, pt_hit, pt_reason = update_premium_trail(
@@ -237,7 +238,10 @@ def evaluate_open_trade(
             )
             if pt_hit:
                 profit_hit, profit_reason = True, pt_reason
-    elif mtm is not None:
+
+    if not pt_evaluated and mtm is not None:
+        # legacy index (SENSEX) or a tick with no option quote — keep the rupee
+        # profit-giveback trail as the profit protection.
         from index_ai.profit_trail import evaluate_profit_trail
 
         updated, profit_hit, profit_reason = evaluate_profit_trail(updated, float(mtm))

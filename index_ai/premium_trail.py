@@ -19,11 +19,11 @@ from __future__ import annotations
 from typing import Any
 
 # hard_stop / trail are premium points; target is a fraction of the entry price.
+# Only indices with measured params belong here — anything absent keeps the
+# legacy rupee %-of-max exit logic (see premium_trail_enabled).
 _CFG: dict[str, dict[str, float]] = {
     "NIFTY": {"hard_stop_pts": 11.0, "first_target_pct": 0.25, "trail_pts": 5.0},
     "BANKNIFTY": {"hard_stop_pts": 100.0, "first_target_pct": 0.25, "trail_pts": 35.0},
-    # SENSEX is paused; keep sane values so nothing divides by zero if re-enabled.
-    "SENSEX": {"hard_stop_pts": 100.0, "first_target_pct": 0.25, "trail_pts": 35.0},
 }
 
 _DEFAULT = {"hard_stop_pts": 25.0, "first_target_pct": 0.25, "trail_pts": 10.0}
@@ -61,6 +61,11 @@ def update_premium_trail(
         m["pt_entry"] = entry
     d = 1 if int(m.get("pt_dir") or -1) >= 0 else -1
     cur = float(current_premium)
+
+    # Ignore an implausible print (zero / stale / fat-finger): one bad tick would
+    # otherwise latch pt_target_hit or poison pt_best. Wait for a sane quote.
+    if cur <= 0 or cur > 3.0 * entry:
+        return m, False, None
 
     if d < 0:  # short leg — favourable is a lower premium
         favour = entry - cur
