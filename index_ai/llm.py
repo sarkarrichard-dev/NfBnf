@@ -30,16 +30,21 @@ def _gemini(system: str, prompt: str, max_tokens: int) -> str | None:
     try:
         import httpx
 
-        model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         resp = httpx.post(
             _GEMINI_URL.format(model=model),
             params={"key": key},
             json={
                 "systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.4},
+                # gemini-3.x spends ~400-500 "thinking" tokens before any visible
+                # text and counts them against the output budget, so pad it.
+                "generationConfig": {
+                    "maxOutputTokens": max_tokens + 2000,
+                    "temperature": 0.4,
+                },
             },
-            timeout=30,
+            timeout=45,
         )
         resp.raise_for_status()
         cands = resp.json().get("candidates") or []
