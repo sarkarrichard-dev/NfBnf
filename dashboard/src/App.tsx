@@ -40,6 +40,9 @@ const FeaturesPanel = lazy(() =>
 const LanesPanel = lazy(() =>
   import('./components/LanesPanel').then((m) => ({ default: m.LanesPanel })),
 )
+const DayReviewPanel = lazy(() =>
+  import('./components/DayReviewPanel').then((m) => ({ default: m.DayReviewPanel })),
+)
 
 type StatusResponse = {
   trading_mode: string
@@ -163,6 +166,11 @@ function App() {
               gates={gates}
               liveArmed={status.data?.live_allowed}
             />
+          </div>
+          <div className="mb-6">
+            <Suspense fallback={<PanelFallback />}>
+              <DayReviewPanel />
+            </Suspense>
           </div>
           <div className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
             <JournalPanel

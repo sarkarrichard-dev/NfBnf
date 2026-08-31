@@ -48,11 +48,7 @@ FEATURE_NAMES: tuple[str, ...] = (
 
 def _is_excluded_trade_id(trade_id: str) -> bool:
     tid = trade_id.strip().lower()
-    return (
-        tid.startswith("test-")
-        or tid.startswith("test_")
-        or tid == "real-trade-id"
-    )
+    return tid.startswith("test-") or tid.startswith("test_") or tid == "real-trade-id"
 
 
 def extract_features(
@@ -158,12 +154,19 @@ def load_training_dataset() -> tuple[np.ndarray, np.ndarray, list[str]]:
 def _load_meta() -> dict[str, Any]:
     if not META_PATH.is_file():
         return {}
-    return json.loads(META_PATH.read_text(encoding="utf-8"))
+    try:
+        return json.loads(META_PATH.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}  # a torn write must not crash callers — it rebuilds on next train
 
 
 def _save_meta(meta: dict[str, Any]) -> None:
+    import os
+
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    META_PATH.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    tmp = META_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    os.replace(tmp, META_PATH)
 
 
 def _sklearn_available() -> bool:
@@ -275,9 +278,7 @@ def train_outcome_model(*, force: bool = False) -> dict[str, Any]:
         brier = None
 
     coefs = pipeline.named_steps["clf"].coef_[0]
-    importance = {
-        FEATURE_NAMES[i]: round(float(coefs[i]), 4) for i in range(len(FEATURE_NAMES))
-    }
+    importance = {FEATURE_NAMES[i]: round(float(coefs[i]), 4) for i in range(len(FEATURE_NAMES))}
     top_features = sorted(importance.items(), key=lambda kv: abs(kv[1]), reverse=True)[:4]
 
     gate = max(DEFAULT_MIN_WIN_PROB_GATE, float(meta_prev.get("min_win_prob_gate") or 0.0))
@@ -324,7 +325,9 @@ def train_outcome_model(*, force: bool = False) -> dict[str, Any]:
         ),
     }
     _save_meta(meta)
-    _log.info("Outcome ML model v%s trained (%s samples, accuracy %.1f%%)", version, n, accuracy * 100)
+    _log.info(
+        "Outcome ML model v%s trained (%s samples, accuracy %.1f%%)", version, n, accuracy * 100
+    )
     return meta
 
 

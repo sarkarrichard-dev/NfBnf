@@ -1023,6 +1023,18 @@ async def daily_report_api(run: bool = Query(False)) -> dict[str, Any]:
     return latest_report() or {"error": "no report yet — generated after square-off each session"}
 
 
+@app.get("/api/day-review", include_in_schema=False)
+async def day_review_api(refresh: bool = Query(False)) -> dict[str, Any]:
+    """Today's trades (with why-in / why-out), a summary, and an advisory AI review.
+
+    refresh=true re-reads the journal and re-asks the LLM (costs a token call);
+    otherwise returns the cached copy, regenerated after each square-off.
+    """
+    from index_ai.day_review import build_day_review
+
+    return await asyncio.to_thread(build_day_review, refresh=refresh)
+
+
 @app.get("/api/market-context", include_in_schema=False)
 async def market_context_api(refresh: bool = Query(False)) -> dict[str, Any]:
     """FII/DII/Pro/Client positioning, India VIX, IV term structure, OI walls, pinning."""

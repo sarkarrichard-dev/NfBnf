@@ -211,6 +211,14 @@ def run_eod() -> dict[str, Any]:
     except Exception as exc:
         report["commentary"] = f"(unavailable: {exc})"
 
+    try:  # today's trade log + AI review, ready before anyone opens the dashboard
+        from index_ai.day_review import build_day_review
+
+        dr = build_day_review(refresh=True)
+        report["day_review"] = {"summary": dr["summary"], "review": dr["review"]}
+    except Exception as exc:
+        report["day_review"] = {"error": str(exc)[:200]}
+
     # Off-machine backup before the report is written, so the snapshot it uploads
     # is of a settled memory/ dir; the report's own backup status is one run behind.
     try:
