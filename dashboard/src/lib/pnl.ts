@@ -62,10 +62,11 @@ export function mergeLogRows(prevRows: LogRow[], newRows: LogRow[]): LogRow[] {
 
   for (const row of prevList) {
     const key = logRowKey(row)
-    if (newMap[key]) {
-      order.push(mergeLogRow(prevMap[key], newMap[key]))
-      seen.add(key)
-    }
+    // Keep every prior row; overlay the newer version when one exists. The old
+    // code dropped prior rows absent from newRows, so once a live-MTM poll (open
+    // legs only) merged in, every closed trade vanished from the history tab.
+    order.push(newMap[key] ? mergeLogRow(prevMap[key], newMap[key]) : row)
+    seen.add(key)
   }
   for (const row of newRows) {
     const key = logRowKey(row)
