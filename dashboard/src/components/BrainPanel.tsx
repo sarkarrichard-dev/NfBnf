@@ -152,7 +152,7 @@ export function BrainPanel() {
           <div className="mb-1 flex items-center gap-2">
             <h4 className="text-xs uppercase tracking-wide text-slate-500">AI brief</h4>
             <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-              {commentary.data.source === 'claude' ? 'Claude' : 'local'} · advisory only
+              {commentary.data.source === 'ai' ? 'AI' : 'local'} · advisory only
             </span>
           </div>
           <p className="whitespace-pre-wrap text-sm text-slate-300">{commentary.data.text}</p>

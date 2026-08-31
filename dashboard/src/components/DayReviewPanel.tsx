@@ -125,7 +125,7 @@ export function DayReviewPanel() {
             <div className="mb-1 flex items-center gap-2">
               <h4 className="text-xs uppercase tracking-wide text-slate-500">How today went</h4>
               <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-                {r.source === 'claude' ? 'Claude' : 'local'} · advisory only
+                {r.source === 'ai' ? 'AI' : 'local'} · advisory only
               </span>
             </div>
             <p className="whitespace-pre-wrap text-sm text-slate-300">{r.narrative}</p>

@@ -7,7 +7,7 @@ an LLM in the execution path adds a non-deterministic, un-backtestable failure
 mode to a system whose whole value is measurable edge. The statistical brain
 (``brain.model`` + ``brain.regime``) decides; this narrates and flags anomalies.
 
-Enabled by ENABLE_AI_COMMENTARY with ANTHROPIC_API_KEY set. Without either it
+Enabled by ENABLE_AI_COMMENTARY with a GEMINI_API_KEY or ANTHROPIC_API_KEY. Without
 returns a deterministic locally-composed summary — the dashboard always has
 something to show and never depends on a network call.
 """
@@ -22,7 +22,6 @@ from index_ai.config import MEMORY_DIR
 from index_ai.market_clock import now_ist, now_ist_iso
 
 CACHE_PATH = MEMORY_DIR / "ai_commentary.json"
-DEFAULT_MODEL = "claude-sonnet-5"
 MAX_TOKENS = 900
 
 _SYSTEM = """You are the analyst for an Indian index options/futures trading system.
@@ -37,9 +36,11 @@ concrete. No hype, no emoji, no disclaimers beyond what the data warrants."""
 
 
 def enabled() -> bool:
+    from index_ai.llm import enabled as llm_enabled
+
     return (
         os.getenv("ENABLE_AI_COMMENTARY", "false").strip().lower() in {"1", "true", "yes", "on"}
-        and bool(os.getenv("ANTHROPIC_API_KEY"))
+        and llm_enabled()
     )
 
 
@@ -70,7 +71,8 @@ def _snapshot() -> dict[str, Any]:
 
         ss = scanner_status()
         snap["scanner"] = {
-            "running": ss.get("running"), "cycles": ss.get("cycles"),
+            "running": ss.get("running"),
+            "cycles": ss.get("cycles"),
             "last_error": ss.get("last_error"),
             "tripped_stages": (ss.get("health") or {}).get("tripped"),
             "last_cycle_ms": (ss.get("health") or {}).get("last_cycle_ms"),
@@ -83,7 +85,9 @@ def _snapshot() -> dict[str, Any]:
 def _local_summary(snap: dict[str, Any], kind: str) -> str:
     """Deterministic fallback — always available, never needs a network call."""
     b = snap.get("brain") or {}
-    lines = [f"{'Pre-open brief' if kind == 'pre_open' else 'End-of-day review'} — {now_ist().strftime('%d %b %Y')}"]
+    lines = [
+        f"{'Pre-open brief' if kind == 'pre_open' else 'End-of-day review'} — {now_ist().strftime('%d %b %Y')}"
+    ]
     rows, live = b.get("rows", 0), b.get("live_rows", 0)
     if b.get("gate_armed"):
         lines.append(
@@ -93,7 +97,9 @@ def _local_summary(snap: dict[str, Any], kind: str) -> str:
     else:
         d = b.get("oos_delta_rupees")
         why = f" (walk-forward delta Rs {d:,})" if isinstance(d, (int, float)) else ""
-        lines.append(f"ML gate NOT armed{why} — every setup passes; only the regime filter is active.")
+        lines.append(
+            f"ML gate NOT armed{why} — every setup passes; only the regime filter is active."
+        )
     for lane in ("futures_paper", "options_cpr_paper"):
         st = snap.get(lane) or {}
         if st.get("enabled"):
@@ -113,10 +119,9 @@ def _local_summary(snap: dict[str, Any], kind: str) -> str:
 
 
 def _ask_claude(snap: dict[str, Any], kind: str) -> str | None:
-    try:
-        import anthropic
-    except Exception:
-        return None
+    """Name kept for callers; the provider is Gemini or Anthropic via index_ai.llm."""
+    from index_ai.llm import ask
+
     prompt = (
         f"Write a short {'pre-open brief' if kind == 'pre_open' else 'end-of-day review'} "
         "for the operator of this trading system. Cover: what the ML gate is doing and why, "
@@ -125,17 +130,7 @@ def _ask_claude(snap: dict[str, Any], kind: str) -> str | None:
         "Under 200 words, plain prose, no bullet-point padding.\n\n"
         f"SYSTEM STATE (JSON):\n{json.dumps(snap, indent=2, default=str)[:12000]}"
     )
-    try:
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        msg = client.messages.create(
-            model=os.getenv("AI_COMMENTARY_MODEL", DEFAULT_MODEL),
-            max_tokens=MAX_TOKENS,
-            system=_SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip() or None
-    except Exception:
-        return None
+    return ask(_SYSTEM, prompt, max_tokens=MAX_TOKENS)
 
 
 def generate(kind: str = "pre_open") -> dict[str, Any]:
@@ -144,7 +139,7 @@ def generate(kind: str = "pre_open") -> dict[str, Any]:
     text, source = None, "local"
     if enabled():
         text = _ask_claude(snap, kind)
-        source = "claude" if text else "local"
+        source = "ai" if text else "local"
     if not text:
         text = _local_summary(snap, kind)
     out = {
@@ -178,6 +173,6 @@ if __name__ == "__main__":  # ponytail self-check
     out = generate("eod")
     assert out["advisory_only"] is True
     assert out["text"] and "gate" in out["text"].lower()
-    assert out["source"] in {"local", "claude"}
+    assert out["source"] in {"local", "ai"}
     assert "brain" in out["snapshot"]
     print(f"commentary.py self-check ok (source={out['source']})\n---\n{out['text']}")

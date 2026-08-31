@@ -13,7 +13,6 @@ close; the dashboard can also force a refresh.
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 
@@ -196,27 +195,22 @@ def _context() -> dict[str, Any]:
 
 
 def _ai_review(rows: list[dict[str, Any]], summary: dict[str, Any]) -> dict[str, Any]:
-    from index_ai.brain.commentary import _SYSTEM, enabled
+    from index_ai.brain.commentary import _SYSTEM
+    from index_ai.llm import ask, enabled
 
     fallback = _local_review(rows, summary)
     if not enabled() or not rows:
         return {**fallback, "source": "local"}
-    try:
-        import anthropic
 
-        prompt = _REVIEW_PROMPT.format(
-            summary=json.dumps(summary, default=str)[:3000],
-            trades=json.dumps(rows, default=str)[:9000],
-            context=json.dumps(_context(), default=str)[:4000],
-        )
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        msg = client.messages.create(
-            model=os.getenv("AI_COMMENTARY_MODEL", "claude-sonnet-5"),
-            max_tokens=1100,
-            system=_SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
+    prompt = _REVIEW_PROMPT.format(
+        summary=json.dumps(summary, default=str)[:3000],
+        trades=json.dumps(rows, default=str)[:9000],
+        context=json.dumps(_context(), default=str)[:4000],
+    )
+    text = ask(_SYSTEM, prompt, max_tokens=1100)
+    if not text:
+        return {**fallback, "source": "local"}
+    try:
         text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
         parsed = json.loads(text)
         return {
@@ -224,7 +218,7 @@ def _ai_review(rows: list[dict[str, Any]], summary: dict[str, Any]) -> dict[str,
             "went_right": [str(x) for x in (parsed.get("went_right") or [])][:6],
             "went_wrong": [str(x) for x in (parsed.get("went_wrong") or [])][:6],
             "watch": [str(x) for x in (parsed.get("watch") or [])][:4],
-            "source": "claude",
+            "source": "ai",
         }
     except Exception:
         return {**fallback, "source": "local"}
