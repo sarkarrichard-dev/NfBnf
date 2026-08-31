@@ -286,7 +286,7 @@ def test_hedge_strike_picks_first_in_band() -> None:
         58000 + 100 * i: {"ce": {"last_price": p, "security_id": i}}
         for i, p in enumerate([250, 180, 120, 80, 55, 35, 20, 12])
     }
-    assert _pick_hedge_strike(rows, 58000, 300.0, "ce", 100, +1, (30.0, 80.0, 700.0)) == 58300
+    assert _pick_hedge_strike(rows, 58000, 300.0, "ce", 100, +1, (30.0, 80.0, 2200.0)) == 58300
 
 
 def test_hedge_strike_above_band_when_premiums_gap_over_it() -> None:
@@ -297,11 +297,11 @@ def test_hedge_strike_above_band_when_premiums_gap_over_it() -> None:
         58100: {"ce": {"last_price": 90}},
         58200: {"ce": {"last_price": 20}},
     }
-    assert _pick_hedge_strike(rows, 58000, 300.0, "ce", 100, +1, (30.0, 80.0, 700.0)) == 58100
+    assert _pick_hedge_strike(rows, 58000, 300.0, "ce", 100, +1, (30.0, 80.0, 2200.0)) == 58100
 
 
 def test_hedge_none_when_short_premium_too_small() -> None:
     from index_ai.strategies.option_structures import _pick_hedge_strike
 
     rows = {58000: {"ce": {"last_price": 40}}, 58100: {"ce": {"last_price": 10}}}
-    assert _pick_hedge_strike(rows, 58000, 40.0, "ce", 100, +1, (30.0, 80.0, 700.0)) is None
+    assert _pick_hedge_strike(rows, 58000, 40.0, "ce", 100, +1, (30.0, 80.0, 2200.0)) is None
