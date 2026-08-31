@@ -26,11 +26,9 @@ _CFG: dict[str, dict[str, float]] = {
     "BANKNIFTY": {"hard_stop_pts": 100.0, "first_target_pct": 0.25, "trail_pts": 35.0},
 }
 
-_DEFAULT = {"hard_stop_pts": 25.0, "first_target_pct": 0.25, "trail_pts": 10.0}
-
 
 def premium_trail_cfg(instrument_key: str) -> dict[str, float]:
-    return _CFG.get(str(instrument_key or "").strip().upper(), _DEFAULT)
+    return _CFG[str(instrument_key or "").strip().upper()]
 
 
 def premium_trail_enabled(instrument_key: str) -> bool:
@@ -56,9 +54,7 @@ def update_premium_trail(
     """Returns (meta, should_exit, reason). Pure — safe to call every tick."""
     cfg = premium_trail_cfg(instrument_key)
     m = dict(meta)
-    entry = float(m.get("pt_entry") or current_premium)
-    if not m.get("pt_entry"):
-        m["pt_entry"] = entry
+    entry = float(m["pt_entry"])  # init_premium_trail always sets this
     d = 1 if int(m.get("pt_dir") or -1) >= 0 else -1
     cur = float(current_premium)
 

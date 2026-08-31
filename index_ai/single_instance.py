@@ -25,13 +25,9 @@ _handle = None  # kept alive for the process lifetime; releasing it releases the
 _MESSAGE = (
     "Another Index Options AI server is already running against this folder.\n"
     "Two instances share one .env and one database and stall each other — that is\n"
-    "the Paper/Live and lot-size lag.\n\n"
-    "Close the other server first:\n"
-    '  - use "Stop server" in "Start Index Options AI.cmd", or\n'
-    "  - PowerShell:  Get-CimInstance Win32_Process -Filter \"name='python.exe'\" |\n"
-    "                 ? { $_.CommandLine -match 'index_ai.server' } |\n"
-    "                 % { Stop-Process -Id $_.ProcessId -Force }\n"
-    "  - and check your IDE (Visual Studio / VS Code) is not running one too."
+    "the Paper/Live and lot-size lag. Stop the other python -m index_ai.server\n"
+    '(the launcher\'s "Stop server", or Task Manager), and check your IDE is not\n'
+    "running one too."
 )
 
 
@@ -41,12 +37,12 @@ def acquire_or_exit() -> None:
     if os.getenv("PYTEST_CURRENT_TEST"):
         return
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-    _handle = open(_LOCK_PATH, "a+")  # noqa: SIM115 — held for the whole run
+    _handle = open(_LOCK_PATH, "a+")  # noqa: SIM115 — held (and locked) for the whole run
     try:
         if sys.platform == "win32":
             import msvcrt
 
-            _handle.seek(0)
+            _handle.seek(0)  # lock byte 0 so both processes contend on the same region
             msvcrt.locking(_handle.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
@@ -56,10 +52,6 @@ def acquire_or_exit() -> None:
         _handle.close()
         _handle = None
         raise SystemExit(_MESSAGE)
-    _handle.seek(0)
-    _handle.truncate()
-    _handle.write(f"{os.getpid()}\n")
-    _handle.flush()
 
 
 if __name__ == "__main__":  # self-check: second acquire in a child process fails

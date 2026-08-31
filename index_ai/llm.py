@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import os
 
-_GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
 
 def enabled() -> bool:
     return bool(os.getenv("GEMINI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
@@ -32,7 +30,7 @@ def _gemini(system: str, prompt: str, max_tokens: int) -> str | None:
 
         model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         resp = httpx.post(
-            _GEMINI_URL.format(model=model),
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
             params={"key": key},
             json={
                 "systemInstruction": {"parts": [{"text": system}]},

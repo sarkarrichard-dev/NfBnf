@@ -55,12 +55,11 @@ def backup_enabled() -> bool:
     return os.getenv("ENABLE_S3_BACKUP", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
+_PREFIX = "algo-bnf"  # S3 key prefix for everything this uploads
+
+
 def _bucket() -> str:
     return os.getenv("S3_BACKUP_BUCKET", "").strip()
-
-
-def _prefix() -> str:
-    return os.getenv("S3_BACKUP_PREFIX", "algo-bnf").strip().strip("/")
 
 
 def _snapshot_sqlite(src: Path, dst: Path) -> None:
@@ -108,7 +107,6 @@ def run_backup() -> dict[str, Any]:
     except ImportError:
         return {**out, "error": "boto3 not installed — run: pip install boto3"}
 
-    prefix = _prefix()
     client = boto3.client("s3")
     errors: list[str] = []
 
@@ -120,14 +118,13 @@ def run_backup() -> dict[str, Any]:
             return {**out, "error": f"staging failed: {str(exc)[:200]}"}
 
         for local, rel in pairs:
-            key = f"{prefix}/{rel}" if prefix else rel
             try:
-                client.upload_file(str(local), bucket, key)
+                client.upload_file(str(local), bucket, f"{_PREFIX}/{rel}")
                 out["uploaded"] += 1
             except Exception as exc:
                 errors.append(f"{rel}: {str(exc)[:160]}")
 
-    out["target"] = f"s3://{bucket}/{prefix}".rstrip("/")
+    out["target"] = f"s3://{bucket}/{_PREFIX}"
     if errors:
         out["errors"] = errors[:10]
     return out

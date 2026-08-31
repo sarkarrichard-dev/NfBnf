@@ -13,7 +13,6 @@ type Trade = {
   closed_ist?: string | null
   instrument?: string
   structure?: string
-  side?: string
   lots?: string
   entry_premium?: number | null
   exit_premium?: number | null
@@ -25,15 +24,12 @@ type Trade = {
 
 type Summary = {
   date?: string
-  total?: number
   closed?: number
   open?: number
   wins?: number
   losses?: number
   win_rate?: number | null
   net_rupees?: number
-  by_instrument?: Record<string, { trades: number; net_rupees: number }>
-  by_lane?: Record<string, { trades: number; net_rupees: number }>
   how_trades_ended?: Record<string, number>
 }
 
