@@ -42,7 +42,12 @@ _MINS = 375.0
 
 
 def enabled() -> bool:
-    return os.getenv("ENABLE_OPTIONS_CPR_PAPER", "true").strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("ENABLE_OPTIONS_CPR_PAPER", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def instruments() -> list[str]:
@@ -59,7 +64,9 @@ def _cfg(key: str) -> OptionsCprConfig:
             continue
         cur = getattr(cfg, field)
         try:
-            ov[field] = env.lower() in {"1", "true", "yes"} if isinstance(cur, bool) else type(cur)(env)
+            ov[field] = (
+                env.lower() in {"1", "true", "yes"} if isinstance(cur, bool) else type(cur)(env)
+            )
         except Exception:
             pass
     return with_overrides(cfg, **ov) if ov else cfg
@@ -122,7 +129,11 @@ def require_viable() -> bool:
     to trade a not-viable lane deliberately, e.g. to gather data on it.
     """
     return os.getenv("OPTIONS_CPR_REQUIRE_VIABLE", "true").strip().lower() in {
-        "1", "true", "yes", "on"}
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _viability_block(key: str, lane: str, cfg: OptionsCprConfig) -> str | None:
@@ -135,7 +146,7 @@ def _viability_block(key: str, lane: str, cfg: OptionsCprConfig) -> str | None:
         v = viability(key, lane, cfg=cfg)
         return f"{v.verdict}: {v.reason}" if v.verdict == NOT_VIABLE else None
     except Exception:
-        return None       # never let the check itself stop a lane
+        return None  # never let the check itself stop a lane
 
 
 def _log_decision(key: str, lane: str, out: dict[str, Any]) -> dict[str, Any]:
@@ -146,16 +157,22 @@ def _log_decision(key: str, lane: str, out: dict[str, Any]) -> dict[str, Any]:
         ev = str(out.get("event") or "none")
         traded = ev in {"entry", "partial"}
         brain = out.get("brain") or {}
-        record_decision(key, lane, ev, traded=traded,
-                        reason=out.get("reason") or brain.get("reason"),
-                        win_probability=brain.get("win_probability"))
+        record_decision(
+            key,
+            lane,
+            ev,
+            traded=traded,
+            reason=out.get("reason") or brain.get("reason"),
+            win_probability=brain.get("win_probability"),
+        )
     except Exception:
         pass
     return out
 
 
-def _brain_check(trade_like: dict[str, Any], lane: str, df, today5, prev5, cpr,
-                 *, key: str = "") -> dict[str, Any]:
+def _brain_check(
+    trade_like: dict[str, Any], lane: str, df, today5, prev5, cpr, *, key: str = ""
+) -> dict[str, Any]:
     """Regime + market context + learned win-probability gate.
 
     Never raises — a broken brain or a dead NSE endpoint must not stop the lane,
@@ -170,8 +187,12 @@ def _brain_check(trade_like: dict[str, Any], lane: str, df, today5, prev5, cpr,
         cond = ctx.get("conditions") or {}
         # hard, non-model condition: never sell premium into a stressed vol regime
         if lane == "sell" and cond.get("allow_selling") is False:
-            return {"allowed": False, "reason": "; ".join(cond.get("blocks") or ["context block"]),
-                    "win_probability": None, "context": cond}
+            return {
+                "allowed": False,
+                "reason": "; ".join(cond.get("blocks") or ["context block"]),
+                "win_probability": None,
+                "context": cond,
+            }
         feats = mkt.features(ctx, key)
         trade_like = {**trade_like, "features": {**(trade_like.get("features") or {}), **feats}}
         read = classify(today5, prev5, cpr_width_pct=cpr.width_pct)
@@ -214,11 +235,19 @@ def _sample_market(book: Any, key: str, spot: float) -> None:
         # near-ATM (short leg / bought option) and far-OTM (hedge wing) behave
         # very differently, so sample both buckets
         wing = round(spot * (1 - cfg.sell_wing_pct) / step) * step
-        observe(book, key, spot, strikes=[
-            (atm, True), (atm, False),
-            (atm + step, True), (atm - step, False),
-            (wing, False), (round(spot * (1 + cfg.sell_wing_pct) / step) * step, True),
-        ])
+        observe(
+            book,
+            key,
+            spot,
+            strikes=[
+                (atm, True),
+                (atm, False),
+                (atm + step, True),
+                (atm - step, False),
+                (wing, False),
+                (round(spot * (1 + cfg.sell_wing_pct) / step) * step, True),
+            ],
+        )
         rows = getattr(book, "_rows", None)
         if rows:
             oi_flow.record_snapshot(key, getattr(book, "expiry", ""), rows, spot)
@@ -226,8 +255,9 @@ def _sample_market(book: Any, key: str, spot: float) -> None:
         pass
 
 
-def _mark_leg(book, strike: float, is_call: bool, cfg: OptionsCprConfig,
-              *, spot: float, ts, open_ts) -> tuple[float, str]:
+def _mark_leg(
+    book, strike: float, is_call: bool, cfg: OptionsCprConfig, *, spot: float, ts, open_ts
+) -> tuple[float, str]:
     """Current premium of one leg — real LTP from the live chain, else BS proxy."""
     if book is not None:
         q = book.quote(strike, is_call)
@@ -236,19 +266,39 @@ def _mark_leg(book, strike: float, is_call: bool, cfg: OptionsCprConfig,
     return premium_at(spot, strike, is_call, cfg.iv, _mte(cfg, ts, open_ts)), "bs_proxy"
 
 
-def _fill_leg(book, strike: float, is_call: bool, side: str, cfg: OptionsCprConfig,
-              *, spot: float, ts, open_ts) -> tuple[float, str, float, int | None]:
+def _fill_leg(
+    book,
+    strike: float,
+    is_call: bool,
+    side: str,
+    cfg: OptionsCprConfig,
+    *,
+    spot: float,
+    ts,
+    open_ts,
+) -> tuple[float, str, float, int | None]:
     """Marketable fill for one leg — (premium, model, resolved_strike, security_id).
     Ask (BUY) / bid (SELL) from the live chain, else the BS proxy."""
     if book is not None:
         q = book.quote(strike, is_call)
         if q is not None:
             return q.fill(side), "dhan_ltp", q.strike, q.security_id
-    return premium_at(spot, strike, is_call, cfg.iv, _mte(cfg, ts, open_ts)), "bs_proxy", strike, None
+    return (
+        premium_at(spot, strike, is_call, cfg.iv, _mte(cfg, ts, open_ts)),
+        "bs_proxy",
+        strike,
+        None,
+    )
 
 
-def _leg_friction(open_prem: float, close_prem: float, qty: int, cfg: OptionsCprConfig,
-                  model: str, open_side: str = "BUY") -> tuple[float, dict[str, Any]]:
+def _leg_friction(
+    open_prem: float,
+    close_prem: float,
+    qty: int,
+    cfg: OptionsCprConfig,
+    model: str,
+    open_side: str = "BUY",
+) -> tuple[float, dict[str, Any]]:
     """One-leg round-trip cost + itemised breakdown. ``open_side`` is BUY for a long
     leg, SELL for a short leg (STT lands on the sell). For real (bid/ask) fills the
     spread is already in the price, so no separate slippage term."""
@@ -265,10 +315,15 @@ def _leg_friction(open_prem: float, close_prem: float, qty: int, cfg: OptionsCpr
     return round(total, 2), breakdown
 
 
+def _naive_ist(x) -> pd.Timestamp:
+    """Candle datetimes are naive IST wall-clock; now_ist() is IST-aware. Both
+    describe the same wall clock, so drop any tz and compare the wall times."""
+    t = pd.Timestamp(x)
+    return t.tz_localize(None) if t.tzinfo is not None else t
 
 
 def _mte(cfg: OptionsCprConfig, ts, open_ts) -> float:
-    elapsed = (pd.Timestamp(ts) - pd.Timestamp(open_ts)).total_seconds() / 60.0
+    elapsed = (_naive_ist(ts) - _naive_ist(open_ts)).total_seconds() / 60.0
     return max(0.0, cfg.assumed_days_to_expiry * _MINS - elapsed)
 
 
@@ -282,8 +337,15 @@ def _dir_15m(prev15: pd.DataFrame, today15: pd.DataFrame, cfg: OptionsCprConfig)
     return 1 if ef > es else -1
 
 
-def _close(pos: dict[str, Any], exit_prem: float, reason: str, spot: float,
-           cfg: OptionsCprConfig, ctr: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+def _close(
+    pos: dict[str, Any],
+    exit_prem: float,
+    reason: str,
+    spot: float,
+    cfg: OptionsCprConfig,
+    ctr: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any]:
     qty = pos["qty_open"]
     model = pos.get("premium_model", "bs_proxy")
     gross = (exit_prem - pos["entry_premium"]) * qty
@@ -297,15 +359,29 @@ def _close(pos: dict[str, Any], exit_prem: float, reason: str, spot: float,
     if ctr["consec_losses"] >= cfg.max_consecutive_losses:
         ctr["kill"] = True
     trade = {
-        "instrument": cfg.key, "mode": "PAPER", "premium_model": model,
-        "side": pos["side"], "strike": pos["strike"], "stage": pos["stage"], "exit_reason": reason,
-        "expiry": pos.get("expiry"), "security_id": pos.get("security_id"),
-        "entry_time": pos["entry_time"], "exit_time": now_ist_iso(),
-        "entry_spot": round(pos["entry_spot"], 2), "exit_spot": round(spot, 2),
-        "entry_premium": round(pos["entry_premium"], 2), "exit_premium": round(exit_prem, 2),
-        "qty": qty, "gross_rupees": round(gross, 2), "friction_rupees": round(fric, 2),
-        "charges_breakdown": breakdown, "net_rupees": round(net, 2),
-        "lane": "buy", "features": pos.get("features"), "brain": pos.get("brain"),
+        "instrument": cfg.key,
+        "mode": "PAPER",
+        "premium_model": model,
+        "side": pos["side"],
+        "strike": pos["strike"],
+        "stage": pos["stage"],
+        "exit_reason": reason,
+        "expiry": pos.get("expiry"),
+        "security_id": pos.get("security_id"),
+        "entry_time": pos["entry_time"],
+        "exit_time": now_ist_iso(),
+        "entry_spot": round(pos["entry_spot"], 2),
+        "exit_spot": round(spot, 2),
+        "entry_premium": round(pos["entry_premium"], 2),
+        "exit_premium": round(exit_prem, 2),
+        "qty": qty,
+        "gross_rupees": round(gross, 2),
+        "friction_rupees": round(fric, 2),
+        "charges_breakdown": breakdown,
+        "net_rupees": round(net, 2),
+        "lane": "buy",
+        "features": pos.get("features"),
+        "brain": pos.get("brain"),
     }
     _journal(trade)
     state[cfg.key]["position"] = None
@@ -347,11 +423,14 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {"instrument": key, "event": "none"}
 
     if pos:
-        p_now, _m = _mark_leg(book, pos["strike"], pos["is_call"], cfg,
-                              spot=spot, ts=ts, open_ts=open_ts)
+        p_now, _m = _mark_leg(
+            book, pos["strike"], pos["is_call"], cfg, spot=spot, ts=ts, open_ts=open_ts
+        )
         e, r = pos["entry_premium"], pos["r_unit"]
         pos["peak_premium"] = max(pos["peak_premium"], p_now)
-        pos["peak_spot"] = max(pos["peak_spot"], spot) if pos["is_call"] else min(pos["peak_spot"], spot)
+        pos["peak_spot"] = (
+            max(pos["peak_spot"], spot) if pos["is_call"] else min(pos["peak_spot"], spot)
+        )
         peak = pos["peak_premium"]
         if pos["stage"] < 1 and peak >= e + cfg.trail_stage1_trigger_r * r:
             pos["stage"], pos["sl_premium"] = 1, max(pos["sl_premium"], e)
@@ -364,18 +443,39 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         trail_hit = False
         if pos["stage"] >= 3:
             atr = float(row["atr"])
-            trail_spot = (pos["peak_spot"] - cfg.atr_multiplier * atr) if pos["is_call"] else (
-                pos["peak_spot"] + cfg.atr_multiplier * atr)
-            ref = max(trail_spot, float(row["ema_fast"])) if pos["is_call"] else min(
-                trail_spot, float(row["ema_fast"]))
+            trail_spot = (
+                (pos["peak_spot"] - cfg.atr_multiplier * atr)
+                if pos["is_call"]
+                else (pos["peak_spot"] + cfg.atr_multiplier * atr)
+            )
+            ref = (
+                max(trail_spot, float(row["ema_fast"]))
+                if pos["is_call"]
+                else min(trail_spot, float(row["ema_fast"]))
+            )
             trail_hit = (spot < ref) if pos["is_call"] else (spot > ref)
 
         if p_now <= pos["sl_premium"]:
-            out.update(event="exit", trade=_close(pos, pos["sl_premium"], "trail_sl" if pos["stage"] else "premium_sl", spot, cfg, ctr, state))
+            out.update(
+                event="exit",
+                trade=_close(
+                    pos,
+                    pos["sl_premium"],
+                    "trail_sl" if pos["stage"] else "premium_sl",
+                    spot,
+                    cfg,
+                    ctr,
+                    state,
+                ),
+            )
         elif broke_struct:
-            out.update(event="exit", trade=_close(pos, p_now, "structural_sl", spot, cfg, ctr, state))
+            out.update(
+                event="exit", trade=_close(pos, p_now, "structural_sl", spot, cfg, ctr, state)
+            )
         elif trail_hit:
-            out.update(event="exit", trade=_close(pos, p_now, "atr_ema_trail", spot, cfg, ctr, state))
+            out.update(
+                event="exit", trade=_close(pos, p_now, "atr_ema_trail", spot, cfg, ctr, state)
+            )
         elif not pos["partial_booked"] and p_now >= pos["target_premium"] and pos["qty_open"] > 1:
             half = max(1, int(pos["qty_open"] * cfg.partial_book_fraction))
             book = dict(pos, qty_open=half)
@@ -387,9 +487,14 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
             state[key]["position"] = pos
             out.update(event="partial", trade=tr)
         elif p_now >= pos["target_premium"]:
-            out.update(event="exit", trade=_close(pos, pos["target_premium"], "target", spot, cfg, ctr, state))
+            out.update(
+                event="exit",
+                trade=_close(pos, pos["target_premium"], "target", spot, cfg, ctr, state),
+            )
         elif d15_dir != 0 and d15_dir != (1 if pos["is_call"] else -1):
-            out.update(event="exit", trade=_close(pos, p_now, "trend_flip_15m", spot, cfg, ctr, state))
+            out.update(
+                event="exit", trade=_close(pos, p_now, "trend_flip_15m", spot, cfg, ctr, state)
+            )
         elif ts.time() >= cfg.square_off_time:
             out.update(event="exit", trade=_close(pos, p_now, "square_off", spot, cfg, ctr, state))
         else:
@@ -423,16 +528,19 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
 
     want_strike = select_strike(spot, cfg.strike_step, is_call, cfg.strike_selection)
     mte = _mte(cfg, ts, open_ts)
-    entry_prem, model, strike, sid = _fill_leg(book, want_strike, is_call, "BUY", cfg,
-                                               spot=spot, ts=ts, open_ts=open_ts)
+    entry_prem, model, strike, sid = _fill_leg(
+        book, want_strike, is_call, "BUY", cfg, spot=spot, ts=ts, open_ts=open_ts
+    )
     if entry_prem <= 1.0:
         out["reason"] = "premium ~0 (no quote)"
         return _log_decision(key, lane_tag, out)
     # structural stop premium: proxy the premium at the CPR line (the chain has no
     # such hypothetical quote), floored by the % premium stop.
     struct_level = cpr.tc if is_call else cpr.bc
-    sl_premium = max(premium_at(struct_level, strike, is_call, cfg.iv, mte),
-                     entry_prem * (1.0 - cfg.initial_sl_premium_pct / 100.0))
+    sl_premium = max(
+        premium_at(struct_level, strike, is_call, cfg.iv, mte),
+        entry_prem * (1.0 - cfg.initial_sl_premium_pct / 100.0),
+    )
     max_loss = cfg.max_loss_pct_of_utilized_capital / 100.0 * entry_prem * cfg.lot_size
     if (entry_prem - sl_premium) * cfg.lot_size > max_loss:
         sl_premium = entry_prem - max_loss / cfg.lot_size
@@ -442,15 +550,28 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         return _log_decision(key, lane_tag, out)
 
     pos = {
-        "side": side, "is_call": is_call, "strike": strike, "entry_spot": spot,
-        "entry_premium": entry_prem, "entry_time": now_ist_iso(), "sl_premium": sl_premium,
-        "r_unit": r_unit, "target_premium": entry_prem + cfg.risk_reward_ratio * r_unit,
-        "qty_open": cfg.lot_size, "stage": 0, "peak_premium": entry_prem, "peak_spot": spot,
-        "partial_booked": False, "premium_model": model, "security_id": sid,
+        "side": side,
+        "is_call": is_call,
+        "strike": strike,
+        "entry_spot": spot,
+        "entry_premium": entry_prem,
+        "entry_time": now_ist_iso(),
+        "sl_premium": sl_premium,
+        "r_unit": r_unit,
+        "target_premium": entry_prem + cfg.risk_reward_ratio * r_unit,
+        "qty_open": cfg.lot_size,
+        "stage": 0,
+        "peak_premium": entry_prem,
+        "peak_spot": spot,
+        "partial_booked": False,
+        "premium_model": model,
+        "security_id": sid,
         "expiry": getattr(book, "expiry", None),
         "features": entry_features(df, i, cpr, prev5),
     }
-    verdict = _brain_check(pos | {"instrument": key, "lane": "buy"}, "buy", df, today5, prev5, cpr, key=key)
+    verdict = _brain_check(
+        pos | {"instrument": key, "lane": "buy"}, "buy", df, today5, prev5, cpr, key=key
+    )
     if not verdict["allowed"]:
         out["reason"] = f"brain: {verdict['reason']}"
         return _log_decision(key, lane_tag, out)
@@ -511,7 +632,9 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
     today5, prev5 = d5[today], d5[prev]
     d15_dir = _dir_15m(d15[prev], d15[today], cfg)
     cpr = cpr_context(prev5, cfg)
-    df = add_indicators(pd.concat([prev5.tail(cfg.warmup_bars + 5), today5], ignore_index=True), cfg)
+    df = add_indicators(
+        pd.concat([prev5.tail(cfg.warmup_bars + 5), today5], ignore_index=True), cfg
+    )
     i = len(df) - 1
     ts = now_ist()
     spot = float(df.iloc[i]["close"])
@@ -530,8 +653,17 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
 
     if pos:
         is_put = pos["structure"] in ("SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT")
-        debit, _mdl, _sx, _lx = _spread_quote(book, pos["short_k"], pos["long_k"], is_put, cfg,
-                                              spot=spot, ts=ts, open_ts=open_ts, mode="mark")
+        debit, _mdl, _sx, _lx = _spread_quote(
+            book,
+            pos["short_k"],
+            pos["long_k"],
+            is_put,
+            cfg,
+            spot=spot,
+            ts=ts,
+            open_ts=open_ts,
+            mode="mark",
+        )
         broke = (spot < cpr.tc) if is_put else (spot > cpr.bc)
         flip = d15_dir != 0 and d15_dir != (1 if is_put else -1)
         reason = None
@@ -547,13 +679,23 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
             reason = "square_off"
         if reason:
             exit_debit, model, sx, lx = _spread_quote(
-                book, pos["short_k"], pos["long_k"], is_put, cfg,
-                spot=spot, ts=ts, open_ts=open_ts, mode="exit")
+                book,
+                pos["short_k"],
+                pos["long_k"],
+                is_put,
+                cfg,
+                spot=spot,
+                ts=ts,
+                open_ts=open_ts,
+                mode="exit",
+            )
             gross = (pos["entry_credit"] - exit_debit) * cfg.lot_size
             f_short, b_short = _leg_friction(pos["short_px"], sx, cfg.lot_size, cfg, model, "SELL")
             fric, breakdown = f_short, b_short
             if pos["long_k"] is not None:
-                f_long, b_long = _leg_friction(pos.get("long_px", 0.0), lx, cfg.lot_size, cfg, model, "BUY")
+                f_long, b_long = _leg_friction(
+                    pos.get("long_px", 0.0), lx, cfg.lot_size, cfg, model, "BUY"
+                )
                 fric += f_long
                 breakdown = {k: round(b_short[k] + b_long[k], 2) for k in b_short}
             net = gross - fric
@@ -562,18 +704,29 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
             if ctr["consec_losses"] >= cfg.max_consecutive_losses:
                 ctr["kill"] = True
             trade = {
-                "instrument": key, "mode": "PAPER", "premium_model": model, "lane": "sell",
-                "structure": pos["structure"], "exit_reason": reason,
+                "instrument": key,
+                "mode": "PAPER",
+                "premium_model": model,
+                "lane": "sell",
+                "structure": pos["structure"],
+                "exit_reason": reason,
                 "expiry": pos.get("expiry"),
-                "entry_time": pos["entry_time"], "exit_time": now_ist_iso(),
-                "entry_spot": round(pos["entry_spot"], 2), "exit_spot": round(spot, 2),
-                "short_strike": pos["short_k"], "long_strike": pos["long_k"],
-                "entry_credit": round(pos["entry_credit"], 2), "exit_debit": round(exit_debit, 2),
+                "entry_time": pos["entry_time"],
+                "exit_time": now_ist_iso(),
+                "entry_spot": round(pos["entry_spot"], 2),
+                "exit_spot": round(spot, 2),
+                "short_strike": pos["short_k"],
+                "long_strike": pos["long_k"],
+                "entry_credit": round(pos["entry_credit"], 2),
+                "exit_debit": round(exit_debit, 2),
                 "max_loss_rupees": pos.get("max_loss_rupees"),
-                "qty": cfg.lot_size, "gross_rupees": round(gross, 2),
-                "friction_rupees": round(fric, 2), "charges_breakdown": breakdown,
+                "qty": cfg.lot_size,
+                "gross_rupees": round(gross, 2),
+                "friction_rupees": round(fric, 2),
+                "charges_breakdown": breakdown,
                 "net_rupees": round(net, 2),
-                "features": pos.get("features"), "brain": pos.get("brain"),
+                "features": pos.get("features"),
+                "brain": pos.get("brain"),
             }
             _journal(trade)
             inst["sell_position"] = None
@@ -605,14 +758,25 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
         out["reason"] = "15m EMA not aligned"
         return _log_decision(key, lane_tag, out)
     is_put = bullish
-    structure = ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL") if cfg.sell_naked else (
-        "SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD")
+    structure = (
+        ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL")
+        if cfg.sell_naked
+        else ("SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD")
+    )
     # strike selection (short by delta, wing sized to the margin budget) from the proxy;
     # then price it with the real chain.
     sp = _build_spread(spot, cfg, is_put, m)
     credit, model, short_px, long_px = _spread_quote(
-        book, sp["short_k"], sp["long_k"], is_put, cfg,
-        spot=spot, ts=ts, open_ts=open_ts, mode="entry")
+        book,
+        sp["short_k"],
+        sp["long_k"],
+        is_put,
+        cfg,
+        spot=spot,
+        ts=ts,
+        open_ts=open_ts,
+        mode="entry",
+    )
     if credit < cfg.sell_min_credit_pts:
         out["reason"] = f"credit {credit:.1f} < min {cfg.sell_min_credit_pts}"
         return _log_decision(key, lane_tag, out)
@@ -623,17 +787,28 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
         out["reason"] = f"max loss ₹{max_loss:,.0f} over margin budget"
         return _log_decision(key, lane_tag, out)
     sell_pos = {
-        "structure": structure, "entry_spot": spot, "entry_time": now_ist_iso(),
-        "short_k": sp["short_k"], "long_k": sp["long_k"], "entry_credit": credit,
-        "short_px": short_px, "long_px": long_px,
+        "structure": structure,
+        "entry_spot": spot,
+        "entry_time": now_ist_iso(),
+        "short_k": sp["short_k"],
+        "long_k": sp["long_k"],
+        "entry_credit": credit,
+        "short_px": short_px,
+        "long_px": long_px,
         "wing_pts": abs(sp["short_k"] - sp["long_k"]) if sp["long_k"] is not None else 0.0,
-        "max_loss_rupees": max_loss, "premium_model": model,
+        "max_loss_rupees": max_loss,
+        "premium_model": model,
         "expiry": getattr(book, "expiry", None),
         "features": entry_features(df, i, cpr, prev5),
     }
     verdict = _brain_check(
         sell_pos | {"instrument": key, "lane": "sell", "long_strike": sp["long_k"]},
-        "sell", df, today5, prev5, cpr, key=key,
+        "sell",
+        df,
+        today5,
+        prev5,
+        cpr,
+        key=key,
     )
     if not verdict["allowed"]:
         out["reason"] = f"brain: {verdict['reason']}"
