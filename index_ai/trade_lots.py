@@ -7,7 +7,11 @@ import threading
 import os
 from typing import Any
 
-from index_ai.instruments import IndexInstrument, instruments
+from index_ai.instruments import (
+    IndexInstrument,
+    configured_index_keys,
+    get_instrument,
+)
 from index_ai.learning import connect, now_utc
 from index_ai.risk_policy import HARDCODED_RISK
 
@@ -101,7 +105,8 @@ def stamp_option_quantities(option: dict[str, Any], instrument: IndexInstrument)
 def lots_settings_summary() -> dict[str, Any]:
     lots = get_lots_per_trade()
     per_index: dict[str, dict[str, int | str]] = {}
-    for key, inst in instruments().items():
+    for key in configured_index_keys():  # paused indices drop out of the UI qty line
+        inst = get_instrument(key)
         qty = int(inst.lot_size) * lots
         per_index[key] = {
             "units_per_lot": int(inst.lot_size),

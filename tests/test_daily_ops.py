@@ -5,6 +5,7 @@ from index_ai import daily_ops
 
 def test_sampling_defaults_to_all_three_indices(monkeypatch):
     monkeypatch.delenv("SPREAD_SAMPLE_INSTRUMENTS", raising=False)
+    monkeypatch.delenv("ENABLE_SENSEX", raising=False)  # .env may pause it
     assert daily_ops.sampling_instruments() == ["NIFTY", "BANKNIFTY", "SENSEX"]
     monkeypatch.setenv("SPREAD_SAMPLE_INSTRUMENTS", "NIFTY, SENSEX")
     assert daily_ops.sampling_instruments() == ["NIFTY", "SENSEX"]
@@ -49,16 +50,33 @@ def test_eod_runs_once_per_day(tmp_path, monkeypatch):
 
 
 def test_report_markdown_states_verdicts_plainly():
-    md = daily_ops.render_markdown({
-        "date": "2026-08-31",
-        "spreads": {"instruments": {"NIFTY": {"samples": 40, "source": "observed (40 samples)",
-                                              "near": {"median_pts": 0.2},
-                                              "wing": {"median_pts": 0.6}}}},
-        "viability": {"instruments": {"BANKNIFTY": {"sell": {
-            "friction_floor_rupees": 589, "gross_per_trade_rupees": 229,
-            "verdict": "NOT_VIABLE"}}}},
-        "brain": {"trained": False, "reason": "not enough rows"},
-    })
+    md = daily_ops.render_markdown(
+        {
+            "date": "2026-08-31",
+            "spreads": {
+                "instruments": {
+                    "NIFTY": {
+                        "samples": 40,
+                        "source": "observed (40 samples)",
+                        "near": {"median_pts": 0.2},
+                        "wing": {"median_pts": 0.6},
+                    }
+                }
+            },
+            "viability": {
+                "instruments": {
+                    "BANKNIFTY": {
+                        "sell": {
+                            "friction_floor_rupees": 589,
+                            "gross_per_trade_rupees": 229,
+                            "verdict": "NOT_VIABLE",
+                        }
+                    }
+                }
+            },
+            "brain": {"trained": False, "reason": "not enough rows"},
+        }
+    )
     assert "NOT_VIABLE" in md and "not enough rows" in md and "0.2pt" in md
 
 
