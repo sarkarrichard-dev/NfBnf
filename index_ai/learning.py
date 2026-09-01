@@ -206,6 +206,7 @@ def save_exit_prices(
     *,
     exit_option_ltp: float | None,
     exit_index_price: float | None = None,
+    leg_exit_ltps: list[float] | None = None,
 ) -> None:
     with connect() as db:
         row = db.execute("SELECT option_json FROM trades WHERE id = ?", (trade_id,)).fetchone()
@@ -216,6 +217,11 @@ def save_exit_prices(
             option["exit_ltp"] = float(exit_option_ltp)
         if exit_index_price is not None:
             option["exit_index_price"] = float(exit_index_price)
+        if leg_exit_ltps:
+            option["leg_exit_ltps"] = [float(x) for x in leg_exit_ltps]
+            for leg, px in zip(option.get("legs") or [], leg_exit_ltps):
+                if px:
+                    leg["exit_ltp"] = float(px)
         option["closed_at"] = now_ist_iso()
         db.execute(
             "UPDATE trades SET option_json = ? WHERE id = ?",
@@ -1274,6 +1280,47 @@ def record_feedback(trade_id: str | None, rating: int, note: str | None = None) 
     return update_learning()
 
 
+def backfill_spread_leg_exit_ltps(option: dict[str, Any]) -> bool:
+    """Give a closed spread's legs an ``exit_ltp`` when only the aggregate close
+    price was recorded (older rows, or the exit path's estimate fallback).
+
+    Seeds each leg from whatever per-leg price exists (last MTM), then pushes the
+    gap between that implied debit and the real recorded ``option['exit_ltp']``
+    onto the short leg(s) — the near-the-money leg carries essentially all the
+    spread's price movement, so this reconciles the per-leg P&L to the realised
+    total without inventing a number for the stable far wing. Mutates in place;
+    returns True if it changed anything.
+    """
+    legs = option.get("legs") or []
+    target = option.get("exit_ltp")
+    if len(legs) < 2 or target is None or all(leg.get("exit_ltp") is not None for leg in legs):
+        return False
+    seed = option.get("leg_exit_ltps") or option.get("leg_ltps") or []
+    px: list[float] = []
+    for i, leg in enumerate(legs):
+        v = leg.get("exit_ltp")
+        if v is None and i < len(seed):
+            v = seed[i]
+        if v is None:
+            v = leg.get("current_ltp")
+        if v is None:
+            return False
+        px.append(float(v))
+    sells = [
+        i for i, leg in enumerate(legs) if str(leg.get("transaction_type") or "").upper() == "SELL"
+    ]
+    if not sells:
+        return False
+    implied = sum(px[i] if i in sells else -px[i] for i in range(len(px)))
+    spread = (float(target) - implied) / len(sells)
+    for i in sells:
+        px[i] = round(px[i] + spread, 2)
+    for leg, v in zip(legs, px):
+        leg["exit_ltp"] = v
+    option["leg_exit_ltps"] = px
+    return True
+
+
 def repair_closed_trade_prices(*, limit: int = 200) -> int:
     """One-time style repair: infer missing entry/exit LTP on closed journal rows."""
     updated = 0
@@ -1294,10 +1341,11 @@ def repair_closed_trade_prices(*, limit: int = 200) -> int:
             or ((option.get("mtm_history") or [{}])[0].get("option_ltp"))
         )
         has_exit = option.get("exit_ltp")
-        if has_entry and has_exit:
-            continue
-        new_option = backfill_option_prices_for_close(trade, float(trade.get("pnl") or 0))
-        if new_option == option:
+        new_option = option
+        if not (has_entry and has_exit):
+            new_option = backfill_option_prices_for_close(trade, float(trade.get("pnl") or 0))
+        legs_changed = backfill_spread_leg_exit_ltps(new_option)
+        if new_option == option and not legs_changed:
             continue
         with connect() as db:
             db.execute(

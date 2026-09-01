@@ -36,7 +36,9 @@ def option_ltp(client: DhanClient, option: dict[str, Any]) -> float:
     return price
 
 
-def option_ltp_with_retry(client: DhanClient, option: dict[str, Any], *, attempts: int = 4) -> float:
+def option_ltp_with_retry(
+    client: DhanClient, option: dict[str, Any], *, attempts: int = 4
+) -> float:
     last_exc: Exception | None = None
     for attempt in range(attempts):
         try:
@@ -72,7 +74,9 @@ def _ltp_from_chain(client: DhanClient, trade: dict[str, Any]) -> float | None:
             side = "ce" if str(leg.get("option_type") or "").upper() == "CALL" else "pe"
             row = rows.get(str(strike)) or rows.get(str(int(strike))) if strike is not None else {}
             if not row and strike is not None:
-                nearest = min(rows.keys(), key=lambda k: abs(float(k) - float(strike)), default=None)
+                nearest = min(
+                    rows.keys(), key=lambda k: abs(float(k) - float(strike)), default=None
+                )
                 row = rows.get(nearest) or {} if nearest is not None else {}
             leg_row = row.get(side) or {}
             ltp = leg_row.get("last_price") or leg_row.get("ltp")
@@ -209,6 +213,7 @@ def close_open_trade(
                 }
 
     pnl: float
+    leg_exit_ltps: list[float] | None = None
     if (
         is_credit_option(option)
         and client is not None
@@ -216,23 +221,28 @@ def close_open_trade(
         and resolved_exit_ltp is None
     ):
         try:
-            pnl, close_debit, _ = compute_credit_mtm(
+            pnl, close_debit, leg_ltps = compute_credit_mtm(
                 option,
                 client,
                 instrument_key=str(trade.get("instrument") or option.get("instrument") or ""),
             )
             resolved_exit_ltp = close_debit
+            # per-leg close quotes that this pnl was actually computed from —
+            # persist them so the trade log shows real leg exits, not the last MTM
+            leg_exit_ltps = [float(x) for x in leg_ltps] or None
         except Exception:
             pnl = float(option.get("mtm_pnl") or 0)
             resolved_exit_ltp = float(option.get("last_close_debit") or entry_ltp)
             pnl_estimated = pnl == 0
     elif legs and client is not None and app_settings.dhan.ready and resolved_exit_ltp is None:
         leg_pnls: list[float] = []
+        leg_exit_ltps = []
         for leg in legs:
             try:
                 exit_leg_ltp = option_ltp_with_retry(client, leg)
             except Exception:
                 exit_leg_ltp = float(leg.get("ltp") or 0)
+            leg_exit_ltps.append(float(exit_leg_ltp))
             leg_pnls.append(
                 estimate_pnl_rupees(
                     entry_ltp=effective_entry_ltp(leg),
@@ -272,6 +282,7 @@ def close_open_trade(
         trade_id,
         exit_option_ltp=float(resolved_exit_ltp) if resolved_exit_ltp else None,
         exit_index_price=float(index_price) if index_price is not None else None,
+        leg_exit_ltps=leg_exit_ltps,
     )
     learned = record_trade_outcome(trade_id, pnl, note=note)
     return {

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from index_ai.analytics import build_pnl_index_groups
-from index_ai.learning import expand_ui_trade_to_leg_rows
+from index_ai.learning import backfill_spread_leg_exit_ltps, expand_ui_trade_to_leg_rows
 
 
 def test_rejected_spread_has_no_premium_in_log_rows() -> None:
@@ -122,6 +122,29 @@ def test_closed_spread_shows_realised_pnl_not_stale_mtm() -> None:
     assert [r["display_pnl"] for r in rows] == [3510.0, None]
     assert rows[0]["spread_pnl"] == 3510.0
     assert rows[0]["leg_pnl"] is None and rows[1]["leg_pnl"] is None
+
+
+def test_backfill_spread_leg_exits_reconciles_to_recorded_pnl() -> None:
+    # Only the aggregate close (net debit 519.3) and stale per-leg marks were
+    # saved. Backfill must give each leg an exit_ltp whose per-leg P&L sums to
+    # the realised spread total, with the gap pushed onto the short leg.
+    option = {
+        "quantity": 30,
+        "entry_ltp": 636.3,
+        "exit_ltp": 519.3,
+        "leg_ltps": [72.7, 584.2],  # implies debit 511.5 — 7.8 short of realised
+        "legs": [
+            {"transaction_type": "BUY", "strike": 60100, "entry_ltp": 86.45, "quantity": 30},
+            {"transaction_type": "SELL", "strike": 57900, "entry_ltp": 722.75, "quantity": 30},
+        ],
+    }
+    assert backfill_spread_leg_exit_ltps(option) is True
+    buy, sell = option["legs"]
+    assert buy["exit_ltp"] == 72.7 and sell["exit_ltp"] == 592.0
+    buy_pnl = (buy["exit_ltp"] - buy["entry_ltp"]) * 30
+    sell_pnl = (sell["entry_ltp"] - sell["exit_ltp"]) * 30
+    assert round(buy_pnl + sell_pnl, 2) == 3510.0
+    assert backfill_spread_leg_exit_ltps(option) is False  # idempotent
 
 
 def test_pnl_index_groups_sum_leg_rows_and_totals() -> None:
