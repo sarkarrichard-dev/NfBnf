@@ -270,17 +270,28 @@ def _local_review(rows: list[dict[str, Any]], summary: dict[str, Any]) -> dict[s
     }
 
 
+def _signature(rows: list[dict[str, Any]]) -> str:
+    """Cheap fingerprint of today's trade set — busts the cache when a position
+    closes (or a P&L is corrected) so the review can't stay stale all day."""
+    parts = [today_ist_date()]
+    for r in rows:
+        parts.append(f"{r.get('id')}:{r.get('pnl_rupees')}:{r.get('is_open')}")
+    return "|".join(parts)
+
+
 def build_day_review(*, refresh: bool = False) -> dict[str, Any]:
+    rows = _today_trades()
+    sig = _signature(rows)
     if not refresh:
         cached = latest_day_review()
-        if cached and cached.get("summary", {}).get("date") == today_ist_date():
+        if cached and cached.get("signature") == sig:
             return cached
-    rows = _today_trades()
     summary = _summary(rows)
     review = _ai_review(rows, summary)
     out = {
         "generated_at_ist": now_ist_iso(),
         "advisory_only": True,
+        "signature": sig,
         "summary": summary,
         "trades": rows,
         "review": review,
