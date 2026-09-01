@@ -45,6 +45,24 @@ def test_send_posts_when_configured(monkeypatch) -> None:
     assert sent["json"]["chat_id"] == "42" and sent["json"]["text"] == "hello"
 
 
+def test_chats_from_updates_finds_group_from_any_update_kind() -> None:
+    updates = [
+        {
+            "update_id": 1,
+            "my_chat_member": {
+                "chat": {"id": -1001234567890, "type": "supergroup", "title": "Algo BNF alerts"}
+            },
+        },
+        {
+            "update_id": 2,
+            "message": {"chat": {"id": 55, "type": "private", "first_name": "R"}, "text": "hi"},
+        },
+    ]
+    seen = notify._chats_from_updates(updates)
+    assert seen["-1001234567890"].startswith("supergroup · Algo BNF alerts")
+    assert "55" in seen
+
+
 def test_formatting_helpers() -> None:
     assert notify._premium(519.3) == "₹519.30"
     assert notify._premium(None) == "—"

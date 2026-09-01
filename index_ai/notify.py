@@ -153,6 +153,27 @@ def trade_closed(
     )
 
 
+def _chats_from_updates(result: list[dict[str, Any]]) -> dict[str, str]:
+    """Every chat seen in any update kind (message, channel_post, my_chat_member,
+    service messages from being added to a group, …), found by walking the tree."""
+    out: dict[str, str] = {}
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            chat = obj.get("chat")
+            if isinstance(chat, dict) and chat.get("id") is not None:
+                name = chat.get("title") or chat.get("username") or chat.get("first_name") or ""
+                out[str(chat["id"])] = f"{chat.get('type')} · {name}"
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    walk(result)
+    return out
+
+
 if __name__ == "__main__":  # setup helper / self-check
     tok = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not tok:
@@ -160,21 +181,37 @@ if __name__ == "__main__":  # setup helper / self-check
         raise SystemExit(0)
     import httpx
 
-    updates = httpx.get(f"https://api.telegram.org/bot{tok}/getUpdates", timeout=10).json()
-    seen: dict[str, str] = {}
-    for u in updates.get("result", []):
-        msg = u.get("message") or u.get("channel_post") or {}
-        chat = msg.get("chat") or {}
-        if chat.get("id") is not None:
-            seen[str(chat["id"])] = (
-                f"{chat.get('type')} · {chat.get('title') or chat.get('username') or chat.get('first_name')}"
-            )
+    me = httpx.get(f"https://api.telegram.org/bot{tok}/getMe", timeout=10).json()
+    if not me.get("ok"):
+        print(f"token rejected by Telegram: {me.get('description')}")
+        raise SystemExit(1)
+    print(f"bot: @{me['result'].get('username')}")
+
+    data = httpx.get(
+        f"https://api.telegram.org/bot{tok}/getUpdates",
+        params={"allowed_updates": '["message","channel_post","my_chat_member"]', "timeout": 0},
+        timeout=15,
+    ).json()
+    if not data.get("ok"):
+        print(f"getUpdates failed: {data.get('description')}")
+        print("(a 409 means a webhook is set — run deleteWebhook first)")
+        raise SystemExit(1)
+
+    seen = _chats_from_updates(data.get("result", []))
     if seen:
-        print("Chats that have messaged this bot (put one id in TELEGRAM_CHAT_ID):")
+        print("\nChats this bot can see (put one id in TELEGRAM_CHAT_ID):")
         for cid, label in seen.items():
             print(f"  {cid}   {label}")
+        print("\nGroup / supergroup ids are negative — that's expected.")
     else:
-        print("No chats yet — send the bot a message (or add it to a channel) and re-run.")
+        print(
+            "\nNo chats found. Telegram only shows a group message to a bot when either\n"
+            "  • the bot's group privacy is OFF  (BotFather → /setprivacy → Disable), or\n"
+            "  • the message is a command addressed to it.\n"
+            "Do this: in the group, send  /start@"
+            + str(me["result"].get("username"))
+            + "  (or any message after disabling privacy), then re-run this."
+        )
     if enabled():
         ok = _post("✅ Algo BNF notifications are wired up.")
-        print(f"test message sent: {ok}")
+        print(f"\ntest message sent: {ok}")
