@@ -175,6 +175,13 @@ def _chats_from_updates(result: list[dict[str, Any]]) -> dict[str, str]:
 
 
 if __name__ == "__main__":  # setup helper / self-check
+    # run standalone, nothing has loaded .env yet (the server does it at startup)
+    from dotenv import load_dotenv
+
+    from index_ai.config import ENV_PATH
+
+    load_dotenv(ENV_PATH, override=True)
+
     tok = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not tok:
         print("TELEGRAM_BOT_TOKEN not set in .env — nothing to do.")
