@@ -292,12 +292,11 @@ def close_open_trade(
             instrument=str(trade.get("instrument") or option.get("instrument") or ""),
             action=str(trade.get("action") or option.get("structure") or ""),
             mode=mode,
-            entry_premium=entry_ltp,
-            exit_premium=resolved_exit_ltp,
+            option=option,
             pnl=pnl,
-            opened_at=trade.get("created_at"),
-            closed_at=option.get("closed_at") or now_ist_iso(),
             reason=reason,
+            exit_premium=resolved_exit_ltp,
+            leg_exit_ltps=leg_exit_ltps,
         )
     except Exception:
         pass

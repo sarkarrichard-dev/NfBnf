@@ -16,7 +16,7 @@ import os
 import threading
 from typing import Any
 
-from index_ai.market_clock import now_ist_iso, parse_ist_datetime
+from index_ai.premium_trail import premium_trail_cfg, premium_trail_enabled
 
 
 def _config() -> tuple[str, str] | None:
@@ -60,69 +60,100 @@ def send(text: str) -> None:
     threading.Thread(target=_post, args=(text,), daemon=True).start()
 
 
-def _premium(value: Any) -> str:
+_OPT = {"CALL": "CE", "CE": "CE", "PUT": "PE", "PE": "PE"}
+
+
+def _cepe(value: Any) -> str:
+    return _OPT.get(str(value or "").upper(), "")
+
+
+def _rupees(value: Any, dp: int = 2) -> str:
     try:
-        return f"₹{float(value):,.2f}"
+        return f"₹{float(value):,.{dp}f}"
     except (TypeError, ValueError):
         return "—"
 
 
-def _clock(ts: str | None) -> str:
-    dt = parse_ist_datetime(ts)
-    return dt.strftime("%d %b %H:%M") if dt else "—"
-
-
-def _legs_line(legs: list[dict[str, Any]] | None) -> str:
-    if not legs:
-        return ""
-    parts = []
-    for leg in legs:
-        side = "short" if str(leg.get("transaction_type") or "").upper() == "SELL" else "hedge"
-        strike = leg.get("strike")
-        opt = str(leg.get("option_type") or "").upper()[:2] or "?"
-        parts.append(f"{int(strike) if strike else '?'} {opt} {side}")
-    return "\n" + " / ".join(parts)
-
-
-def _mode_tag(mode: str | None) -> str:
-    return "LIVE" if str(mode or "").upper().startswith("LIVE") else "PAPER"
-
-
-def trade_opened(
-    *,
-    instrument: str,
-    action: str,
-    mode: str | None,
-    entry_premium: Any,
-    index_price: Any = None,
-    confidence: Any = None,
-    legs: list[dict[str, Any]] | None = None,
-) -> None:
-    idx = ""
+def _strike(value: Any) -> str:
     try:
-        idx = f"  ·  index {float(index_price):,.0f}" if index_price is not None else ""
+        return f"{int(round(float(value)))}"
     except (TypeError, ValueError):
-        idx = ""
-    conf = ""
+        return "?"
+
+
+def _pnl_bits(pnl: Any) -> tuple[float, str, str]:
     try:
-        conf = f"  ·  conf {float(confidence):.2f}" if confidence is not None else ""
+        p = float(pnl)
     except (TypeError, ValueError):
-        conf = ""
-    send(
-        f"\U0001f7e2 <b>ENTRY</b> · {_mode_tag(mode)}\n"
-        f"{instrument} {action}\n"
-        f"Entry {_premium(entry_premium)}  @ {_clock(now_ist_iso())}{idx}{conf}"
-        f"{_legs_line(legs)}"
+        p = 0.0
+    mark = "\U0001f7e2" if p > 0 else "\U0001f534" if p < 0 else "⚪"
+    word = "profit" if p > 0 else "loss" if p < 0 else "flat"
+    return p, mark, word
+
+
+def _paper(mode: str | None) -> str:
+    return "" if str(mode or "").upper().startswith("LIVE") else " · paper"
+
+
+def _primary_leg(
+    option: dict[str, Any], action: str, *, leg_exit_ltps: list[float] | None = None
+) -> tuple[str, str, Any, Any, Any]:
+    """The leg the trade is really about — the short leg of a spread, else the
+    single option. Returns (side, CE/PE, strike, entry_px, exit_px)."""
+    legs = option.get("legs") or []
+    if legs:
+        i = next(
+            (
+                j
+                for j, leg in enumerate(legs)
+                if str(leg.get("transaction_type") or "").upper() == "SELL"
+            ),
+            0,
+        )
+        leg = legs[i]
+        side = "SELL" if str(leg.get("transaction_type") or "").upper() == "SELL" else "BUY"
+        exit_px = leg.get("exit_ltp")
+        if exit_px is None and leg_exit_ltps and i < len(leg_exit_ltps):
+            exit_px = leg_exit_ltps[i]
+        return side, _cepe(leg.get("option_type")), leg.get("strike"), leg.get("entry_ltp"), exit_px
+    side = "SELL" if str(action or "").upper().startswith("SELL") else "BUY"
+    return (
+        side,
+        _cepe(option.get("option_type")),
+        option.get("strike"),
+        option.get("entry_ltp"),
+        option.get("exit_ltp"),
     )
 
 
-def _held(opened_at: str | None, closed_at: str | None) -> str:
-    a, b = parse_ist_datetime(opened_at), parse_ist_datetime(closed_at)
-    if not a or not b:
-        return ""
-    mins = max(0, int((b - a).total_seconds() // 60))
-    h, m = divmod(mins, 60)
-    return f"  ·  held {h}h {m:02d}m" if h else f"  ·  held {m}m"
+def _sl_and_target(instrument: str, side: str, entry: Any) -> tuple[float | None, float | None]:
+    """Stop-loss price and the price where the trailing-profit rule arms, from
+    the premium-trail model (None for an index without measured params)."""
+    try:
+        e = float(entry)
+    except (TypeError, ValueError):
+        return None, None
+    if not premium_trail_enabled(instrument):
+        return None, None
+    cfg = premium_trail_cfg(instrument)
+    hard, pct = float(cfg["hard_stop_pts"]), float(cfg["first_target_pct"])
+    if side == "SELL":  # short — loss as the premium rises, profit as it falls
+        return e + hard, e * (1 - pct)
+    # long — a hard stop wider than the premium just means the whole premium is
+    # at risk (the option can only fall to zero), so floor the shown level at 0
+    return max(0.0, e - hard), e * (1 + pct)
+
+
+def trade_opened(*, instrument: str, action: str, mode: str | None, option: dict[str, Any]) -> None:
+    side, cepe, strike, entry, _ = _primary_leg(option, action)
+    lines = [
+        f"\U0001f7e2 <b>ENTRY</b>{_paper(mode)} — {instrument}",
+        f"{side} {cepe} {_strike(strike)} @ {_rupees(entry)}",
+    ]
+    sl, tgt = _sl_and_target(instrument, side, entry)
+    if sl is not None:
+        lines.append(f"SL {_rupees(sl)} · trailing profit at {_rupees(tgt)}")
+    send("\n".join(lines))
 
 
 def trade_closed(
@@ -130,27 +161,49 @@ def trade_closed(
     instrument: str,
     action: str,
     mode: str | None,
-    entry_premium: Any,
-    exit_premium: Any,
+    option: dict[str, Any],
     pnl: Any,
-    opened_at: str | None,
-    closed_at: str | None,
     reason: str | None = None,
+    exit_premium: Any = None,
+    leg_exit_ltps: list[float] | None = None,
 ) -> None:
-    try:
-        pnl_f = float(pnl)
-    except (TypeError, ValueError):
-        pnl_f = 0.0
-    mark = "\U0001f7e2" if pnl_f > 0 else "\U0001f534" if pnl_f < 0 else "⚪"
-    sign = "+" if pnl_f >= 0 else "−"
-    why = f"\n{reason}" if reason else ""
+    from index_ai.day_review import _bucket_exit
+
+    side, cepe, strike, _, exit_px = _primary_leg(option, action, leg_exit_ltps=leg_exit_ltps)
+    if exit_px is None:
+        exit_px = exit_premium
+    p, mark, word = _pnl_bits(pnl)
     send(
-        f"{mark} <b>EXIT</b> · {_mode_tag(mode)}  ·  {sign}₹{abs(pnl_f):,.0f}\n"
-        f"{instrument} {action}\n"
-        f"Entry {_premium(entry_premium)} @ {_clock(opened_at)}  →  "
-        f"Exit {_premium(exit_premium)} @ {_clock(closed_at)}"
-        f"{_held(opened_at, closed_at)}{why}"
+        f"{mark} <b>EXIT</b>{_paper(mode)} — {instrument}\n"
+        f"{cepe} {_strike(strike)} exit @ {_rupees(exit_px)}\n"
+        f"{word.capitalize()} {'+' if p >= 0 else '−'}₹{abs(p):,.0f} · {_bucket_exit(reason)}"
     )
+
+
+def day_summary(summary: dict[str, Any] | None) -> None:
+    if not summary or not summary.get("closed"):
+        return
+    net = float(summary.get("net_rupees") or 0)
+    wr = ""
+    if summary.get("win_rate") is not None:
+        wr = f" ({float(summary['win_rate']) * 100:.0f}%)"
+    lines = [
+        f"\U0001f4ca <b>DAY SUMMARY</b> — {summary.get('date', '')}",
+        f"{summary.get('closed')} trades · {summary.get('wins', 0)}W / {summary.get('losses', 0)}L{wr}",
+        f"Net {'+' if net >= 0 else '−'}₹{abs(net):,.0f}",
+    ]
+    by = summary.get("by_instrument") or {}
+    if by:
+        lines.append(
+            " · ".join(
+                f"{k} {'+' if (v.get('net_rupees') or 0) >= 0 else '−'}₹{abs(v.get('net_rupees') or 0):,.0f}"
+                for k, v in by.items()
+            )
+        )
+    ends = summary.get("how_trades_ended") or {}
+    if ends:
+        lines.append("Exits: " + " · ".join(f"{k} {v}" for k, v in ends.items()))
+    send("\n".join(lines))
 
 
 def _chats_from_updates(result: list[dict[str, Any]]) -> dict[str, str]:

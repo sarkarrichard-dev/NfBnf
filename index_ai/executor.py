@@ -302,10 +302,7 @@ def execute_plan(
                     instrument=str(plan.option["instrument"]),
                     action=str(plan.signal["action"]),
                     mode=trade_mode,
-                    entry_premium=option_payload.get("entry_ltp"),
-                    index_price=plan.signal.get("price"),
-                    confidence=plan.signal.get("confidence"),
-                    legs=option_payload.get("legs"),
+                    option=option_payload,
                 )
             except Exception:
                 pass
