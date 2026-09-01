@@ -67,9 +67,9 @@ def _cepe(value: Any) -> str:
     return _OPT.get(str(value or "").upper(), "")
 
 
-def _rupees(value: Any, dp: int = 2) -> str:
+def _rupees(value: Any) -> str:
     try:
-        return f"₹{float(value):,.{dp}f}"
+        return f"₹{float(value):,.2f}"
     except (TypeError, ValueError):
         return "—"
 
@@ -79,16 +79,6 @@ def _strike(value: Any) -> str:
         return f"{int(round(float(value)))}"
     except (TypeError, ValueError):
         return "?"
-
-
-def _pnl_bits(pnl: Any) -> tuple[float, str, str]:
-    try:
-        p = float(pnl)
-    except (TypeError, ValueError):
-        p = 0.0
-    mark = "\U0001f7e2" if p > 0 else "\U0001f534" if p < 0 else "⚪"
-    word = "profit" if p > 0 else "loss" if p < 0 else "flat"
-    return p, mark, word
 
 
 def _paper(mode: str | None) -> str:
@@ -172,11 +162,16 @@ def trade_closed(
     side, cepe, strike, _, exit_px = _primary_leg(option, action, leg_exit_ltps=leg_exit_ltps)
     if exit_px is None:
         exit_px = exit_premium
-    p, mark, word = _pnl_bits(pnl)
+    try:
+        p = float(pnl)
+    except (TypeError, ValueError):
+        p = 0.0
+    mark = "\U0001f7e2" if p > 0 else "\U0001f534" if p < 0 else "⚪"
+    word = "Profit" if p > 0 else "Loss" if p < 0 else "Flat"
     send(
         f"{mark} <b>EXIT</b>{_paper(mode)} — {instrument}\n"
         f"{cepe} {_strike(strike)} exit @ {_rupees(exit_px)}\n"
-        f"{word.capitalize()} {'+' if p >= 0 else '−'}₹{abs(p):,.0f} · {_bucket_exit(reason)}"
+        f"{word} {'+' if p >= 0 else '−'}₹{abs(p):,.0f} · {_bucket_exit(reason)}"
     )
 
 

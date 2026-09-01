@@ -229,7 +229,7 @@ def close_open_trade(
             resolved_exit_ltp = close_debit
             # per-leg close quotes that this pnl was actually computed from —
             # persist them so the trade log shows real leg exits, not the last MTM
-            leg_exit_ltps = [float(x) for x in leg_ltps] or None
+            leg_exit_ltps = [float(x) for x in leg_ltps]
         except Exception:
             pnl = float(option.get("mtm_pnl") or 0)
             resolved_exit_ltp = float(option.get("last_close_debit") or entry_ltp)

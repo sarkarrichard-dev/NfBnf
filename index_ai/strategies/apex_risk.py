@@ -2,32 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from datetime import time
 
 from index_ai.learning import connect
-from index_ai.market_clock import now_ist, today_ist_date
+from index_ai.market_clock import now_ist, parse_time_env, today_ist_date
 from index_ai.strategies.strategy_params import get_strategy_params
-
-
-def _parse_time(name: str, default: time) -> time:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    for fmt in ("%H:%M", "%H:%M:%S"):
-        try:
-            from datetime import datetime
-
-            return datetime.strptime(raw, fmt).time()
-        except ValueError:
-            continue
-    return default
 
 
 def apex_entry_times() -> dict[str, time]:
     return {
-        "start": _parse_time("APEX_ENTRIES_START", time(9, 16)),
-        "no_entry_after": _parse_time("APEX_NO_ENTRY_AFTER", time(15, 0)),
+        "start": parse_time_env("APEX_ENTRIES_START", time(9, 16)),
+        "no_entry_after": parse_time_env("APEX_NO_ENTRY_AFTER", time(15, 0)),
     }
 
 
