@@ -84,6 +84,46 @@ def test_spread_expands_to_two_leg_rows() -> None:
     assert "SELL_BEAR" not in str(rows)
 
 
+def test_closed_spread_shows_realised_pnl_not_stale_mtm() -> None:
+    # A closed spread records an aggregate exit price + realised pnl, never
+    # per-leg fills. The leg view must show the realised spread pnl on leg 0,
+    # not fabricate per-leg P&L from the last MTM mark (current_ltp).
+    ui = {
+        "id": "t-closed",
+        "created_at_ist": "01 Sep 2026, 9:48 AM IST",
+        "closed_at_ist": "01 Sep 2026, 3:13 PM IST",
+        "instrument": "BANKNIFTY",
+        "is_open": False,
+        "is_paper": True,
+        "status": "CLOSED",
+        "quantity": 30,
+        "pnl": 3510.0,
+        "mtm_pnl": 3744.0,  # stale pre-close mark — must not surface
+        "legs_detail": [
+            {
+                "transaction_type": "BUY",
+                "option_type": "CE",
+                "strike_display": "60100",
+                "entry_ltp": 86.45,
+                "current_ltp": 72.7,  # last MTM leg mark, not an exit fill
+                "quantity": 30,
+            },
+            {
+                "transaction_type": "SELL",
+                "option_type": "CE",
+                "strike_display": "57900",
+                "entry_ltp": 722.75,
+                "current_ltp": 584.2,
+                "quantity": 30,
+            },
+        ],
+    }
+    rows = expand_ui_trade_to_leg_rows(ui)
+    assert [r["display_pnl"] for r in rows] == [3510.0, None]
+    assert rows[0]["spread_pnl"] == 3510.0
+    assert rows[0]["leg_pnl"] is None and rows[1]["leg_pnl"] is None
+
+
 def test_pnl_index_groups_sum_leg_rows_and_totals() -> None:
     rows = [
         {

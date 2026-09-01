@@ -8,7 +8,13 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from index_ai.config import DB_PATH, MEMORY_DIR
-from index_ai.market_clock import format_ist_display, is_entry_session_timestamp, now_ist_iso, parse_ist_datetime, today_ist_date
+from index_ai.market_clock import (
+    format_ist_display,
+    is_entry_session_timestamp,
+    now_ist_iso,
+    parse_ist_datetime,
+    today_ist_date,
+)
 
 
 def now_utc() -> str:
@@ -369,7 +375,9 @@ def option_leg_fields(trade: dict[str, Any]) -> dict[str, Any]:
     from index_ai.trade_lots import get_lots_per_trade
 
     lots = int(get_lots_per_trade())
-    lot_label = f"{lots} lot{'s' if lots != 1 else ''} · {effective_qty} qty" if effective_qty else ""
+    lot_label = (
+        f"{lots} lot{'s' if lots != 1 else ''} · {effective_qty} qty" if effective_qty else ""
+    )
     position_summary = instrument
     if leg_display and leg_display != "—":
         position_summary = f"{instrument} · {leg_display}" if instrument else leg_display
@@ -429,7 +437,9 @@ def build_legs_ui(option: dict[str, Any]) -> list[dict[str, Any]]:
         exit_px = leg.get("exit_ltp")
         broker_id = leg.get("broker_order_id")
         if not broker_id and i < len(broker_legs):
-            resp = (broker_legs[i].get("response") or {}) if isinstance(broker_legs[i], dict) else {}
+            resp = (
+                (broker_legs[i].get("response") or {}) if isinstance(broker_legs[i], dict) else {}
+            )
             broker_id = resp.get("orderId")
         rows.append(
             {
@@ -491,7 +501,15 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
         side_word = "Sell" if tx == "SELL" else "Buy"
         qty = int(leg.get("quantity") or ui.get("quantity") or 1)
         entry = None if rejected else leg.get("entry_ltp")
-        mark = None if rejected else (leg.get("current_ltp") if is_open else (leg.get("exit_ltp") or leg.get("current_ltp")))
+        mark = (
+            None
+            if rejected
+            else (
+                leg.get("current_ltp")
+                if is_open
+                else (leg.get("exit_ltp") or leg.get("current_ltp"))
+            )
+        )
         leg_mtm = None
         leg_pnl = None
         if not rejected and entry is not None and mark is not None and is_open and not awaiting:
@@ -502,7 +520,12 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
                 transaction_type=tx,
             )
         elif not rejected and entry is not None and not is_open:
-            exit_px = leg.get("exit_ltp") or mark
+            # real per-leg exit fill only — never the last MTM mark. Spread exits
+            # record an aggregate close price, not per-leg fills, so a closed
+            # spread leg has no exit_ltp: fall through to show_spread_pnl below,
+            # which puts the realised spread P&L on leg 0. Using `mark` here made
+            # a closed spread display a stale pre-close MTM split across legs.
+            exit_px = leg.get("exit_ltp")
             if exit_px is not None:
                 leg_pnl = estimate_pnl_rupees(
                     entry_ltp=float(entry),
@@ -564,11 +587,7 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
                 "mtm_updated_at_ist": ui.get("mtm_updated_at_ist") if is_open else None,
                 "entry_session_ok": ui.get("entry_session_ok"),
                 "row_class": (
-                    "row-open"
-                    if is_open
-                    else "row-rejected"
-                    if status == "LIVE_REJECTED"
-                    else ""
+                    "row-open" if is_open else "row-rejected" if status == "LIVE_REJECTED" else ""
                 ),
                 "leg_group_class": "leg-group-start" if idx == 0 else "leg-group-cont",
             }
@@ -602,8 +621,7 @@ def repair_rejected_journal_prices(*, limit: int = 200) -> int:
             continue
         opt = json.loads(row["option_json"])
         dirty = any(
-            opt.get(k) is not None
-            for k in ("entry_ltp", "ltp", "mtm_pnl", "net_credit_points")
+            opt.get(k) is not None for k in ("entry_ltp", "ltp", "mtm_pnl", "net_credit_points")
         ) or any(
             isinstance(leg, dict) and leg.get("entry_ltp") is not None
             for leg in (opt.get("legs") or [])
@@ -632,14 +650,14 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
     status = str(trade.get("status") or "")
     if status == "LIVE_REJECTED":
         option = sanitize_rejected_option(option)
-    is_open = pnl is None and (
-        not is_live_trade(trade) or is_broker_filled_open(trade)
-    )
+    is_open = pnl is None and (not is_live_trade(trade) or is_broker_filled_open(trade))
     _, effective_qty = resolve_trade_lot_size(trade)
     qty = effective_qty or int(option.get("quantity") or 1)
     entry_price = signal.get("price")
     strike = option.get("strike")
-    entry_ltp = None if status == "LIVE_REJECTED" else (option.get("entry_ltp") or option.get("ltp"))
+    entry_ltp = (
+        None if status == "LIVE_REJECTED" else (option.get("entry_ltp") or option.get("ltp"))
+    )
     if entry_ltp is None and status != "LIVE_REJECTED":
         hist = option.get("mtm_history") or []
         if hist and hist[0].get("option_ltp") is not None:
@@ -655,9 +673,7 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
             option = {**option, "exit_ltp": round(inferred_exit, 2), "exit_inferred_from_pnl": True}
     exit_option_ltp = option.get("exit_ltp")
     exit_inferred_from_pnl = bool(option.get("exit_inferred_from_pnl"))
-    prices_incomplete = (
-        pnl is not None and entry_ltp is None and exit_option_ltp is None
-    )
+    prices_incomplete = pnl is not None and entry_ltp is None and exit_option_ltp is None
     segment = option.get("segment") or ""
     security_id = option.get("security_id")
     exit_index_price = option.get("exit_index_price")
@@ -688,7 +704,9 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
         broker_status_line = ", ".join(str(s) for s in option["broker_order_statuses"])
 
     if broker_status == "LIVE_REJECTED":
-        exit_label = option.get("broker_rejection_reason") or broker_status_line or "Rejected on Dhan"
+        exit_label = (
+            option.get("broker_rejection_reason") or broker_status_line or "Rejected on Dhan"
+        )
     elif pnl is not None and float(pnl) != 0:
         if exit_option_ltp is not None:
             est = " (est. from PnL)" if exit_inferred_from_pnl else ""
@@ -759,7 +777,11 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
         "mtm_updated_at_ist": format_ist_display(str(mtm_updated)) if mtm_updated else None,
         "last_option_ltp": last_ltp,
         "current_option_ltp": current_option_ltp,
-        "exit_option_ltp": exit_option_ltp if exit_option_ltp is not None else current_option_ltp if not is_open else None,
+        "exit_option_ltp": exit_option_ltp
+        if exit_option_ltp is not None
+        else current_option_ltp
+        if not is_open
+        else None,
         "exit_index_price": exit_index_price,
         "mtm_history": mtm_history[-12:],
         "display_pnl": float(mtm_pnl) if is_open and mtm_pnl is not None else pnl,
@@ -1266,8 +1288,10 @@ def repair_closed_trade_prices(*, limit: int = 200) -> int:
         if not tid or _is_test_trade_id(tid):
             continue
         option = dict(trade.get("option") or {})
-        has_entry = option.get("entry_ltp") or option.get("ltp") or (
-            (option.get("mtm_history") or [{}])[0].get("option_ltp")
+        has_entry = (
+            option.get("entry_ltp")
+            or option.get("ltp")
+            or ((option.get("mtm_history") or [{}])[0].get("option_ltp"))
         )
         has_exit = option.get("exit_ltp")
         if has_entry and has_exit:
@@ -1334,16 +1358,8 @@ def update_learning() -> dict[str, Any]:
             """
         ).fetchall()
 
-    ratings = [
-        int(r["rating"])
-        for r in fb_rows
-        if not _feedback_row_excluded(dict(r))
-    ][:30]
-    pnls = [
-        float(r["pnl"])
-        for r in closed_rows
-        if not _is_test_trade_id(str(r["id"]))
-    ][:50]
+    ratings = [int(r["rating"]) for r in fb_rows if not _feedback_row_excluded(dict(r))][:30]
+    pnls = [float(r["pnl"]) for r in closed_rows if not _is_test_trade_id(str(r["id"]))][:50]
     avg = sum(ratings) / len(ratings) if ratings else 0.0
     min_confidence_adjustment = 0.0
     if ratings:
