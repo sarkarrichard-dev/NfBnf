@@ -120,6 +120,12 @@ async def build_pre_open_brief(client: DhanClient, cfg: AppSettings) -> dict[str
             "reason": (signal.get("reason") or "")[:240],
             "cpr_regime": regime.get("day_bias"),
             "cpr_width_class": regime.get("width_class"),
+            "cpr": {
+                "pivot": regime.get("pivot"),
+                "bc": regime.get("bc"),
+                "tc": regime.get("tc"),
+                "price_position": regime.get("price_position"),
+            },
             "spot_session": spot,
             "oi": oi_ctx,
             "oi_fetch_error": result.get("oi_fetch_error"),

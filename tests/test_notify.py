@@ -128,6 +128,38 @@ def test_day_summary(monkeypatch) -> None:
     assert "NIFTY +₹2,755 · BANKNIFTY +₹162" in msg
 
 
+def test_pre_open(monkeypatch) -> None:
+    out = _capture(monkeypatch)
+    monkeypatch.setattr(
+        "index_ai.market_context.context.latest",
+        lambda: {
+            "vix": {"last": 11.81, "regime": "CALM", "change_pct": 2.78},
+            "participant_oi": {"fii_index_fut_net": -222032},
+        },
+    )
+    notify.pre_open(
+        {
+            "index_snapshots": {
+                "BANKNIFTY": {
+                    "action": "SELL_BEAR_CALL_SPREAD",
+                    "confidence": 0.61,
+                    "cpr_regime": "TRENDING_BEAR",
+                    "cpr": {"pivot": 57310.0, "bc": 56900.0, "tc": 57720.0},
+                    "oi": {"pcr": 0.78, "bias": "call_heavy"},
+                },
+                "NIFTY": {"action": "NO_TRADE", "cpr_regime": "SIDEWAYS", "cpr": {}, "oi": {}},
+            }
+        }
+    )
+    msg = out[0]
+    assert "PRE-OPEN" in msg
+    assert "pivot 57,310 (56,900–57,720) · trending bear · PCR 0.78 · call heavy" in msg
+    assert "SELL_BEAR_CALL_SPREAD 61%" in msg
+    assert "NIFTY" in msg and "no clear entry" in msg
+    assert "VIX 11.8 (CALM, +2.8%)" in msg
+    assert "FII net short 2.2L index futures" in msg
+
+
 def test_entry_stoploss_floored_at_zero_for_cheap_option(monkeypatch) -> None:
     out = _capture(monkeypatch)
     # NIFTY hard stop is 11 pts; a ₹7.45 option can only fall to zero

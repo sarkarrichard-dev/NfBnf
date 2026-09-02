@@ -77,6 +77,7 @@ class ScannerState:
     executions: int = 0
     pre_open_brief_date: str | None = None
     pre_open_brief: dict[str, Any] | None = None
+    pre_open_alert_date: str | None = None
     last_reconcile: dict[str, Any] | None = None
     market_context: dict[str, Any] | None = None
     last_spread_sample: dict[str, Any] | None = None
@@ -337,11 +338,16 @@ async def _run_eod_if_due() -> None:
     if not eod_due():
         return
     report = await asyncio.to_thread(run_eod)
-    _state.last_eod = {"date": report.get("date"),
-                       "brain_trained": bool((report.get("brain") or {}).get("trained"))}
-    _log("eod_report", date=report.get("date"),
-         brain=(report.get("brain") or {}).get("reason")
-         or ("trained" if (report.get("brain") or {}).get("trained") else "not trained"))
+    _state.last_eod = {
+        "date": report.get("date"),
+        "brain_trained": bool((report.get("brain") or {}).get("trained")),
+    }
+    _log(
+        "eod_report",
+        date=report.get("date"),
+        brain=(report.get("brain") or {}).get("reason")
+        or ("trained" if (report.get("brain") or {}).get("trained") else "not trained"),
+    )
 
 
 async def _run_reconcile(client: DhanClient, cfg: AppSettings) -> None:
@@ -353,9 +359,12 @@ async def _run_reconcile(client: DhanClient, cfg: AppSettings) -> None:
     result = await asyncio.to_thread(reconcile, client, mode="LIVE")
     _state.last_reconcile = result
     if result.get("issues"):
-        _log("reconcile_drift", issues=len(result["issues"]),
-             kinds=sorted({i["kind"] for i in result["issues"]}),
-             repaired=len(result.get("repaired") or []))
+        _log(
+            "reconcile_drift",
+            issues=len(result["issues"]),
+            kinds=sorted({i["kind"] for i in result["issues"]}),
+            repaired=len(result.get("repaired") or []),
+        )
 
 
 async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
@@ -434,8 +443,12 @@ async def _run_market_context_if_due() -> None:
         return
     ctx = await asyncio.to_thread(mkt.build, refresh=True)
     _state.market_context = ctx
-    _log("market_context", sources=ctx.get("sources"), notes=ctx.get("notes"),
-         blocks=(ctx.get("conditions") or {}).get("blocks"))
+    _log(
+        "market_context",
+        sources=ctx.get("sources"),
+        notes=ctx.get("notes"),
+        blocks=(ctx.get("conditions") or {}).get("blocks"),
+    )
 
 
 async def _run_pre_open_brief_if_due(client: DhanClient, cfg: AppSettings) -> None:
@@ -456,6 +469,18 @@ async def _run_pre_open_brief_if_due(client: DhanClient, cfg: AppSettings) -> No
         confidence_bump=brief.get("confidence_bump"),
         notes=brief.get("notes"),
     )
+
+    # One Telegram pre-open read near 9:20, once the window's data has settled.
+    from datetime import time as _time
+
+    if now_ist().time() >= _time(9, 18) and _state.pre_open_alert_date != today_ist_date():
+        _state.pre_open_alert_date = today_ist_date()
+        try:
+            from index_ai.notify import pre_open
+
+            pre_open(brief)
+        except Exception:
+            pass
 
 
 async def _scan_index(
@@ -620,7 +645,11 @@ async def _scan_index(
 
 async def _run_loop() -> None:
     global _state
-    _log("scanner_started", indices=list(configured_index_keys()), skipped=list(unconfigured_index_keys()))
+    _log(
+        "scanner_started",
+        indices=list(configured_index_keys()),
+        skipped=list(unconfigured_index_keys()),
+    )
     backoff = SCAN_INTERVAL_SECONDS
 
     while _state.running:
@@ -690,8 +719,12 @@ async def _run_loop() -> None:
                 await run_stage(_health, name, factory, on_error=_stage_failed)
 
             if is_square_off_window():
-                await run_stage(_health, "square_off",
-                                lambda: _square_off_open(client, cfg), on_error=_stage_failed)
+                await run_stage(
+                    _health,
+                    "square_off",
+                    lambda: _square_off_open(client, cfg),
+                    on_error=_stage_failed,
+                )
             else:
                 keys = [k for k in configured_index_keys()]
                 await run_stage(

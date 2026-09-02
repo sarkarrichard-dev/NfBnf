@@ -201,6 +201,62 @@ def day_summary(summary: dict[str, Any] | None) -> None:
     send("\n".join(lines))
 
 
+def _lvl(v: Any) -> str:
+    try:
+        return f"{float(v):,.0f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def pre_open(brief: dict[str, Any] | None) -> None:
+    """9:20 IST read: the CPR pivot zone, OI lean and planned action per index,
+    plus the day's sentiment (India VIX + FII index-futures positioning)."""
+    if not brief:
+        return
+    from index_ai.market_clock import today_ist_date
+
+    lines = [f"\U0001f514 <b>PRE-OPEN</b> — {today_ist_date()}"]
+    for key, s in (brief.get("index_snapshots") or {}).items():
+        if not isinstance(s, dict) or s.get("error"):
+            continue
+        cpr = s.get("cpr") or {}
+        piv, bc, tc = cpr.get("pivot"), cpr.get("bc"), cpr.get("tc")
+        cpr_txt = f"pivot {_lvl(piv)} ({_lvl(bc)}–{_lvl(tc)})" if piv is not None else "pivot —"
+        bits = [cpr_txt, str(s.get("cpr_regime") or "—").replace("_", " ").lower()]
+        oi = s.get("oi") or {}
+        if oi.get("pcr") is not None:
+            bits.append(f"PCR {float(oi['pcr']):.2f}")
+        if oi.get("bias"):
+            bits.append(str(oi["bias"]).replace("_", " "))
+        action = str(s.get("action") or "NO_TRADE")
+        conf = s.get("confidence")
+        plan = action if action != "NO_TRADE" else "no clear entry"
+        if action != "NO_TRADE" and conf is not None:
+            plan += f" {float(conf):.0%}"
+        lines.append(f"<b>{key}</b>  " + " · ".join(bits) + f"\n  → {plan}")
+
+    try:
+        from index_ai.market_context import context as mkt
+
+        c = mkt.latest() or {}
+    except Exception:
+        c = {}
+    vix, poi = c.get("vix") or {}, c.get("participant_oi") or {}
+    sent = []
+    if vix.get("last") is not None:
+        chg = f", {float(vix['change_pct']):+.1f}%" if vix.get("change_pct") is not None else ""
+        sent.append(f"VIX {float(vix['last']):.1f} ({vix.get('regime', '?')}{chg})")
+    fut = poi.get("fii_index_fut_net")
+    if fut is not None:
+        sent.append(
+            f"FII net {'short' if fut < 0 else 'long'} {abs(int(fut)) / 1e5:.1f}L index futures"
+        )
+    if sent:
+        lines.append("\n<b>Sentiment</b>  " + " · ".join(sent))
+    lines.append("First entry 9:20 IST.")
+    send("\n".join(lines))
+
+
 def _chats_from_updates(result: list[dict[str, Any]]) -> dict[str, str]:
     """Every chat seen in any update kind (message, channel_post, my_chat_member,
     service messages from being added to a group, …), found by walking the tree."""
