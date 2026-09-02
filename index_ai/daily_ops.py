@@ -153,14 +153,29 @@ def _log_observation(key: str, book: Any, spot: float, rows: Any) -> None:
 
 
 def eod_due() -> bool:
-    """After the square-off, once per trading day."""
+    """After the square-off, once per trading day — and only once every position
+    is actually closed. The square-off runs *later* in the same scan cycle as
+    this check, so firing on the first post-15:10 cycle would build the report
+    and the Telegram summary a trade or two short. Wait out the close; a stuck
+    position that hasn't cleared 10 min later no longer blocks it."""
+    from datetime import time as _time
+
     from index_ai.market_clock import is_trading_day, session_times
 
     if not is_trading_day():
         return False
-    if now_ist().time() < session_times()["square_off"]:
+    now = now_ist().time()
+    if now < session_times()["square_off"]:
         return False
-    return _state().get("eod_date") != today_ist_date()
+    if _state().get("eod_date") == today_ist_date():
+        return False
+    if now < _time(15, 20):
+        from index_ai.config import settings
+        from index_ai.learning import open_trades_for_mode
+
+        if open_trades_for_mode(settings().risk.trading_mode):
+            return False
+    return True
 
 
 def run_eod() -> dict[str, Any]:
