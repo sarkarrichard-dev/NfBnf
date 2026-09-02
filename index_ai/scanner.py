@@ -598,6 +598,20 @@ async def _scan_index(
             _log("skip_cooldown", instrument=instrument_key, action=opp_action, lane=lane)
             continue
 
+        if lane == "sell":
+            from index_ai.entry_guard import check as _entry_guard
+
+            guard_block, guard_reason = _entry_guard(instrument_key, active_mode, cpr, lane=lane)
+            if guard_block:
+                _log(
+                    "skip_entry_guard",
+                    instrument=instrument_key,
+                    action=opp_action,
+                    lane=lane,
+                    reason=guard_reason,
+                )
+                continue
+
         plan = ExecutionPlan(
             allowed=True,
             mode=str(opp_plan.get("mode") or cfg.risk.trading_mode),

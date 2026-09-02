@@ -18,10 +18,23 @@ _BEARISH_ACTIONS = frozenset({"BUY_PUT", "SELL_BEAR_CALL_SPREAD", "SELL_ATM_CALL
 
 def _entry_strategy_mode(trade: dict[str, Any], signal: dict[str, Any]) -> str:
     return str(
-        signal.get("strategy_mode")
-        or (trade.get("signal") or {}).get("strategy_mode")
-        or ""
+        signal.get("strategy_mode") or (trade.get("signal") or {}).get("strategy_mode") or ""
     )
+
+
+# Only the two-leg directional verticals — premium_trail watches a single short
+# leg, so a two-sided structure (iron condor) still needs its regime close.
+_TRAILED_VERTICALS = frozenset(
+    {"SELL_BEAR_CALL_SPREAD", "SELL_BULL_PUT_SPREAD", "SELL_ATM_CALL", "SELL_ATM_PUT"}
+)
+
+
+def _premium_trailed_credit(trade: dict[str, Any]) -> bool:
+    from index_ai.premium_trail import premium_trail_enabled
+
+    action = str(trade.get("action") or (trade.get("signal") or {}).get("action") or "").upper()
+    inst = str(trade.get("instrument") or (trade.get("option") or {}).get("instrument") or "")
+    return action in _TRAILED_VERTICALS and premium_trail_enabled(inst)
 
 
 def trade_created_ist_date(trade: dict[str, Any]) -> str | None:
@@ -58,9 +71,20 @@ def strategy_exit_reason(
     *,
     signal: dict[str, Any] | None = None,
 ) -> str | None:
-    """Close when CPR regime, EMA flip, or a new signal opposes the open structure."""
+    """Close when CPR regime, EMA flip, or a new signal opposes the open structure.
+
+    Skipped for a credit spread on a premium-trailed index (NIFTY / BANKNIFTY):
+    the entry signal was the thesis, and ``premium_trail`` owns the exit from
+    there (a quarter-premium target, then a trailing stop, with a hard stop
+    behind it). Bailing on a flip-floppy CPR read instead is what turned a flat
+    BANKNIFTY day into 7 round-trips and -3,954 on 2026-09-02. Stale-open and the
+    EOD square-off are handled elsewhere and still fire.
+    """
     pos_action = str(trade.get("action") or (trade.get("signal") or {}).get("action") or "").upper()
     if not pos_action or pos_action == "NO_TRADE":
+        return None
+
+    if _premium_trailed_credit(trade):
         return None
 
     fresh = str(new_action or "NO_TRADE").upper()
@@ -98,15 +122,9 @@ def strategy_exit_reason(
                 return f"AUTO: CPR {bias} — closing iron condor (range ended)."
         if entry_mode == "cpr_trend":
             if bias == "TRENDING_BULL" and pos_action in _BEARISH_ACTIONS:
-                return (
-                    f"AUTO: CPR {bias} — closing bearish "
-                    f"{pos_action.replace('_', ' ').title()}."
-                )
+                return f"AUTO: CPR {bias} — closing bearish {pos_action.replace('_', ' ').title()}."
             if bias == "TRENDING_BEAR" and pos_action in _BULLISH_ACTIONS:
-                return (
-                    f"AUTO: CPR {bias} — closing bullish "
-                    f"{pos_action.replace('_', ' ').title()}."
-                )
+                return f"AUTO: CPR {bias} — closing bullish {pos_action.replace('_', ' ').title()}."
 
     if fresh != "NO_TRADE" and fresh != pos_action:
         if pos_action in _BEARISH_ACTIONS and fresh in _BULLISH_ACTIONS:
@@ -120,7 +138,11 @@ def strategy_exit_reason(
         return f"CPR regime {bias} — closing bearish {pos_action.replace('_', ' ').title()}."
     if bias == "TRENDING_BEAR" and pos_action in _BULLISH_ACTIONS:
         return f"CPR regime {bias} — closing bullish {pos_action.replace('_', ' ').title()}."
-    if bias == "SIDEWAYS" and pos_action == "SELL_IRON_CONDOR" and fresh in _BULLISH_ACTIONS | _BEARISH_ACTIONS:
+    if (
+        bias == "SIDEWAYS"
+        and pos_action == "SELL_IRON_CONDOR"
+        and fresh in _BULLISH_ACTIONS | _BEARISH_ACTIONS
+    ):
         return f"CPR regime {bias} with directional signal — closing iron condor."
 
     if params.require_ema_cross_for_credit and not intelligent:
