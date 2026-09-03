@@ -97,6 +97,12 @@ def _friendly_error(exc: BaseException) -> str:
     return str(exc)
 
 
+def _without_event(payload: dict[str, Any]) -> dict[str, Any]:
+    """A paper lane's event dict minus its own 'event' key — that key collides
+    with _log's first positional parameter and raises TypeError on **splat."""
+    return {k: v for k, v in payload.items() if k != "event"}
+
+
 def _log(event: str, **fields: Any) -> None:
     entry = {"at": now_ist_iso(), "at_ist": market_status()["now_ist"], "event": event, **fields}
     _state.events.appendleft(entry)
@@ -300,7 +306,9 @@ async def _run_futures_paper(client: DhanClient) -> None:
         events = await asyncio.to_thread(scan_futures_paper, client)
         for e in events:
             if e.get("event") in {"entry", "exit"}:
-                _log("futures_paper", **{k: v for k, v in e.items() if k != "trade" or True})
+                # the lane's own dict carries an "event" key — passing it through
+                # as **kwargs collides with _log's first parameter (TypeError)
+                _log("futures_paper", kind=e.get("event"), **_without_event(e))
     except Exception as exc:  # never let this break the options scanner
         _note_auth_failure(exc)
         _log("futures_paper_error", error=_friendly_error(exc))
@@ -316,7 +324,7 @@ async def _run_options_cpr_paper(client: DhanClient) -> None:
         events = await asyncio.to_thread(scan_options_cpr_paper, client)
         for e in events:
             if e.get("event") in {"entry", "exit", "partial"}:
-                _log("options_cpr_paper", **e)
+                _log("options_cpr_paper", kind=e.get("event"), **_without_event(e))
     except Exception as exc:  # never let this break the options scanner
         _note_auth_failure(exc)
         _log("options_cpr_paper_error", error=_friendly_error(exc))
