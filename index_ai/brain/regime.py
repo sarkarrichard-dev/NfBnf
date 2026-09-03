@@ -7,7 +7,9 @@ mapping from regime to lane is well understood mechanically:
 
     TREND      -> directional lanes work, theta-selling into a run gets hurt
     RANGE      -> credit selling works, breakout buying churns
-    HIGH_VOL   -> stand down: gaps blow through spread stops, spreads widen
+    HIGH_VOL   -> sell stands down (gaps blow through spread stops, spreads
+                  widen); directional buying is allowed — range expansion is
+                  what a long option is paid for
     QUIET      -> premiums too thin for selling to clear friction
 
 Inputs are prior-day and opening-range measurements available before the first
@@ -61,8 +63,17 @@ def classify(
     prev_range_pct = (prev_hi - prev_lo) / max(prev_close, 1.0) * 100.0
 
     if today5.empty:
-        return RegimeRead(QUIET, cpr_width_pct, prev_range_pct, 0.0, 0.0,
-                          False, False, False, "no session data yet")
+        return RegimeRead(
+            QUIET,
+            cpr_width_pct,
+            prev_range_pct,
+            0.0,
+            0.0,
+            False,
+            False,
+            False,
+            "no session data yet",
+        )
 
     today_open = float(today5["open"].iloc[0])
     gap_pct = (today_open - prev_close) / max(prev_close, 1.0) * 100.0
@@ -76,53 +87,92 @@ def classify(
 
     if prev_range_pct >= HIGH_VOL_PREV_RANGE or abs(gap_pct) >= HIGH_VOL_GAP:
         return RegimeRead(
-            HIGH_VOL, cpr_width_pct, prev_range_pct, open_range_pct, gap_pct,
-            False, False, False,
-            f"prior range {prev_range_pct:.2f}% / gap {gap_pct:+.2f}% — stand down",
+            HIGH_VOL,
+            cpr_width_pct,
+            prev_range_pct,
+            open_range_pct,
+            gap_pct,
+            True,
+            False,
+            False,
+            f"prior range {prev_range_pct:.2f}% / gap {gap_pct:+.2f}% — "
+            "sell stands down, directional buying allowed (wider moves, tighter stop expected)",
         )
     if prev_range_pct <= QUIET_PREV_RANGE and open_range_pct < TRENDY_OPEN_RANGE * 0.6:
         return RegimeRead(
-            QUIET, cpr_width_pct, prev_range_pct, open_range_pct, gap_pct,
-            False, False, False,
+            QUIET,
+            cpr_width_pct,
+            prev_range_pct,
+            open_range_pct,
+            gap_pct,
+            False,
+            False,
+            False,
             f"prior range {prev_range_pct:.2f}% — premiums too thin to clear friction",
         )
     if cpr_width_pct <= NARROW_CPR and open_range_pct >= TRENDY_OPEN_RANGE:
         return RegimeRead(
-            TREND, cpr_width_pct, prev_range_pct, open_range_pct, gap_pct,
-            True, True, True,
+            TREND,
+            cpr_width_pct,
+            prev_range_pct,
+            open_range_pct,
+            gap_pct,
+            True,
+            True,
+            True,
             f"narrow CPR {cpr_width_pct:.2f}% + wide open range {open_range_pct:.2f}% — trend day",
         )
     if cpr_width_pct >= WIDE_CPR or open_range_pct < TRENDY_OPEN_RANGE:
         return RegimeRead(
-            RANGE, cpr_width_pct, prev_range_pct, open_range_pct, gap_pct,
-            False, True, False,
+            RANGE,
+            cpr_width_pct,
+            prev_range_pct,
+            open_range_pct,
+            gap_pct,
+            False,
+            True,
+            False,
             f"wide CPR {cpr_width_pct:.2f}% / tight open {open_range_pct:.2f}% — range day, sell only",
         )
     return RegimeRead(
-        TREND, cpr_width_pct, prev_range_pct, open_range_pct, gap_pct,
-        True, True, True,
+        TREND,
+        cpr_width_pct,
+        prev_range_pct,
+        open_range_pct,
+        gap_pct,
+        True,
+        True,
+        True,
         f"CPR {cpr_width_pct:.2f}%, open range {open_range_pct:.2f}% — normal trend bias",
     )
 
 
 def allows(read: RegimeRead, lane: str) -> bool:
-    return {"buy": read.allow_buy, "sell": read.allow_sell,
-            "futures": read.allow_futures}.get(str(lane).lower(), True)
+    return {"buy": read.allow_buy, "sell": read.allow_sell, "futures": read.allow_futures}.get(
+        str(lane).lower(), True
+    )
 
 
 if __name__ == "__main__":  # ponytail self-check
+
     def day(o, h, low, c, n=60, start="2026-08-28 09:15"):
-        return pd.DataFrame({
-            "datetime": pd.date_range(start, periods=n, freq="5min"),
-            "open": o, "high": h, "low": low, "close": c, "volume": 0.0,
-        })
+        return pd.DataFrame(
+            {
+                "datetime": pd.date_range(start, periods=n, freq="5min"),
+                "open": o,
+                "high": h,
+                "low": low,
+                "close": c,
+                "volume": 0.0,
+            }
+        )
 
     calm = day(24000, 24060, 23960, 24010)
     wild = day(24000, 24400, 23700, 24100)
     today_trendy = day(24010, 24120, 23990, 24100, start="2026-08-29 09:15")
 
     r = classify(today_trendy, wild, cpr_width_pct=0.2)
-    assert r.regime == HIGH_VOL and not r.allow_sell, r
+    assert r.regime == HIGH_VOL and not r.allow_sell and r.allow_buy, r
 
     r = classify(today_trendy, calm, cpr_width_pct=0.2)
     assert r.regime == TREND and r.allow_buy and r.allow_futures, r

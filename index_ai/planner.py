@@ -124,7 +124,18 @@ def plan_instrument(
             capital = opp.get("capital_required")
             break
 
-    today_session, _ = latest_two_sessions(candles)
+    today_session, prev_session = latest_two_sessions(candles)
+
+    regime_read: dict[str, Any] | None = None
+    try:
+        from index_ai.brain.regime import classify
+
+        regime_read = classify(
+            today_session, prev_session, cpr_width_pct=cpr_regime.width_pct
+        ).to_dict()
+    except Exception:
+        regime_read = None
+
     from index_ai.session_snapshot import spot_session_metrics
 
     spot_session = spot_session_metrics(
@@ -142,6 +153,7 @@ def plan_instrument(
         "sell_opportunity": sell_opp,
         "opportunities": opportunities,
         "cpr_regime": cpr_regime.to_dict(),
+        "regime_read": regime_read,
         "oi": oi_context,
         "oi_fetch_error": oi_fetch_error,
         "expiry": expiry,

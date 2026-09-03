@@ -93,6 +93,23 @@ def _todays_trades(instrument: str, mode: str, lane: str) -> list[dict[str, date
     return out
 
 
+def _enforce_regime_gate() -> bool:
+    raw = os.getenv("ENFORCE_REGIME_GATE")
+    return True if raw is None else raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def regime_blocks_lane(read: dict[str, Any] | None, lane: str) -> tuple[bool, str]:
+    """Brain market-regime veto (index_ai/brain/regime.py): QUIET stands both
+    lanes down, RANGE blocks buying, HIGH_VOL blocks selling, TREND allows all.
+    Uses the read's own allow_* flags so it tracks the classifier."""
+    if not read or not _enforce_regime_gate():
+        return False, ""
+    key = f"allow_{str(lane).lower()}"
+    if key in read and not read.get(key):
+        return True, f"regime {read.get('regime')} — {lane} lane stood down ({read.get('reason')})"
+    return False, ""
+
+
 def _regime_blocks(instrument: str, regime: dict[str, Any] | None) -> tuple[bool, str]:
     """A directional credit spread needs a real trend: CPR broken, not wide."""
     r = regime or {}
@@ -107,12 +124,22 @@ def _regime_blocks(instrument: str, regime: dict[str, Any] | None) -> tuple[bool
 
 
 def check(
-    instrument: str, mode: str, regime: dict[str, Any] | None = None, *, lane: str = "sell"
+    instrument: str,
+    mode: str,
+    regime: dict[str, Any] | None = None,
+    *,
+    lane: str = "sell",
+    regime_read: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
     """(blocked, reason). Call before opening a new position for this index + lane."""
     inst = str(instrument or "").strip().upper()
     now = now_ist()
     day = today_ist_date()
+
+    blocked, why = regime_blocks_lane(regime_read, lane)
+    if blocked:
+        return True, why
+
     trades = _todays_trades(inst, mode, lane)
 
     cap = daily_cap(inst)
@@ -149,4 +176,24 @@ if __name__ == "__main__":  # self-check (pure logic — no journal read)
     assert _regime_blocks("NIFTY", {"width_class": "WIDE"})[0]
     assert "inside the range" in _regime_blocks("NIFTY", {"price_position": "inside_cpr"})[1]
     assert not _regime_blocks("NIFTY", {"width_class": "NORMAL", "price_position": "above_cpr"})[0]
+
+    assert regime_blocks_lane({"regime": "QUIET", "allow_buy": False, "allow_sell": False}, "buy")[
+        0
+    ]
+    assert regime_blocks_lane({"regime": "RANGE", "allow_buy": False, "allow_sell": True}, "buy")[0]
+    assert not regime_blocks_lane(
+        {"regime": "RANGE", "allow_buy": False, "allow_sell": True}, "sell"
+    )[0]
+    assert regime_blocks_lane(
+        {"regime": "HIGH_VOL", "allow_buy": True, "allow_sell": False}, "sell"
+    )[0]
+    assert not regime_blocks_lane(
+        {"regime": "HIGH_VOL", "allow_buy": True, "allow_sell": False}, "buy"
+    )[0]
+    assert not regime_blocks_lane(None, "buy")[0]
+    os.environ["ENFORCE_REGIME_GATE"] = "false"
+    assert not regime_blocks_lane(
+        {"regime": "QUIET", "allow_buy": False, "allow_sell": False}, "buy"
+    )[0]
+    del os.environ["ENFORCE_REGIME_GATE"]
     print("entry_guard.py self-check ok — cap + regime gates")

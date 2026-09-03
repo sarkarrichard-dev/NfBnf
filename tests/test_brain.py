@@ -11,18 +11,34 @@ from index_ai.brain.regime import HIGH_VOL, QUIET, RANGE, TREND, allows, classif
 
 
 def _day(o, h, low, c, n=60, start="2026-08-28 09:15"):
-    return pd.DataFrame({
-        "datetime": pd.date_range(start, periods=n, freq="5min"),
-        "open": o, "high": h, "low": low, "close": c, "volume": 0.0,
-    })
+    return pd.DataFrame(
+        {
+            "datetime": pd.date_range(start, periods=n, freq="5min"),
+            "open": o,
+            "high": h,
+            "low": low,
+            "close": c,
+            "volume": 0.0,
+        }
+    )
 
 
 def test_unified_features_maps_every_lane():
     rows = [
-        ({"lane": "futures", "instrument": "NIFTY", "direction": "LONG",
-          "net_rupees": 100.0}, "is_futures"),
-        ({"lane": "sell", "instrument": "NIFTY", "structure": "SELL_BEAR_CALL_SPREAD",
-          "long_strike": 25000.0, "net_rupees": -50.0}, "is_credit"),
+        (
+            {"lane": "futures", "instrument": "NIFTY", "direction": "LONG", "net_rupees": 100.0},
+            "is_futures",
+        ),
+        (
+            {
+                "lane": "sell",
+                "instrument": "NIFTY",
+                "structure": "SELL_BEAR_CALL_SPREAD",
+                "long_strike": 25000.0,
+                "net_rupees": -50.0,
+            },
+            "is_credit",
+        ),
         ({"instrument": "BANKNIFTY", "side": "PE", "net_rupees": 10.0}, "is_buy_lane"),
     ]
     for trade, flag in rows:
@@ -45,7 +61,9 @@ def test_regime_stands_down_on_high_vol_and_quiet():
 
     r = classify(today, wild, cpr_width_pct=0.2)
     assert r.regime == HIGH_VOL
-    assert not (r.allow_buy or r.allow_sell or r.allow_futures)
+    # HIGH_VOL stands the sell lane and futures down but allows directional
+    # buying — range expansion is what a long option is paid for.
+    assert r.allow_buy and not (r.allow_sell or r.allow_futures)
 
     flat = _day(24010, 24030, 23995, 24010, start="2026-08-29 09:15")
     assert classify(flat, calm, cpr_width_pct=0.7).regime == QUIET
@@ -79,8 +97,11 @@ def test_gate_blocks_on_stood_down_regime():
     wild = _day(24000, 24400, 23700, 24100)
     today = _day(24010, 24120, 23990, 24100, start="2026-08-29 09:15")
     read = classify(today, wild, cpr_width_pct=0.2)
-    v = check({"lane": "sell", "instrument": "NIFTY", "structure": "SELL_ATM_PUT"},
-              lane="sell", regime=read)
+    v = check(
+        {"lane": "sell", "instrument": "NIFTY", "structure": "SELL_ATM_PUT"},
+        lane="sell",
+        regime=read,
+    )
     assert v["allowed"] is False
     assert "HIGH_VOL" in v["reason"]
 
@@ -105,8 +126,14 @@ def test_walk_forward_refuses_to_arm_when_gate_loses_money(tmp_path, monkeypatch
     # features carry no signal, so any threshold only removes random trades
     X = rng.normal(size=(n, len(FEATURES)))
     y = rng.integers(0, 2, size=n)
-    meta = [{"net_rupees": float(rng.normal(50, 400)), "when": f"2026-01-{i % 28 + 1:02d}",
-             "is_backtest": False} for i in range(n)]
+    meta = [
+        {
+            "net_rupees": float(rng.normal(50, 400)),
+            "when": f"2026-01-{i % 28 + 1:02d}",
+            "is_backtest": False,
+        }
+        for i in range(n)
+    ]
     wf = brain_model.walk_forward(X, y, meta)
     assert set(wf) >= {"oos_static_rupees", "oos_gated_rupees", "oos_delta_rupees"}
     # noise data must not produce a confidently profitable gate

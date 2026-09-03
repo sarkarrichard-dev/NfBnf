@@ -53,6 +53,27 @@ def test_no_trend_regime(monkeypatch):
     assert entry_guard.check("NIFTY", "PAPER", {"price_position": "inside_cpr"})[0]
 
 
+def test_regime_veto_folds_into_check(monkeypatch):
+    _mock_trades(monkeypatch, [])
+    quiet = {"regime": "QUIET", "allow_buy": False, "allow_sell": False, "reason": "thin"}
+    blocked, why = entry_guard.check("NIFTY", "PAPER", {}, lane="sell", regime_read=quiet)
+    assert blocked and "QUIET" in why
+    # HIGH_VOL stands sell down but not buy
+    hv = {"regime": "HIGH_VOL", "allow_buy": True, "allow_sell": False, "reason": "wild"}
+    assert entry_guard.regime_blocks_lane(hv, "sell")[0]
+    assert not entry_guard.regime_blocks_lane(hv, "buy")[0]
+    # RANGE blocks buy only
+    rng = {"regime": "RANGE", "allow_buy": False, "allow_sell": True, "reason": "range"}
+    assert entry_guard.regime_blocks_lane(rng, "buy")[0]
+    assert not entry_guard.regime_blocks_lane(rng, "sell")[0]
+
+
+def test_regime_gate_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("ENFORCE_REGIME_GATE", "false")
+    quiet = {"regime": "QUIET", "allow_buy": False, "allow_sell": False}
+    assert not entry_guard.regime_blocks_lane(quiet, "buy")[0]
+
+
 def test_daily_cap_env_override_and_clamp(monkeypatch):
     monkeypatch.setenv("DAILY_TRADE_CAP_NIFTY", "2")
     assert entry_guard.daily_cap("NIFTY") == 2
