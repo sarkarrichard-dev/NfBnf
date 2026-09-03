@@ -17,10 +17,10 @@ from typing import Any
 
 FEATURES: tuple[str, ...] = (
     # --- lane / structure identity ---
-    "is_buy_lane",        # long premium (CE/PE buy)
-    "is_credit",          # short premium (any sell structure)
-    "is_futures",         # directional futures
-    "is_hedged",          # has a defined-risk wing
+    "is_buy_lane",  # long premium (CE/PE buy)
+    "is_credit",  # short premium (any sell structure)
+    "is_futures",  # directional futures
+    "is_hedged",  # has a defined-risk wing
     "is_bullish",
     # --- instrument ---
     "is_banknifty",
@@ -35,11 +35,15 @@ FEATURES: tuple[str, ...] = (
     "prev_day_range_pct",
     "ret_15m_pct",
     "volume_ratio",
+    # --- chop / trend-agreement signals (Part F, capture-only for now) ---
+    "open_range_pct",  # first-45-min high-low as % of open
+    "trend_vs_cpr_agree",  # +1 intraday trend agrees with CPR bias, -1 conflict, 0 flat
+    "dist_pivot_target_pct",  # distance to the next favourable pivot at entry, %
     # --- timing ---
     "minute_of_day",
     "weekday",
     # --- trade economics known at entry ---
-    "risk_reward",        # target distance / stop distance
+    "risk_reward",  # target distance / stop distance
     "friction_pct_of_edge",  # round-trip cost / expected gross edge, when known
 )
 
@@ -85,7 +89,11 @@ def unified_features(trade: dict[str, Any]) -> dict[str, float] | None:
     """Map any lane's closed-trade row onto the shared vector. None if unusable."""
     lane = str(trade.get("lane") or "").lower()
     action = str(
-        trade.get("action") or trade.get("structure") or trade.get("side") or trade.get("direction") or ""
+        trade.get("action")
+        or trade.get("structure")
+        or trade.get("side")
+        or trade.get("direction")
+        or ""
     ).upper()
     inst = str(trade.get("instrument") or "NIFTY").upper()
 
@@ -115,6 +123,32 @@ def unified_features(trade: dict[str, Any]) -> dict[str, float] | None:
     fric = _f(trade.get("friction_rupees"))
     cost_ratio = fric / gross if gross > 0 else 0.0
 
+    # Part F chop signals — read a precomputed value if the row has one, else
+    # derive from what the entry snapshot carries; neutral (0.0) when absent.
+    or_pct = _f(
+        nested.get("open_range_pct") or signal.get("open_range_pct") or legacy.get("open_range_pct")
+    )
+    if "trend_vs_cpr_agree" in nested:
+        tvc = _f(nested["trend_vs_cpr_agree"])
+    else:
+        it = str(signal.get("intraday_trend") or nested.get("intraday_trend") or "").upper()
+        bias = str(signal.get("cpr_regime") or signal.get("cpr_bias") or "").upper()
+        up, down = it == "UP", it == "DOWN"
+        bull, bear = "BULL" in bias, "BEAR" in bias
+        tvc = (
+            1.0
+            if (up and bull) or (down and bear)
+            else -1.0
+            if (up and bear) or (down and bull)
+            else 0.0
+        )
+    pt = _f(signal.get("pivot_target") or option.get("pivot_target"))
+    dist_pt = (
+        abs(price - pt) / max(abs(price), 1.0) * 100.0
+        if (price and pt)
+        else _f(nested.get("dist_pivot_target_pct"))
+    )
+
     out = {
         "is_buy_lane": 1.0 if is_buy else 0.0,
         "is_credit": 1.0 if is_credit else 0.0,
@@ -125,29 +159,38 @@ def unified_features(trade: dict[str, Any]) -> dict[str, float] | None:
         "is_sensex": 1.0 if inst == "SENSEX" else 0.0,
         "confidence": _f(signal.get("confidence") or legacy.get("confidence")),
         "cpr_width_pct": _f(
-            nested.get("cpr_width_pct") or signal.get("cpr_width_pct") or legacy.get("cpr_width_pct")
+            nested.get("cpr_width_pct")
+            or signal.get("cpr_width_pct")
+            or legacy.get("cpr_width_pct")
         ),
         "dist_tc_pct": _f(
             nested.get("dist_tc_pct")
             if "dist_tc_pct" in nested
-            else (legacy.get("dist_tc_pct") if "dist_tc_pct" in legacy
-                  else ((price - tc) / max(abs(price), 1.0) * 100.0 if price else 0.0))
+            else (
+                legacy.get("dist_tc_pct")
+                if "dist_tc_pct" in legacy
+                else ((price - tc) / max(abs(price), 1.0) * 100.0 if price else 0.0)
+            )
         ),
         "dist_bc_pct": _f(
             nested.get("dist_bc_pct")
             if "dist_bc_pct" in nested
-            else (legacy.get("dist_bc_pct") if "dist_bc_pct" in legacy
-                  else ((price - bc) / max(abs(price), 1.0) * 100.0 if price else 0.0))
+            else (
+                legacy.get("dist_bc_pct")
+                if "dist_bc_pct" in legacy
+                else ((price - bc) / max(abs(price), 1.0) * 100.0 if price else 0.0)
+            )
         ),
-        "ema_spread_pct": _f(
-            nested.get("ema_spread_pct") or legacy.get("ema_spread_pct")
-        ),
+        "ema_spread_pct": _f(nested.get("ema_spread_pct") or legacy.get("ema_spread_pct")),
         "atr_pct": _f(nested.get("atr_pct")),
         "prev_day_range_pct": _f(nested.get("prev_day_range_pct")),
         "ret_15m_pct": _f(nested.get("ret_15m_pct")),
         "volume_ratio": _f(
             nested.get("vol_ratio") or signal.get("volume_ratio") or legacy.get("volume_ratio"), 1.0
         ),
+        "open_range_pct": or_pct,
+        "trend_vs_cpr_agree": tvc,
+        "dist_pivot_target_pct": dist_pt,
         "minute_of_day": _f(nested.get("minute_of_day")) or _minute_of_day(entry_ts),
         "weekday": _f(nested.get("weekday")) if "weekday" in nested else _weekday(entry_ts),
         "risk_reward": rr,
@@ -165,15 +208,33 @@ def label(trade: dict[str, Any]) -> int | None:
 
 
 if __name__ == "__main__":  # ponytail self-check
-    fut = {"lane": "futures", "instrument": "NIFTY", "direction": "LONG",
-           "entry_time": "2026-08-29T10:35:00+05:30", "net_rupees": 500.0}
-    cpr = {"lane": "sell", "instrument": "SENSEX", "structure": "SELL_BULL_PUT_SPREAD",
-           "long_strike": 79000.0, "entry_time": "2026-08-29T11:05:00+05:30",
-           "features": {"cpr_width_pct": 0.4, "atr_pct": 0.2, "minute_of_day": 665.0},
-           "gross_rupees": 900.0, "friction_rupees": 220.0, "net_rupees": 680.0}
-    buy = {"instrument": "NIFTY", "side": "CE", "entry_time": "2026-08-29T09:50:00+05:30",
-           "entry_premium": 120.0, "sl_premium": 96.0, "target_premium": 168.0,
-           "net_rupees": -300.0}
+    fut = {
+        "lane": "futures",
+        "instrument": "NIFTY",
+        "direction": "LONG",
+        "entry_time": "2026-08-29T10:35:00+05:30",
+        "net_rupees": 500.0,
+    }
+    cpr = {
+        "lane": "sell",
+        "instrument": "SENSEX",
+        "structure": "SELL_BULL_PUT_SPREAD",
+        "long_strike": 79000.0,
+        "entry_time": "2026-08-29T11:05:00+05:30",
+        "features": {"cpr_width_pct": 0.4, "atr_pct": 0.2, "minute_of_day": 665.0},
+        "gross_rupees": 900.0,
+        "friction_rupees": 220.0,
+        "net_rupees": 680.0,
+    }
+    buy = {
+        "instrument": "NIFTY",
+        "side": "CE",
+        "entry_time": "2026-08-29T09:50:00+05:30",
+        "entry_premium": 120.0,
+        "sl_premium": 96.0,
+        "target_premium": 168.0,
+        "net_rupees": -300.0,
+    }
     for t, expect in ((fut, "is_futures"), (cpr, "is_credit"), (buy, "is_buy_lane")):
         v = unified_features(t)
         assert v is not None and v[expect] == 1.0, (expect, v)
@@ -182,6 +243,27 @@ if __name__ == "__main__":  # ponytail self-check
     assert abs(unified_features(cpr)["friction_pct_of_edge"] - 220 / 900) < 1e-6
     assert unified_features(buy)["risk_reward"] == 2.0
     assert unified_features(buy)["minute_of_day"] == 9 * 60 + 50
+
+    agree = {
+        "lane": "sell",
+        "instrument": "NIFTY",
+        "structure": "SELL_BEAR_CALL_SPREAD",
+        "entry_time": "2026-08-29T11:05:00+05:30",
+        "net_rupees": 100.0,
+        "signal": {
+            "intraday_trend": "DOWN",
+            "cpr_regime": "TRENDING_BEAR",
+            "price": 24000.0,
+            "pivot_target": 23880.0,
+            "open_range_pct": 0.42,
+        },
+    }
+    v = unified_features(agree)
+    assert v["trend_vs_cpr_agree"] == 1.0
+    assert abs(v["open_range_pct"] - 0.42) < 1e-9
+    assert abs(v["dist_pivot_target_pct"] - 0.5) < 1e-6
+    conflict = {**agree, "signal": {**agree["signal"], "cpr_regime": "TRENDING_BULL"}}
+    assert unified_features(conflict)["trend_vs_cpr_agree"] == -1.0
     assert label(fut) == 1 and label(buy) == 0 and label({}) is None
     assert unified_features({"action": "NO_TRADE"}) is None
     print("features.py self-check ok")

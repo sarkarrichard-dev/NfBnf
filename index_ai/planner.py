@@ -89,6 +89,21 @@ def plan_instrument(
     signal = dual.primary
     cpr_regime = dual.regime
 
+    today_session, prev_session = latest_two_sessions(candles)
+    regime_read: dict[str, Any] | None = None
+    try:
+        from index_ai.brain.regime import classify
+
+        regime_read = classify(
+            today_session, prev_session, cpr_width_pct=cpr_regime.width_pct
+        ).to_dict()
+    except Exception:
+        regime_read = None
+    try:
+        intraday_trend = intraday_candle_trend(today_session, lookback=15)
+    except Exception:
+        intraday_trend = "RANGE"
+
     oi_context: dict[str, Any] | None = None
     oi_fetch_error: str | None = None
     option = None
@@ -133,12 +148,22 @@ def plan_instrument(
         lane="sell",
     )
 
+    open_range_pct = (regime_read or {}).get("open_range_pct")
     for opp in (buy_opp, sell_opp):
-        if not opp or not opp.get("option"):
+        if not opp:
             continue
-        sig = opp.get("signal") or {}
+        sig = opp.get("signal")
+        if isinstance(sig, dict):
+            sig["intraday_trend"] = intraday_trend
+            if open_range_pct is not None:
+                sig["open_range_pct"] = open_range_pct
+        if not opp.get("option"):
+            continue
         tgt, label = _pivot_target(
-            previous, cpr_regime, str(sig.get("action") or ""), float(sig.get("price") or 0)
+            previous,
+            cpr_regime,
+            str((sig or {}).get("action") or ""),
+            float((sig or {}).get("price") or 0),
         )
         if tgt is not None:
             opp["option"]["pivot_target"] = tgt
@@ -164,23 +189,6 @@ def plan_instrument(
             option = opp.get("option")
             capital = opp.get("capital_required")
             break
-
-    today_session, prev_session = latest_two_sessions(candles)
-
-    regime_read: dict[str, Any] | None = None
-    try:
-        from index_ai.brain.regime import classify
-
-        regime_read = classify(
-            today_session, prev_session, cpr_width_pct=cpr_regime.width_pct
-        ).to_dict()
-    except Exception:
-        regime_read = None
-
-    try:
-        intraday_trend = intraday_candle_trend(today_session, lookback=15)
-    except Exception:
-        intraday_trend = "RANGE"
 
     from index_ai.session_snapshot import spot_session_metrics
 
