@@ -108,6 +108,14 @@ def build_execution_plan(
             float(learned.get("ml_min_win_prob") or 0.0),
             float(ml.get("min_win_prob_gate") or 0.52),
         )
+        # Per-lane bounds on the model's win-prob gate. Sell setups sit in a
+        # band (a credit spread is meant to win small and often, so the gate
+        # should not chase 70%+); buy setups only need a floor.
+        _sp = get_strategy_params()
+        if signal_action in CREDIT_ACTIONS or is_premium_sell_action(signal_action):
+            gate = min(max(gate, _sp.ml_gate_sell_min), _sp.ml_gate_sell_max)
+        else:
+            gate = max(gate, _sp.ml_gate_buy_min)
         win_p = float(ml["win_probability"])
         if bool(ml.get("gate_active")) and win_p < gate:
             mode = (

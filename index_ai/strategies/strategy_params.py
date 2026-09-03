@@ -54,7 +54,10 @@ class StrategyParams:
     credit_min_confidence: float = 0.58
     credit_min_volume_ratio: float = 0.85
     credit_volume_lookback_bars: int = 20
-    credit_min_reward_to_risk: float = 0.12
+    credit_min_reward_to_risk: float = 0.05
+    ml_gate_sell_min: float = 0.45
+    ml_gate_sell_max: float = 0.65
+    ml_gate_buy_min: float = 0.50
     buy_min_volume_ratio: float = 0.85
     buy_volume_lookback_bars: int = 20
     auto_buy_trending_only: bool = True
@@ -132,7 +135,10 @@ def get_strategy_params() -> StrategyParams:
         credit_min_confidence=_float("CPR_CREDIT_MIN_CONFIDENCE", 0.58),
         credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.85),
         credit_volume_lookback_bars=_int("CREDIT_VOLUME_LOOKBACK_BARS", 20),
-        credit_min_reward_to_risk=_float("CREDIT_MIN_REWARD_TO_RISK", 0.12),
+        credit_min_reward_to_risk=_float("CREDIT_MIN_REWARD_TO_RISK", 0.05),
+        ml_gate_sell_min=_float("ML_GATE_SELL_MIN", 0.45),
+        ml_gate_sell_max=_float("ML_GATE_SELL_MAX", 0.65),
+        ml_gate_buy_min=_float("ML_GATE_BUY_MIN", 0.50),
         buy_min_volume_ratio=_float("BUY_MIN_VOLUME_RATIO", 0.85),
         buy_volume_lookback_bars=_int("BUY_VOLUME_LOOKBACK_BARS", 20),
         auto_buy_trending_only=_bool("AUTO_BUY_TRENDING_ONLY", True),
@@ -226,6 +232,9 @@ def strategy_tuning_summary() -> dict[str, object]:
         "credit_min_volume_ratio": p.credit_min_volume_ratio,
         "credit_volume_lookback_bars": p.credit_volume_lookback_bars,
         "credit_min_reward_to_risk": p.credit_min_reward_to_risk,
+        "ml_gate_sell_min": p.ml_gate_sell_min,
+        "ml_gate_sell_max": p.ml_gate_sell_max,
+        "ml_gate_buy_min": p.ml_gate_buy_min,
         "buy_min_volume_ratio": p.buy_min_volume_ratio,
         "buy_volume_lookback_bars": p.buy_volume_lookback_bars,
         "credit_profit_target_pct": p.credit_profit_target_pct,
