@@ -55,6 +55,7 @@ class StrategyParams:
     credit_min_volume_ratio: float = 0.85
     credit_volume_lookback_bars: int = 20
     credit_min_reward_to_risk: float = 0.05
+    sell_allow_trend_override: bool = True
     ml_gate_sell_min: float = 0.45
     ml_gate_sell_max: float = 0.65
     ml_gate_buy_min: float = 0.50
@@ -136,6 +137,7 @@ def get_strategy_params() -> StrategyParams:
         credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.85),
         credit_volume_lookback_bars=_int("CREDIT_VOLUME_LOOKBACK_BARS", 20),
         credit_min_reward_to_risk=_float("CREDIT_MIN_REWARD_TO_RISK", 0.05),
+        sell_allow_trend_override=_bool("SELL_ALLOW_TREND_OVERRIDE", True),
         ml_gate_sell_min=_float("ML_GATE_SELL_MIN", 0.45),
         ml_gate_sell_max=_float("ML_GATE_SELL_MAX", 0.65),
         ml_gate_buy_min=_float("ML_GATE_BUY_MIN", 0.50),
@@ -232,6 +234,7 @@ def strategy_tuning_summary() -> dict[str, object]:
         "credit_min_volume_ratio": p.credit_min_volume_ratio,
         "credit_volume_lookback_bars": p.credit_volume_lookback_bars,
         "credit_min_reward_to_risk": p.credit_min_reward_to_risk,
+        "sell_allow_trend_override": p.sell_allow_trend_override,
         "ml_gate_sell_min": p.ml_gate_sell_min,
         "ml_gate_sell_max": p.ml_gate_sell_max,
         "ml_gate_buy_min": p.ml_gate_buy_min,
@@ -298,6 +301,7 @@ def strategy_tuning_summary() -> dict[str, object]:
             "CREDIT_MIN_VOLUME_RATIO",
             "CREDIT_VOLUME_LOOKBACK_BARS",
             "CREDIT_MIN_REWARD_TO_RISK",
+            "SELL_ALLOW_TREND_OVERRIDE",
             "BUY_MIN_VOLUME_RATIO",
             "BUY_VOLUME_LOOKBACK_BARS",
             "CREDIT_WING_STRIKES",

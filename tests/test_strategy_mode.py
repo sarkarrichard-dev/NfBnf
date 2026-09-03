@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from index_ai.strategies.cpr_regime import analyze_cpr_regime
+from index_ai.strategies.cpr_regime import CprRegime, analyze_cpr_regime
 from index_ai.strategies.ema_cross import analyze_ema_cross
 from index_ai.strategies.strategy_mode import pick_auto_credit
 from index_ai.strategies.strategy_params import reload_strategy_params
@@ -59,9 +59,70 @@ def test_auto_blocks_bear_call_when_ema_bull_vs_bear_cpr() -> None:
     assert action is None
     assert mode in {"conflict", "wait"}
     assert any(
-        s in reason.lower()
-        for s in ("aligned", "ema bull", "no credit", "directional", "sideways")
+        s in reason.lower() for s in ("aligned", "ema bull", "no credit", "directional", "sideways")
     )
+
+
+def _downtrend_frame(n: int = 30) -> pd.DataFrame:
+    closes = [130.0 - i for i in range(n)]
+    return pd.DataFrame(
+        {
+            "open": closes,
+            "high": [c + 1.0 for c in closes],
+            "low": [c - 1.0 for c in closes],
+            "close": closes,
+            "volume": [1000] * n,
+        }
+    )
+
+
+def _regime(day_bias: str) -> CprRegime:
+    return CprRegime(
+        pivot=100.0,
+        bc=99.0,
+        tc=101.0,
+        width=2.0,
+        width_pct=2.0,
+        width_class="NORMAL",
+        cpr_type="BULLISH",
+        virgin_cpr=False,
+        price_position="above_cpr",
+        day_bias=day_bias,
+        note="test",
+    )
+
+
+def test_strong_intraday_downtrend_overrides_bull_cpr(monkeypatch) -> None:
+    # CPR bias reads bullish (yesterday's close above a thin CPR) but the intraday
+    # trend is a clean, confirmed downtrend — sell a bear call spread anyway.
+    for k in (
+        "SELL_ALLOW_TREND_OVERRIDE",
+        "SUPERTREND_PERIOD",
+        "SUPERTREND_MULTIPLIER",
+        "CREDIT_MIN_VOLUME_RATIO",
+        "CREDIT_VOLUME_LOOKBACK_BARS",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    reload_strategy_params()
+    frame = _downtrend_frame()
+    cross = {"aligned": "bear"}
+    action, reason, mode = pick_auto_credit(
+        _regime("TRENDING_BULL"), cross, ema_fast=8, ema_slow=20, frame=frame
+    )
+    assert action == "SELL_BEAR_CALL_SPREAD"
+    assert mode == "cpr_trend_override"
+    assert "trend-override" in reason
+
+
+def test_sideways_cpr_still_no_trade_without_confirmed_trend() -> None:
+    today, previous = _sideways_frames()
+    frame = today.copy()
+    frame["volume"] = 1000
+    action, _reason, mode = pick_auto_credit(
+        analyze_cpr_regime(frame, previous), {"aligned": ""}, ema_fast=8, ema_slow=20, frame=frame
+    )
+    assert action is None
+    assert mode == "wait"
 
 
 def test_route_auto_sideways_no_iron_condor(monkeypatch) -> None:
