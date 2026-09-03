@@ -50,13 +50,35 @@ def update_premium_trail(
     meta: dict[str, Any],
     current_premium: float,
     instrument_key: str,
+    *,
+    index_price: float | None = None,
+    pivot_target: float | None = None,
 ) -> tuple[dict[str, Any], bool, str | None]:
-    """Returns (meta, should_exit, reason). Pure — safe to call every tick."""
+    """Returns (meta, should_exit, reason). Pure — safe to call every tick.
+
+    ``pivot_target`` (a spot level in the trade's favour, e.g. R1 for a bull
+    position) arms the trail early: once the index reaches it the flat hard
+    stop gives way to trailing the best premium. It never closes the trade and
+    never tightens to breakeven — it only brings the trail forward. The
+    quarter-premium target arms it independently; whichever lands first wins.
+    """
     cfg = premium_trail_cfg(instrument_key)
     m = dict(meta)
     entry = float(m["pt_entry"])  # init_premium_trail always sets this
     d = 1 if int(m.get("pt_dir") or -1) >= 0 else -1
     cur = float(current_premium)
+
+    if (
+        not m.get("pt_target_hit")
+        and pivot_target is not None
+        and index_price is not None
+        and m.get("entry_index_price") is not None
+    ):
+        entry_idx = float(m["entry_index_price"])
+        toward = 1.0 if float(pivot_target) >= entry_idx else -1.0
+        if (float(index_price) - entry_idx) * toward >= abs(float(pivot_target) - entry_idx) > 0:
+            m["pt_target_hit"] = True
+            m["pt_armed_by"] = "pivot_target"
 
     # Ignore an implausible print (zero / stale / fat-finger): one bad tick would
     # otherwise latch pt_target_hit or poison pt_best. Wait for a sane quote.
@@ -135,4 +157,20 @@ if __name__ == "__main__":  # spec walkthrough: BANKNIFTY short sold at 300
     lm, ex, _ = update_premium_trail(lm, 90, "NIFTY")
     lm, ex, r = update_premium_trail(lm, 84, "NIFTY")  # 6 pt bounce ≥ 5 → exit
     assert ex and "Trailing exit" in r
+
+    # pivot_target arms the trail early — index reaches R1 while the short has
+    # only decayed a little; no exit, but the flat hard stop is now gone.
+    pm = init_premium_trail(entry_premium=300, direction=-1)
+    pm["entry_index_price"] = 52000.0
+    pm, ex, _ = update_premium_trail(pm, 285, "BANKNIFTY", index_price=52180, pivot_target=52200)
+    assert not ex and not pm["pt_target_hit"]  # not there yet
+    pm, ex, _ = update_premium_trail(pm, 270, "BANKNIFTY", index_price=52240, pivot_target=52200)
+    assert not ex and pm["pt_target_hit"] and pm["pt_armed_by"] == "pivot_target"
+    pm, ex, r = update_premium_trail(pm, 305, "BANKNIFTY", index_price=52240, pivot_target=52200)
+    assert ex and "Trailing exit" in r  # 35-pt bounce off best 270
+    # absent a pivot_target, behaviour is unchanged
+    nm = init_premium_trail(entry_premium=300, direction=-1)
+    nm["entry_index_price"] = 52000.0
+    nm, ex, _ = update_premium_trail(nm, 285, "BANKNIFTY", index_price=52240)
+    assert not ex and not nm["pt_target_hit"]
     print("premium_trail.py self-check ok")

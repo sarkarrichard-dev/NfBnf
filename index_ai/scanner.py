@@ -612,7 +612,12 @@ async def _scan_index(
             from index_ai.entry_guard import check as _entry_guard
 
             guard_block, guard_reason = _entry_guard(
-                instrument_key, active_mode, cpr, lane=lane, regime_read=regime_read
+                instrument_key,
+                active_mode,
+                cpr,
+                lane=lane,
+                regime_read=regime_read,
+                intraday_trend=result.get("intraday_trend"),
             )
         else:
             from index_ai.entry_guard import regime_blocks_lane

@@ -47,10 +47,15 @@ def test_chop_lockout(monkeypatch):
     assert blocked and "chop lockout" in why and "3 round-trips" in why
 
 
-def test_no_trend_regime(monkeypatch):
+def test_cpr_is_a_guide_not_a_gate(monkeypatch):
     _mock_trades(monkeypatch, [])
-    assert entry_guard.check("NIFTY", "PAPER", {"width_class": "WIDE"})[0]
-    assert entry_guard.check("NIFTY", "PAPER", {"price_position": "inside_cpr"})[0]
+    # wide CPR blocks only when the intraday tape is also rangebound
+    assert entry_guard.check("NIFTY", "PAPER", {"width_class": "WIDE"}, intraday_trend="RANGE")[0]
+    assert not entry_guard.check("NIFTY", "PAPER", {"width_class": "WIDE"}, intraday_trend="DOWN")[
+        0
+    ]
+    # price inside the central range is no longer a reason to skip
+    assert not entry_guard.check("NIFTY", "PAPER", {"price_position": "inside_cpr"})[0]
 
 
 def test_regime_veto_folds_into_check(monkeypatch):

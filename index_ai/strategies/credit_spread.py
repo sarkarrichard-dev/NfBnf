@@ -409,7 +409,13 @@ def evaluate_credit_open_trade(
             pt_active = True
             if "pt_entry" not in meta:
                 meta.update(init_premium_trail(entry_premium=short_entry, direction=-1))
-            meta, pt_hit, pt_reason = update_premium_trail(meta, float(short_now), inst_key)
+            meta, pt_hit, pt_reason = update_premium_trail(
+                meta,
+                float(short_now),
+                inst_key,
+                index_price=current_index_price,
+                pivot_target=option.get("pivot_target"),
+            )
             if pt_hit:
                 should_exit = True
                 exit_reason = pt_reason

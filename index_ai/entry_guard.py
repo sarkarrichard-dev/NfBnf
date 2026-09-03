@@ -110,16 +110,16 @@ def regime_blocks_lane(read: dict[str, Any] | None, lane: str) -> tuple[bool, st
     return False, ""
 
 
-def _regime_blocks(instrument: str, regime: dict[str, Any] | None) -> tuple[bool, str]:
-    """A directional credit spread needs a real trend: CPR broken, not wide."""
-    r = regime or {}
-    wc = str(r.get("width_class") or "").upper()
-    pp = str(r.get("price_position") or "").lower()
-    if wc == "WIDE" or pp == "inside_cpr":
-        return True, (
-            f"no-trend regime for {instrument} — CPR {wc.lower() or 'range'}"
-            + (", price inside the range" if pp == "inside_cpr" else "")
-        )
+def _regime_blocks(
+    instrument: str, regime: dict[str, Any] | None, intraday_trend: str | None = None
+) -> tuple[bool, str]:
+    """CPR is a guide, not a gate. The only CPR-shaped no-trade left is a wide
+    CPR *and* a genuinely rangebound intraday tape (no HH/HL or LH/LL swing
+    structure). Price sitting inside the central range is no longer a block —
+    a confirmed intraday trend through the CPR is exactly the setup we want."""
+    wc = str((regime or {}).get("width_class") or "").upper()
+    if wc == "WIDE" and str(intraday_trend or "").upper() == "RANGE":
+        return True, (f"no-trend regime for {instrument} — wide CPR and rangebound intraday tape")
     return False, ""
 
 
@@ -130,6 +130,7 @@ def check(
     *,
     lane: str = "sell",
     regime_read: dict[str, Any] | None = None,
+    intraday_trend: str | None = None,
 ) -> tuple[bool, str]:
     """(blocked, reason). Call before opening a new position for this index + lane."""
     inst = str(instrument or "").strip().upper()
@@ -164,7 +165,7 @@ def check(
                 f"hour, sitting out {CHOP_LOCKOUT_MIN}m"
             )
 
-    return _regime_blocks(inst, regime)
+    return _regime_blocks(inst, regime, intraday_trend)
 
 
 if __name__ == "__main__":  # self-check (pure logic — no journal read)
@@ -173,9 +174,12 @@ if __name__ == "__main__":  # self-check (pure logic — no journal read)
     assert daily_cap("BANKNIFTY") == 2
     del os.environ["DAILY_TRADE_CAP_BANKNIFTY"]
 
-    assert _regime_blocks("NIFTY", {"width_class": "WIDE"})[0]
-    assert "inside the range" in _regime_blocks("NIFTY", {"price_position": "inside_cpr"})[1]
-    assert not _regime_blocks("NIFTY", {"width_class": "NORMAL", "price_position": "above_cpr"})[0]
+    assert _regime_blocks("NIFTY", {"width_class": "WIDE"}, "RANGE")[0]
+    assert not _regime_blocks("NIFTY", {"width_class": "WIDE"}, "DOWN")[
+        0
+    ]  # trending through it — fine
+    assert not _regime_blocks("NIFTY", {"width_class": "WIDE"})[0]  # unknown trend — CPR is a guide
+    assert not _regime_blocks("NIFTY", {"price_position": "inside_cpr"})[0]  # no longer a block
 
     assert regime_blocks_lane({"regime": "QUIET", "allow_buy": False, "allow_sell": False}, "buy")[
         0

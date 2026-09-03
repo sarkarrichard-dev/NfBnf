@@ -234,7 +234,11 @@ def evaluate_open_trade(
             if "pt_entry" not in updated:
                 updated.update(init_premium_trail(entry_premium=entry_px, direction=1))
             updated, pt_hit, pt_reason = update_premium_trail(
-                updated, float(cur_px), instrument_key
+                updated,
+                float(cur_px),
+                instrument_key,
+                index_price=current_index_price,
+                pivot_target=option.get("pivot_target"),
             )
             if pt_hit:
                 profit_hit, profit_reason = True, pt_reason

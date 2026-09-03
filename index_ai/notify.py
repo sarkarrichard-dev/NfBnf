@@ -143,6 +143,9 @@ def trade_opened(*, instrument: str, action: str, mode: str | None, option: dict
     sl, tgt = _sl_and_target(instrument, side, entry)
     if sl is not None:
         lines.append(f"SL {_rupees(sl)} · trailing profit at {_rupees(tgt)}")
+    pivot_label = option.get("pivot_target_label")
+    if pivot_label:
+        lines.append(f"target ~{pivot_label}")
     send("\n".join(lines))
 
 
