@@ -39,7 +39,7 @@ from index_ai.position_exits import (
     is_intraday_stale_open,
     strategy_exit_reason,
 )
-from index_ai.scan_health import ScanHealth, gather_limited, run_stage
+from index_ai.scan_health import DEFAULT_TIMEOUT, ScanHealth, gather_limited, run_stage
 from index_ai.trailing import evaluate_open_trade
 
 _log_py = logging.getLogger(__name__)
@@ -724,6 +724,10 @@ async def _run_loop() -> None:
         try:
             # Stages are isolated: one failing step no longer aborts the cycle,
             # so a flaky lane can't stop trailing stops from being checked.
+            # The paper lanes fetch an option chain + intraday history per
+            # index; under Dhan rate-limiting that can run past the 60s
+            # default and trip the breaker. Give them room.
+            _slow = {"options_cpr_paper": 150.0, "futures_paper": 150.0}
             for name, factory in (
                 ("market_context", _run_market_context_if_due),
                 ("live_order_sync", _sync_live),
@@ -738,7 +742,13 @@ async def _run_loop() -> None:
             ):
                 if not _state.running:
                     break
-                await run_stage(_health, name, factory, on_error=_stage_failed)
+                await run_stage(
+                    _health,
+                    name,
+                    factory,
+                    timeout=_slow.get(name, DEFAULT_TIMEOUT),
+                    on_error=_stage_failed,
+                )
 
             if is_square_off_window():
                 await run_stage(

@@ -40,8 +40,14 @@ def enabled() -> bool:
 
 
 def instruments() -> list[str]:
+    from index_ai.instruments import index_paused
+
     raw = os.getenv("FUTURES_PAPER_INSTRUMENTS", "NIFTY,BANKNIFTY,SENSEX")
-    return [x.strip().upper() for x in raw.split(",") if x.strip()]
+    return [
+        x.strip().upper()
+        for x in raw.split(",")
+        if x.strip() and not index_paused(x.strip())
+    ]
 
 
 def _cfg(key: str) -> FuturesConfig:

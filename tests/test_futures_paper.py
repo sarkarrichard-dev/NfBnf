@@ -25,6 +25,7 @@ def test_enabled_and_instruments_from_env(monkeypatch):
     assert paper.enabled() is False
     monkeypatch.setenv("ENABLE_FUTURES_PAPER", "true")
     monkeypatch.setenv("FUTURES_PAPER_INSTRUMENTS", "NIFTY, SENSEX")
+    monkeypatch.delenv("ENABLE_SENSEX", raising=False)  # instruments() drops paused indices
     assert paper.enabled() is True
     assert paper.instruments() == ["NIFTY", "SENSEX"]
 
