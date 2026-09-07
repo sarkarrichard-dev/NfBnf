@@ -43,6 +43,9 @@ const LanesPanel = lazy(() =>
 const DayReviewPanel = lazy(() =>
   import('./components/DayReviewPanel').then((m) => ({ default: m.DayReviewPanel })),
 )
+const CryptoSetupPanel = lazy(() =>
+  import('./components/CryptoSetupPanel').then((m) => ({ default: m.CryptoSetupPanel })),
+)
 
 type StatusResponse = {
   trading_mode: string
@@ -243,6 +246,11 @@ function App() {
             <CollapsibleSection title="Strategy tuning (.env)" defaultOpen>
               <Suspense fallback={<PanelFallback />}>
                 <StrategyTuningPanel strategy={status.data?.strategy} />
+              </Suspense>
+            </CollapsibleSection>
+            <CollapsibleSection title="Crypto — Delta Exchange (paper)" defaultOpen>
+              <Suspense fallback={<PanelFallback />}>
+                <CryptoSetupPanel />
               </Suspense>
             </CollapsibleSection>
           </div>

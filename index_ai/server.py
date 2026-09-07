@@ -223,6 +223,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Index Options AI", version="0.2.0", lifespan=lifespan)
 
+# Crypto section (Delta Exchange) — separate lane, its own /api/crypto surface.
+try:
+    from crypto.api import router as crypto_router
+
+    app.include_router(crypto_router)
+except Exception as _crypto_exc:  # never let the crypto module stop the index server
+    logging.getLogger(__name__).warning("crypto router not mounted: %s", _crypto_exc)
+
 # Exposed on /api/status so the dashboard can detect a stale server process.
 API_CAPABILITIES: dict[str, Any] = {
     "backtest_dhan": True,
