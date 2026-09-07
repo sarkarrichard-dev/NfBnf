@@ -24,6 +24,8 @@ dependencies = [
 dev = ["ruff>=0.6", "pytest>=8"]
 # Offline FinBERT: pip install -e ".[hf-local]"  (large torch download)
 hf-local = ["transformers>=4.40", "torch>=2.2"]
+# S3 backup of memory/ after the close: pip install -e ".[s3]"
+s3 = ["boto3>=1.34"]
 
 [project.scripts]
 start-index-ai = "index_ai.server:run"

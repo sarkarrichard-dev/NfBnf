@@ -28,6 +28,9 @@ _BUY_ACTIONS = frozenset({"BUY_CALL", "BUY_PUT"})
 _BULLISH = frozenset({"BUY_CALL", "SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"})
 _BEARISH = frozenset({"BUY_PUT", "SELL_BEAR_CALL_SPREAD", "SELL_ATM_CALL"})
 _CREDIT_RANGE = frozenset({"SELL_IRON_CONDOR"})
+_CREDIT_ACTIONS = frozenset(
+    {"SELL_BULL_PUT_SPREAD", "SELL_BEAR_CALL_SPREAD", "SELL_ATM_PUT", "SELL_ATM_CALL", "SELL_IRON_CONDOR"}
+)
 _ACTIONABLE = _BULLISH | _BEARISH | _CREDIT_RANGE
 
 
@@ -67,6 +70,8 @@ def _trade_pnl(
     entry_time: str,
     exit_time: str,
     pnl_mode: str,
+    high_spot: float | None = None,
+    low_spot: float | None = None,
 ) -> dict[str, float]:
     if pnl_mode == "option_proxy":
         try:
@@ -82,6 +87,8 @@ def _trade_pnl(
             lot_size=instrument.lot_size,
             hold_minutes=max(5.0, hold),
             instrument_key=instrument.key,
+            high_spot=high_spot,
+            low_spot=low_spot,
         )
         return {
             "proxy_index_points": est["proxy_index_points"],
@@ -132,6 +139,10 @@ def replay_session(
     sp = get_strategy_params()
     min_bars = sp.ema_slow_period + 2
     stride = max(1, int(signal_stride))
+    cooldown = max(0, int(sp.reentry_cooldown_bars))
+    hold_credit = not sp.exit_credit_on_signal_flip
+    credit_stop_pct = max(0.0, float(sp.credit_spot_stop_pct))
+    last_exit_bar = -(10**9)
     prev_tail = (
         previous.tail(sp.ichimoku_span_b_period + sp.ichimoku_base_period)
         if cloud_exit and not previous.empty
@@ -139,13 +150,23 @@ def replay_session(
     )
     trades: list[dict[str, Any]] = []
     open_trade: dict[str, Any] | None = None
+    open_bar_i: int = 0
     pending_entry: dict[str, Any] | None = None
     pending_exit_action: str | None = None
 
-    def _close_trade(exit_ts: str, exit_px: float, exit_action: str) -> None:
-        nonlocal open_trade
+    def _close_trade(exit_ts: str, exit_px: float, exit_action: str, exit_bar_i: int) -> None:
+        nonlocal open_trade, last_exit_bar
         if open_trade is None:
             return
+        last_exit_bar = exit_bar_i
+        lo = hi = None
+        try:
+            window = today.iloc[open_bar_i : max(exit_bar_i + 1, open_bar_i + 1)]
+            if not window.empty:
+                lo = float(window["low"].min())
+                hi = float(window["high"].max())
+        except Exception:
+            lo = hi = None
         pnl = _trade_pnl(
             str(open_trade["action"]),
             float(open_trade["entry_price"]),
@@ -154,6 +175,8 @@ def replay_session(
             entry_time=str(open_trade["entry_time"]),
             exit_time=exit_ts,
             pnl_mode=pnl_mode,
+            high_spot=hi,
+            low_spot=lo,
         )
         trades.append(
             {
@@ -175,7 +198,7 @@ def replay_session(
         # Signals are only knowable at a candle close. Execute them at the
         # following candle's open; this removes same-bar look-ahead fills.
         if pending_exit_action and open_trade is not None:
-            _close_trade(str(ts), float(row["open"]), pending_exit_action)
+            _close_trade(str(ts), float(row["open"]), pending_exit_action, i)
             pending_exit_action = None
         if pending_entry is not None and open_trade is None:
             if _bar_time_allowed(ts, bounds):
@@ -185,6 +208,7 @@ def replay_session(
                     "entry_price": float(row["open"]),
                     "execution_model": "next_bar_open",
                 }
+                open_bar_i = i
             pending_entry = None
 
         if stride > 1 and (i - min_bars) % stride != 0:
@@ -204,6 +228,7 @@ def replay_session(
             if (
                 signal.action in _ACTIONABLE
                 and _bar_time_allowed(ts, bounds)
+                and i >= last_exit_bar + cooldown
                 and (
                     signal.confidence >= sp.credit_min_confidence
                     or signal.action in {"BUY_CALL", "BUY_PUT"}
@@ -249,12 +274,28 @@ def replay_session(
                 pending_exit_action = "CLOUD_EXIT"
                 continue
 
-        if _should_exit(open_action, signal) or not _bar_time_allowed(ts, bounds):
+        if hold_credit and open_action in _CREDIT_ACTIONS:
+            # Don't churn credit on every signal flip — hold to a spot stop or
+            # session close so the spread has time to earn its premium.
+            entry_px = float(open_trade["entry_price"])
+            win = today.iloc[open_bar_i : i + 1]
+            adverse = 0.0
+            if open_action in _BULLISH:
+                adverse = entry_px - float(win["low"].min())
+            elif open_action in _BEARISH:
+                adverse = float(win["high"].max()) - entry_px
+            else:  # condor
+                adverse = max(entry_px - float(win["low"].min()), float(win["high"].max()) - entry_px)
+            if credit_stop_pct > 0 and adverse >= entry_px * credit_stop_pct:
+                pending_exit_action = "CREDIT_STOP"
+            elif not _bar_time_allowed(ts, bounds):
+                pending_exit_action = "SIGNAL_EXIT"
+        elif _should_exit(open_action, signal) or not _bar_time_allowed(ts, bounds):
             pending_exit_action = signal.action if signal.action != "NO_TRADE" else "SIGNAL_EXIT"
 
     if open_trade is not None:
         last = today.iloc[-1]
-        _close_trade(str(last["datetime"]), float(last["close"]), "SESSION_END")
+        _close_trade(str(last["datetime"]), float(last["close"]), "SESSION_END", len(today) - 1)
 
     return trades
 

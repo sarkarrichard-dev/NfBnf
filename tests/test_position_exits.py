@@ -36,3 +36,15 @@ def test_signal_flip_exit() -> None:
     trade = {"action": "SELL_BEAR_CALL_SPREAD"}
     reason = strategy_exit_reason(trade, "SELL_BULL_PUT_SPREAD", {"day_bias": "TRENDING_BULL"})
     assert reason is not None
+
+
+def test_premium_trailed_credit_ignores_signal_flip() -> None:
+    # BANKNIFTY credit spread → premium_trail owns the exit, not a regime flip
+    trade = {"action": "SELL_BEAR_CALL_SPREAD", "instrument": "BANKNIFTY", "option": {}}
+    assert (
+        strategy_exit_reason(trade, "SELL_BULL_PUT_SPREAD", {"day_bias": "TRENDING_BULL"}) is None
+    )
+    assert strategy_exit_reason(trade, "NO_TRADE", {"day_bias": "TRENDING_BULL"}) is None
+    # an index without premium-trail params still closes on the flip
+    other = {"action": "SELL_BEAR_CALL_SPREAD", "instrument": "SENSEX", "option": {}}
+    assert strategy_exit_reason(other, "NO_TRADE", {"day_bias": "TRENDING_BULL"}) is not None

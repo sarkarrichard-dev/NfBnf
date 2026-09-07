@@ -8,7 +8,13 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from index_ai.config import DB_PATH, MEMORY_DIR
-from index_ai.market_clock import format_ist_display, is_entry_session_timestamp, now_ist_iso, parse_ist_datetime, today_ist_date
+from index_ai.market_clock import (
+    format_ist_display,
+    is_entry_session_timestamp,
+    now_ist_iso,
+    parse_ist_datetime,
+    today_ist_date,
+)
 
 
 def now_utc() -> str:
@@ -200,6 +206,7 @@ def save_exit_prices(
     *,
     exit_option_ltp: float | None,
     exit_index_price: float | None = None,
+    leg_exit_ltps: list[float] | None = None,
 ) -> None:
     with connect() as db:
         row = db.execute("SELECT option_json FROM trades WHERE id = ?", (trade_id,)).fetchone()
@@ -210,6 +217,11 @@ def save_exit_prices(
             option["exit_ltp"] = float(exit_option_ltp)
         if exit_index_price is not None:
             option["exit_index_price"] = float(exit_index_price)
+        if leg_exit_ltps:
+            option["leg_exit_ltps"] = [float(x) for x in leg_exit_ltps]
+            for leg, px in zip(option.get("legs") or [], leg_exit_ltps):
+                if px:
+                    leg["exit_ltp"] = float(px)
         option["closed_at"] = now_ist_iso()
         db.execute(
             "UPDATE trades SET option_json = ? WHERE id = ?",
@@ -247,22 +259,32 @@ def resolve_trade_lot_size(trade: dict[str, Any]) -> tuple[int, int]:
     return configured, effective
 
 
-def reconcile_all_trade_lots() -> dict[str, int]:
-    """Persist correct NSE lot quantity on every journal row (open and closed)."""
+def reconcile_all_trade_lots(*, open_only: bool = False) -> dict[str, int]:
+    """Persist correct NSE lot quantity on journal rows.
+
+    Reads every row through ONE connection instead of opening two per trade — the
+    old form did 2N connections (362 for a 181-row journal, ~290ms) and made the
+    lots endpoint feel broken.
+
+    ``open_only`` skips closed trades, which is what an interactive lot change
+    wants: a closed row's quantity is a historical record of what was actually
+    traded, so rewriting it would falsify the journal.
+    """
     updated = 0
+    q = "SELECT * FROM trades"
+    if open_only:
+        q += " WHERE pnl IS NULL"
     with connect() as db:
-        rows = db.execute("SELECT id FROM trades").fetchall()
-    for row in rows:
-        trade_id = str(row["id"])
-        with connect() as db:
-            raw = db.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
-        if not raw:
-            continue
-        before_qty = int((json.loads(raw["option_json"]).get("quantity") or 0))
-        synced = sync_option_lot_size(_row_to_trade(raw), persist=True)
-        after_qty = int((synced.get("option") or {}).get("quantity") or 0)
-        if after_qty and after_qty != before_qty:
-            updated += 1
+        rows = db.execute(q).fetchall()
+        for raw in rows:
+            try:
+                before_qty = int((json.loads(raw["option_json"]).get("quantity") or 0))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            synced = sync_option_lot_size(_row_to_trade(raw), persist=True)
+            after_qty = int((synced.get("option") or {}).get("quantity") or 0)
+            if after_qty and after_qty != before_qty:
+                updated += 1
     return {"trades_checked": len(rows), "quantities_updated": updated}
 
 
@@ -359,7 +381,9 @@ def option_leg_fields(trade: dict[str, Any]) -> dict[str, Any]:
     from index_ai.trade_lots import get_lots_per_trade
 
     lots = int(get_lots_per_trade())
-    lot_label = f"{lots} lot{'s' if lots != 1 else ''} · {effective_qty} qty" if effective_qty else ""
+    lot_label = (
+        f"{lots} lot{'s' if lots != 1 else ''} · {effective_qty} qty" if effective_qty else ""
+    )
     position_summary = instrument
     if leg_display and leg_display != "—":
         position_summary = f"{instrument} · {leg_display}" if instrument else leg_display
@@ -419,7 +443,9 @@ def build_legs_ui(option: dict[str, Any]) -> list[dict[str, Any]]:
         exit_px = leg.get("exit_ltp")
         broker_id = leg.get("broker_order_id")
         if not broker_id and i < len(broker_legs):
-            resp = (broker_legs[i].get("response") or {}) if isinstance(broker_legs[i], dict) else {}
+            resp = (
+                (broker_legs[i].get("response") or {}) if isinstance(broker_legs[i], dict) else {}
+            )
             broker_id = resp.get("orderId")
         rows.append(
             {
@@ -481,7 +507,15 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
         side_word = "Sell" if tx == "SELL" else "Buy"
         qty = int(leg.get("quantity") or ui.get("quantity") or 1)
         entry = None if rejected else leg.get("entry_ltp")
-        mark = None if rejected else (leg.get("current_ltp") if is_open else (leg.get("exit_ltp") or leg.get("current_ltp")))
+        mark = (
+            None
+            if rejected
+            else (
+                leg.get("current_ltp")
+                if is_open
+                else (leg.get("exit_ltp") or leg.get("current_ltp"))
+            )
+        )
         leg_mtm = None
         leg_pnl = None
         if not rejected and entry is not None and mark is not None and is_open and not awaiting:
@@ -492,7 +526,12 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
                 transaction_type=tx,
             )
         elif not rejected and entry is not None and not is_open:
-            exit_px = leg.get("exit_ltp") or mark
+            # real per-leg exit fill only — never the last MTM mark. Spread exits
+            # record an aggregate close price, not per-leg fills, so a closed
+            # spread leg has no exit_ltp: fall through to show_spread_pnl below,
+            # which puts the realised spread P&L on leg 0. Using `mark` here made
+            # a closed spread display a stale pre-close MTM split across legs.
+            exit_px = leg.get("exit_ltp")
             if exit_px is not None:
                 leg_pnl = estimate_pnl_rupees(
                     entry_ltp=float(entry),
@@ -554,11 +593,7 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
                 "mtm_updated_at_ist": ui.get("mtm_updated_at_ist") if is_open else None,
                 "entry_session_ok": ui.get("entry_session_ok"),
                 "row_class": (
-                    "row-open"
-                    if is_open
-                    else "row-rejected"
-                    if status == "LIVE_REJECTED"
-                    else ""
+                    "row-open" if is_open else "row-rejected" if status == "LIVE_REJECTED" else ""
                 ),
                 "leg_group_class": "leg-group-start" if idx == 0 else "leg-group-cont",
             }
@@ -592,8 +627,7 @@ def repair_rejected_journal_prices(*, limit: int = 200) -> int:
             continue
         opt = json.loads(row["option_json"])
         dirty = any(
-            opt.get(k) is not None
-            for k in ("entry_ltp", "ltp", "mtm_pnl", "net_credit_points")
+            opt.get(k) is not None for k in ("entry_ltp", "ltp", "mtm_pnl", "net_credit_points")
         ) or any(
             isinstance(leg, dict) and leg.get("entry_ltp") is not None
             for leg in (opt.get("legs") or [])
@@ -622,14 +656,14 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
     status = str(trade.get("status") or "")
     if status == "LIVE_REJECTED":
         option = sanitize_rejected_option(option)
-    is_open = pnl is None and (
-        not is_live_trade(trade) or is_broker_filled_open(trade)
-    )
+    is_open = pnl is None and (not is_live_trade(trade) or is_broker_filled_open(trade))
     _, effective_qty = resolve_trade_lot_size(trade)
     qty = effective_qty or int(option.get("quantity") or 1)
     entry_price = signal.get("price")
     strike = option.get("strike")
-    entry_ltp = None if status == "LIVE_REJECTED" else (option.get("entry_ltp") or option.get("ltp"))
+    entry_ltp = (
+        None if status == "LIVE_REJECTED" else (option.get("entry_ltp") or option.get("ltp"))
+    )
     if entry_ltp is None and status != "LIVE_REJECTED":
         hist = option.get("mtm_history") or []
         if hist and hist[0].get("option_ltp") is not None:
@@ -645,9 +679,7 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
             option = {**option, "exit_ltp": round(inferred_exit, 2), "exit_inferred_from_pnl": True}
     exit_option_ltp = option.get("exit_ltp")
     exit_inferred_from_pnl = bool(option.get("exit_inferred_from_pnl"))
-    prices_incomplete = (
-        pnl is not None and entry_ltp is None and exit_option_ltp is None
-    )
+    prices_incomplete = pnl is not None and entry_ltp is None and exit_option_ltp is None
     segment = option.get("segment") or ""
     security_id = option.get("security_id")
     exit_index_price = option.get("exit_index_price")
@@ -678,7 +710,9 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
         broker_status_line = ", ".join(str(s) for s in option["broker_order_statuses"])
 
     if broker_status == "LIVE_REJECTED":
-        exit_label = option.get("broker_rejection_reason") or broker_status_line or "Rejected on Dhan"
+        exit_label = (
+            option.get("broker_rejection_reason") or broker_status_line or "Rejected on Dhan"
+        )
     elif pnl is not None and float(pnl) != 0:
         if exit_option_ltp is not None:
             est = " (est. from PnL)" if exit_inferred_from_pnl else ""
@@ -749,7 +783,11 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
         "mtm_updated_at_ist": format_ist_display(str(mtm_updated)) if mtm_updated else None,
         "last_option_ltp": last_ltp,
         "current_option_ltp": current_option_ltp,
-        "exit_option_ltp": exit_option_ltp if exit_option_ltp is not None else current_option_ltp if not is_open else None,
+        "exit_option_ltp": exit_option_ltp
+        if exit_option_ltp is not None
+        else current_option_ltp
+        if not is_open
+        else None,
         "exit_index_price": exit_index_price,
         "mtm_history": mtm_history[-12:],
         "display_pnl": float(mtm_pnl) if is_open and mtm_pnl is not None else pnl,
@@ -1242,6 +1280,47 @@ def record_feedback(trade_id: str | None, rating: int, note: str | None = None) 
     return update_learning()
 
 
+def backfill_spread_leg_exit_ltps(option: dict[str, Any]) -> bool:
+    """Give a closed spread's legs an ``exit_ltp`` when only the aggregate close
+    price was recorded (older rows, or the exit path's estimate fallback).
+
+    Seeds each leg from whatever per-leg price exists (last MTM), then pushes the
+    gap between that implied debit and the real recorded ``option['exit_ltp']``
+    onto the short leg(s) — the near-the-money leg carries essentially all the
+    spread's price movement, so this reconciles the per-leg P&L to the realised
+    total without inventing a number for the stable far wing. Mutates in place;
+    returns True if it changed anything.
+    """
+    legs = option.get("legs") or []
+    target = option.get("exit_ltp")
+    if len(legs) < 2 or target is None or all(leg.get("exit_ltp") is not None for leg in legs):
+        return False
+    seed = option.get("leg_exit_ltps") or option.get("leg_ltps") or []
+    px: list[float] = []
+    for i, leg in enumerate(legs):
+        v = leg.get("exit_ltp")
+        if v is None and i < len(seed):
+            v = seed[i]
+        if v is None:
+            v = leg.get("current_ltp")
+        if v is None:
+            return False
+        px.append(float(v))
+    sells = [
+        i for i, leg in enumerate(legs) if str(leg.get("transaction_type") or "").upper() == "SELL"
+    ]
+    if not sells:
+        return False
+    implied = sum(px[i] if i in sells else -px[i] for i in range(len(px)))
+    spread = (float(target) - implied) / len(sells)
+    for i in sells:
+        px[i] = round(px[i] + spread, 2)
+    for leg, v in zip(legs, px):
+        leg["exit_ltp"] = v
+    option["leg_exit_ltps"] = px
+    return True
+
+
 def repair_closed_trade_prices(*, limit: int = 200) -> int:
     """One-time style repair: infer missing entry/exit LTP on closed journal rows."""
     updated = 0
@@ -1256,14 +1335,17 @@ def repair_closed_trade_prices(*, limit: int = 200) -> int:
         if not tid or _is_test_trade_id(tid):
             continue
         option = dict(trade.get("option") or {})
-        has_entry = option.get("entry_ltp") or option.get("ltp") or (
-            (option.get("mtm_history") or [{}])[0].get("option_ltp")
+        has_entry = (
+            option.get("entry_ltp")
+            or option.get("ltp")
+            or ((option.get("mtm_history") or [{}])[0].get("option_ltp"))
         )
         has_exit = option.get("exit_ltp")
-        if has_entry and has_exit:
-            continue
-        new_option = backfill_option_prices_for_close(trade, float(trade.get("pnl") or 0))
-        if new_option == option:
+        new_option = option
+        if not (has_entry and has_exit):
+            new_option = backfill_option_prices_for_close(trade, float(trade.get("pnl") or 0))
+        legs_changed = backfill_spread_leg_exit_ltps(new_option)
+        if new_option == option and not legs_changed:
             continue
         with connect() as db:
             db.execute(
@@ -1324,16 +1406,8 @@ def update_learning() -> dict[str, Any]:
             """
         ).fetchall()
 
-    ratings = [
-        int(r["rating"])
-        for r in fb_rows
-        if not _feedback_row_excluded(dict(r))
-    ][:30]
-    pnls = [
-        float(r["pnl"])
-        for r in closed_rows
-        if not _is_test_trade_id(str(r["id"]))
-    ][:50]
+    ratings = [int(r["rating"]) for r in fb_rows if not _feedback_row_excluded(dict(r))][:30]
+    pnls = [float(r["pnl"]) for r in closed_rows if not _is_test_trade_id(str(r["id"]))][:50]
     avg = sum(ratings) / len(ratings) if ratings else 0.0
     min_confidence_adjustment = 0.0
     if ratings:

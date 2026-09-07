@@ -71,12 +71,13 @@ def main() -> None:
 
     from index_ai.backtest import _replay_candles
     from index_ai.candle_cache import load_cached_range
-    from index_ai.config import settings
+    from index_ai.config import freeze_env, settings
     from index_ai.instruments import get_instrument
     from index_ai.strategies.strategy_params import reload_strategy_params
 
     reload_strategy_params()
     app = settings()
+    freeze_env()
 
     for key in args.instruments or ["NIFTY", "BANKNIFTY"]:
         candles = load_cached_range(key, args.iv)

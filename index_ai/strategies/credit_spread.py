@@ -21,10 +21,7 @@ CREDIT_EXIT_MODE = "credit_spread"
 
 def is_credit_option(option: dict[str, Any]) -> bool:
     legs = list(option.get("legs") or [])
-    if len(legs) >= 2 and all(leg.get("security_id") is not None for leg in legs):
-        return True
-    structure = str(option.get("structure") or "").upper()
-    return False
+    return len(legs) >= 2 and all(leg.get("security_id") is not None for leg in legs)
 
 
 def is_credit_action(action: str) -> bool:
@@ -124,7 +121,9 @@ def max_loss_points(legs: list[dict[str, Any]], structure: str, entry_credit: fl
     return max(0.0, round(wing - entry_credit, 2))
 
 
-def attach_credit_risk_metrics(option: dict[str, Any], instrument: IndexInstrument) -> dict[str, Any]:
+def attach_credit_risk_metrics(
+    option: dict[str, Any], instrument: IndexInstrument
+) -> dict[str, Any]:
     legs = list(option.get("legs") or [])
     if not legs:
         return option
@@ -170,7 +169,8 @@ def init_credit_trail_meta(
     legs = list(option.get("legs") or [])
     credit = float(option.get("net_credit_points") or option.get("ltp") or net_credit_points(legs))
     max_loss_pts = float(
-        option.get("max_loss_points") or max_loss_points(legs, str(option.get("structure") or ""), credit)
+        option.get("max_loss_points")
+        or max_loss_points(legs, str(option.get("structure") or ""), credit)
     )
     qty = int(option.get("quantity") or instrument.lot_size)
     max_profit = round(credit * qty, 2)
@@ -256,7 +256,6 @@ def fetch_leg_ltps(
         key = instrument_key or str(option.get("instrument") or "")
         if key:
             try:
-                from index_ai.dhan import DhanClient
                 from index_ai.instruments import get_instrument
                 from index_ai.options_expiry import resolve_trade_expiry
 
@@ -314,9 +313,7 @@ def compute_credit_mtm(
     legs = list(option.get("legs") or [])
     if not legs:
         raise RuntimeError("Credit spread has no legs.")
-    leg_ltps = fetch_leg_ltps(
-        client, option, instrument_key=instrument_key, ltp_cache=ltp_cache
-    )
+    leg_ltps = fetch_leg_ltps(client, option, instrument_key=instrument_key, ltp_cache=ltp_cache)
     sync_leg_current_ltps(option, leg_ltps)
     legs = list(option.get("legs") or [])
     debit = mark_to_close_debit(legs, leg_ltps)
@@ -332,7 +329,11 @@ def format_legs_summary(legs: list[dict[str, Any]]) -> list[dict[str, str]]:
         tx = str(leg.get("transaction_type") or "BUY").upper()
         side = str(leg.get("option_type") or "").upper()
         strike = leg.get("strike")
-        strike_s = str(int(strike)) if strike is not None and float(strike) == int(strike) else f"{strike:g}"
+        strike_s = (
+            str(int(strike))
+            if strike is not None and float(strike) == int(strike)
+            else f"{strike:g}"
+        )
         rows.append(
             {
                 "label": f"{'Sell' if tx == 'SELL' else 'Buy'} {strike_s} {side[:2] if side else ''}".strip(),
@@ -382,33 +383,67 @@ def evaluate_credit_open_trade(
     stop_loss = float(meta.get("stop_loss_rupees") or 0)
     max_loss = float(meta.get("max_loss_rupees") or 0)
 
-    if mtm is not None:
-        pnl = float(mtm)
-        from index_ai.profit_trail import evaluate_profit_trail
+    # Premium trail on the *short leg* (NIFTY / BANKNIFTY): quarter-of-premium
+    # target, then a fixed bounce off the best. It replaces the rupee target/stop
+    # for those indices; the rupee max-loss stays as a backstop.
+    inst_key = str(trade.get("instrument") or option.get("instrument") or "NIFTY")
+    short_leg = next(
+        (
+            leg
+            for leg in (option.get("legs") or [])
+            if str(leg.get("transaction_type") or "").upper() == "SELL"
+        ),
+        None,
+    )
+    pt_active = False
+    from index_ai.premium_trail import (
+        init_premium_trail,
+        premium_trail_enabled,
+        update_premium_trail,
+    )
 
-        meta, profit_hit, profit_reason = evaluate_profit_trail(meta, pnl)
-        if profit_hit and profit_reason:
-            should_exit = True
-            exit_reason = profit_reason
-        elif (
-            not meta.get("use_profit_trail")
-            and profit_target > 0
-            and pnl >= profit_target
-        ):
-            should_exit = True
-            exit_reason = (
-                f"Credit profit target hit: ₹{pnl:,.0f} "
-                f"(≥ {int(float(meta.get('profit_target_pct') or 0.5) * 100)}% of max profit)."
+    if premium_trail_enabled(inst_key) and short_leg is not None:
+        short_entry = float(short_leg.get("entry_ltp") or short_leg.get("ltp") or 0)
+        short_now = short_leg.get("current_ltp")
+        if short_entry > 0 and short_now is not None:
+            pt_active = True
+            if "pt_entry" not in meta:
+                meta.update(init_premium_trail(entry_premium=short_entry, direction=-1))
+            meta, pt_hit, pt_reason = update_premium_trail(
+                meta,
+                float(short_now),
+                inst_key,
+                index_price=current_index_price,
+                pivot_target=option.get("pivot_target"),
             )
-        elif stop_loss > 0 and pnl <= -stop_loss:
-            should_exit = True
-            exit_reason = (
-                f"Credit stop loss: ₹{pnl:,.0f} "
-                f"(≥ {int(float(meta.get('stop_loss_pct') or 0.6) * 100)}% of defined max loss)."
-            )
-        elif max_loss > 0 and pnl <= -max_loss:
+            if pt_hit:
+                should_exit = True
+                exit_reason = pt_reason
+
+    if mtm is not None and not should_exit:
+        pnl = float(mtm)
+        if max_loss > 0 and pnl <= -max_loss:
             should_exit = True
             exit_reason = f"Credit max loss reached: ₹{pnl:,.0f}."
+        elif not pt_active:
+            from index_ai.profit_trail import evaluate_profit_trail
+
+            meta, profit_hit, profit_reason = evaluate_profit_trail(meta, pnl)
+            if profit_hit and profit_reason:
+                should_exit = True
+                exit_reason = profit_reason
+            elif not meta.get("use_profit_trail") and profit_target > 0 and pnl >= profit_target:
+                should_exit = True
+                exit_reason = (
+                    f"Credit profit target hit: ₹{pnl:,.0f} "
+                    f"(≥ {int(float(meta.get('profit_target_pct') or 0.5) * 100)}% of max profit)."
+                )
+            elif stop_loss > 0 and pnl <= -stop_loss:
+                should_exit = True
+                exit_reason = (
+                    f"Credit stop loss: ₹{pnl:,.0f} "
+                    f"(≥ {int(float(meta.get('stop_loss_pct') or 0.6) * 100)}% of defined max loss)."
+                )
 
     shorts = _short_strikes(list(option.get("legs") or []))
     if not should_exit and is_credit_action(action):

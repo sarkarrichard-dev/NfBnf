@@ -89,8 +89,20 @@ def main() -> None:
     ap.add_argument("--sessions", type=int, default=0, help="most-recent N sessions (0 = all)")
     ap.add_argument("--stride", type=int, default=3,
                     help="evaluate the router every Nth bar (1 = every bar; 3 default for research)")
+    ap.add_argument("--hold-credit", action="store_true",
+                    help="hold credit spreads to a spot stop / session close instead of exiting on signal flip")
+    ap.add_argument("--cooldown", type=int, default=0,
+                    help="bars to wait after an exit before a new entry (anti-whipsaw)")
+    ap.add_argument("--param", action="append", default=[], metavar="KEY=VAL",
+                    help="strategy-param env override, repeatable (e.g. --param EMA_SLOW_PERIOD=10)")
     ap.add_argument("--all", action="store_true", help="every style x SENSEX too, full history")
     args = ap.parse_args()
+
+    if args.hold_credit:
+        os.environ["EXIT_CREDIT_ON_SIGNAL_FLIP"] = "false"
+    if args.cooldown:
+        os.environ["REENTRY_COOLDOWN_BARS"] = str(args.cooldown)
+    _overrides = dict(p.split("=", 1) for p in args.param if "=" in p)
 
     styles = ["AUTO", "BUY", "CREDIT", "APEX"] if args.all else [s.upper() for s in args.styles]
     instruments = (
@@ -102,7 +114,7 @@ def main() -> None:
 
     from index_ai.backtest import _replay_candles, _sessions
     from index_ai.candle_cache import load_cached_range
-    from index_ai.config import settings
+    from index_ai.config import freeze_env, settings
     from index_ai.instruments import get_instrument
     from index_ai.strategies.strategy_params import reload_strategy_params
     import pandas as pd
@@ -111,14 +123,18 @@ def main() -> None:
     combined_trades: list[dict] = []
     summary: dict[str, dict] = {}
 
-    # settings() calls load_dotenv(override=True), which would clobber the env
-    # overrides below — so read it once up front and never again in this run.
+    # settings() / candle_interval_minutes() call load_dotenv(override=True), which
+    # would clobber the STRATEGY_STYLE / CANDLE_INTERVAL_MINUTES overrides below
+    # mid-replay. Read settings once, then pin the environment.
     app = settings()
+    freeze_env()
 
     for iv in intervals:
         for style in styles:
             os.environ["CANDLE_INTERVAL_MINUTES"] = iv
             os.environ["STRATEGY_STYLE"] = style
+            for k, v in _overrides.items():
+                os.environ[k] = v
             reload_strategy_params()
             for inst_key in instruments:
                 combo = f"{iv}m/{style}/{inst_key}"

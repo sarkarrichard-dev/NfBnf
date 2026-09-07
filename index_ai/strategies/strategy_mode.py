@@ -7,9 +7,11 @@ from typing import Any
 import pandas as pd
 
 from index_ai.strategies.bar_volume import volume_confirms
+from index_ai.strategies.candlestick_sr import intraday_candle_trend
 from index_ai.strategies.cpr_regime import CprRegime
 from index_ai.strategies.ema_cross import credit_action_for_cross
 from index_ai.strategies.strategy_params import get_strategy_params
+from index_ai.strategies.supertrend import supertrend_snapshot
 
 
 def _volume_wait_reason(stats: dict[str, Any], *, min_ratio: float) -> str:
@@ -84,27 +86,8 @@ def pick_auto_credit(
         label = "bullish" if cross_action == "SELL_BULL_PUT_SPREAD" else "bearish"
         return _gate_volume(
             cross_action,
-            (
-                f"AUTO [EMA cross]: {ema_fast}/{ema_slow} {label} cross on 1m spot. "
-                f"{regime.note}"
-            ),
+            (f"AUTO [EMA cross]: {ema_fast}/{ema_slow} {label} cross on 1m spot. {regime.note}"),
             "ema_cross",
-        )
-
-    if bias == "SIDEWAYS":
-        if ema_bull or ema_bear:
-            return (
-                None,
-                (
-                    f"AUTO: Sideways CPR but EMA {aligned} — "
-                    f"wait for cross or range (no iron condor vs trend)."
-                ),
-                "wait",
-            )
-        return _gate_volume(
-            "SELL_IRON_CONDOR",
-            f"AUTO [range]: Sideways CPR — iron condor (EMA {aligned or 'flat'}). {regime.note}",
-            "cpr_sideways",
         )
 
     if bias == "TRENDING_BULL" and ema_bull:
@@ -124,6 +107,50 @@ def pick_auto_credit(
                 "bear call spread."
             ),
             "cpr_trend",
+        )
+
+    # Trend override — a strong, confirmed intraday trend overrides a conflicting
+    # or flat daily CPR bias. Needs all three of EMA alignment + Supertrend +
+    # candle structure to agree (plus the volume gate below). It trades the
+    # confirmed break, never a range: a merely-flat SIDEWAYS day produces nothing.
+    st = (
+        supertrend_snapshot(
+            frame, period=params.supertrend_period, multiplier=params.supertrend_multiplier
+        )
+        if frame is not None
+        else {"direction": 0}
+    )
+    st_dir = int(st.get("direction") or 0)
+    trend = intraday_candle_trend(frame, lookback=15) if frame is not None else "RANGE"
+    strong_down = ema_bear and st_dir == -1 and trend == "DOWN"
+    strong_up = ema_bull and st_dir == 1 and trend == "UP"
+    if params.sell_allow_trend_override:
+        if strong_down and bias in ("TRENDING_BULL", "SIDEWAYS"):
+            return _gate_volume(
+                "SELL_BEAR_CALL_SPREAD",
+                (
+                    f"AUTO [trend-override]: CPR {bias.lower()} but 1m EMA bear + "
+                    "Supertrend down + candles DOWN — confirmed break, bear call spread."
+                ),
+                "cpr_trend_override",
+            )
+        if strong_up and bias in ("TRENDING_BEAR", "SIDEWAYS"):
+            return _gate_volume(
+                "SELL_BULL_PUT_SPREAD",
+                (
+                    f"AUTO [trend-override]: CPR {bias.lower()} but 1m EMA bull + "
+                    "Supertrend up + candles UP — confirmed break, bull put spread."
+                ),
+                "cpr_trend_override",
+            )
+
+    if bias == "SIDEWAYS":
+        # Directional-only credit policy: no range selling (iron condor). A sideways
+        # CPR with no confirmed trend is a no-trade — wait for a directional break.
+        return (
+            None,
+            f"AUTO: Sideways CPR — directional-only credit policy, no range sell. {regime.note}",
+            "wait",
         )
 
     if bias in ("TRENDING_BULL", "TRENDING_BEAR"):

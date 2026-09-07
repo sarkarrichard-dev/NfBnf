@@ -59,12 +59,13 @@ def main() -> None:
 
     from index_ai.backtest import _sessions
     from index_ai.candle_cache import load_cached_range
-    from index_ai.config import settings
+    from index_ai.config import freeze_env, settings
     from index_ai.instruments import get_instrument
     from index_ai.strategies.strategy_params import reload_strategy_params
     import pandas as pd
 
     app = settings()
+    freeze_env()
     inst = get_instrument(args.instrument.upper())
     all_candles = load_cached_range(args.instrument.upper(), args.iv)
     if all_candles.empty:

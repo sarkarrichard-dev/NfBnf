@@ -11,6 +11,7 @@ import { fx } from '../lib/theme'
 import type { LogRow, PeriodKey, PositionsFilter, TradeRow } from '../types/analytics'
 import { PositionRow } from './PositionRow'
 import { TradeLogTable } from './TradeLogTable'
+import { Button } from './ui/Button'
 
 type Tab = 'open' | 'history'
 
@@ -67,8 +68,7 @@ export function JournalPanel({ logRows, trades, period, mtmUpdatedAt }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 border-b border-cyan-500/15 pb-2">
-        <button
-          type="button"
+        <Button
           onClick={() => setTab('open')}
           className={cn(
             'rounded-md px-3 py-1.5 text-sm transition',
@@ -78,9 +78,8 @@ export function JournalPanel({ logRows, trades, period, mtmUpdatedAt }: Props) {
           )}
         >
           Open positions ({allOpen.length})
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
           onClick={() => setTab('history')}
           className={cn(
             'rounded-md px-3 py-1.5 text-sm transition',
@@ -90,7 +89,7 @@ export function JournalPanel({ logRows, trades, period, mtmUpdatedAt }: Props) {
           )}
         >
           Trade history ({historyCount})
-        </button>
+        </Button>
       </div>
 
       {tab === 'open' ? (
@@ -124,9 +123,8 @@ export function JournalPanel({ logRows, trades, period, mtmUpdatedAt }: Props) {
               const count = filterCounts[f.id]
               const label = count ? `${f.label} [${count}]` : f.label
               return (
-                <button
-                  key={f.id}
-                  type="button"
+                <Button
+            key={f.id}
                   onClick={() => setFilter(f.id)}
                   className={cn(
                     'rounded-full border px-3 py-1 text-xs transition',
@@ -136,7 +134,7 @@ export function JournalPanel({ logRows, trades, period, mtmUpdatedAt }: Props) {
                   )}
                 >
                   {label}
-                </button>
+                </Button>
               )
             })}
           </div>

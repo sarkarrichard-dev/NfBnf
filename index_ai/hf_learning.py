@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -30,7 +29,9 @@ def _hf_token() -> str:
 
 
 def _sentiment_model() -> str:
-    return os.getenv("HF_SENTIMENT_MODEL", DEFAULT_SENTIMENT_MODEL).strip() or DEFAULT_SENTIMENT_MODEL
+    return (
+        os.getenv("HF_SENTIMENT_MODEL", DEFAULT_SENTIMENT_MODEL).strip() or DEFAULT_SENTIMENT_MODEL
+    )
 
 
 def _dataset_repo() -> str:
@@ -77,12 +78,17 @@ def build_setup_narrative(
 def _load_meta() -> dict[str, Any]:
     if not META_PATH.is_file():
         return {}
-    return json.loads(META_PATH.read_text(encoding="utf-8"))
+    try:
+        return json.loads(META_PATH.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}  # a torn write must not crash callers — it rebuilds on next sync
 
 
 def _save_meta(meta: dict[str, Any]) -> None:
     HF_DIR.mkdir(parents=True, exist_ok=True)
-    META_PATH.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    tmp = META_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    os.replace(tmp, META_PATH)
 
 
 def _parse_sentiment_result(raw: Any) -> dict[str, Any]:
@@ -341,7 +347,9 @@ def upload_dataset_to_hub() -> dict[str, Any]:
         try:
             from huggingface_hub import HfApi
         except ImportError as exc:
-            results.append({"ok": False, "message": "pip install huggingface-hub", "detail": str(exc)})
+            results.append(
+                {"ok": False, "message": "pip install huggingface-hub", "detail": str(exc)}
+            )
         else:
             api = HfApi(token=token)
             api.create_repo(repo_id=repo, repo_type="dataset", exist_ok=True, private=True)
@@ -387,7 +395,8 @@ def update_hf_learning() -> dict[str, Any]:
     meta = _load_meta()
 
     status: dict[str, Any] = {
-        "enabled": bool(token) or os.getenv("HF_USE_LOCAL", "").strip().lower() in {"1", "true", "yes"},
+        "enabled": bool(token)
+        or os.getenv("HF_USE_LOCAL", "").strip().lower() in {"1", "true", "yes"},
         "token_configured": bool(token),
         "model": model_id,
         "dataset_rows": dataset["rows"],

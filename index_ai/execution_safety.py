@@ -10,7 +10,7 @@ from typing import Any
 from index_ai.charges import estimate_trade_cost
 from index_ai.config import AppSettings
 from index_ai.strategies.credit_spread import CREDIT_ACTIONS, credit_spread_entry_ready, is_credit_action
-from index_ai.strategies.premium_sell import PREMIUM_SELL_ACTIONS, is_premium_sell_action, premium_sell_entry_ready
+from index_ai.strategies.premium_sell import is_premium_sell_action, premium_sell_entry_ready
 from index_ai.instruments import IndexInstrument, get_instrument
 from index_ai.learning import is_broker_filled_open, open_trades_for_mode
 from index_ai.risk import check_execution_gates, kill_switch_state
@@ -202,11 +202,17 @@ def validate_quantities(option: dict[str, Any], instrument: IndexInstrument) -> 
 
 
 def validate_credit_economics(option: dict[str, Any], action: str) -> SafetyCheck:
-    """Reject defined-risk credit entries with no usable premium or poor reward/risk.
+    """Structural sanity on a defined-risk credit entry: a positive net credit,
+    a defined maximum loss, and a reward/risk above a low floor
+    (``credit_min_reward_to_risk``, default 0.05) that only rejects inverted or
+    broken spreads.
 
-    Older/manual payloads may not contain risk metrics, so this gate only applies
-    when the option-structure builder has produced them. Live strategy plans
-    always include these values.
+    The *economic* decision — does the credit clear the round-trip cost — is
+    ``validate_cost_economics`` below, which uses the measured half-spread and
+    the real charge model. A directional credit spread is meant to win small and
+    often, so a flat reward/risk floor was fighting the strategy's own shape.
+
+    Older/manual payloads may not carry risk metrics; this gate then abstains.
     """
     if not is_credit_action(action):
         return SafetyCheck(True, "ok", "ok")
@@ -229,8 +235,8 @@ def validate_credit_economics(option: dict[str, Any], action: str) -> SafetyChec
         return SafetyCheck(
             False,
             (
-                f"Credit reward/risk {reward_to_risk:.2f} is below the "
-                f"{minimum:.2f} gate; skip this thin-premium spread."
+                f"Credit reward/risk {reward_to_risk:.2f} is below the structural "
+                f"floor {minimum:.2f} — inverted or broken spread."
             ),
             "credit_economics",
         )

@@ -1,0 +1,211 @@
+//@version=6
+// ===========================================================================
+//  NY-Session N-Break  —  BTC / ETH perpetuals, 5-min chart
+// ---------------------------------------------------------------------------
+//  Idea (discretionary model, mechanised):
+//   * Trade only crypto perps (apply on BINANCE:BTCUSDT.P and ETHUSDT.P), 5-min.
+//   * Only inside the New York session, expressed in IST -> 18:00–23:00 (~5h).
+//   * Bias filter: EMA25 + session-anchored VWAP.
+//   * ENTRY (no chasing): after price closes above BOTH lines, wait for the
+//     FIRST swing-high to form, a small retrace, then a RE-BREAK of that high
+//     (the "N" on closing basis) -> LONG. Mirror (inverted-N below both) -> SHORT.
+//   * After entry EMA/VWAP are irrelevant (used only for the setup).
+//   * EXIT: watch the 15-min structure — when it prints the OPPOSITE pattern
+//     (long: a 15-min swing-LOW gets broken = inverted-N) -> exit. Vice-versa.
+//  Apply the script to each symbol separately (TV strategies are per-symbol).
+// ===========================================================================
+strategy("NY N-Break · BTC/ETH Perp 5m", overlay = true,
+    initial_capital         = 10000,
+    default_qty_type        = strategy.percent_of_equity,
+    default_qty_value       = 100,
+    commission_type         = strategy.commission.percent,
+    commission_value        = 0.05,
+    process_orders_on_close = true,
+    calc_on_every_tick      = true,
+    max_lines_count         = 500,
+    max_labels_count        = 500)
+
+
+// ─────────────────────────── Inputs ───────────────────────────
+gS = "Session (New York, in IST)"
+tradeAllDay= input.bool(false, "Trade the WHOLE day (ignore the session window)", group = gS,
+    tooltip = "OFF = entries only inside the window below (6–11pm IST). ON = entries allowed 24h; setup levels & trade counter reset each new day instead of each session.")
+sess       = input.session("1800-2300", "Entry window (used when 'whole day' is OFF)", group = gS)
+tzInp      = input.string("Asia/Kolkata", "Timezone", options = ["Asia/Kolkata","America/New_York","UTC"], group = gS)
+closeAtEnd = input.bool(true, "Force-close leftover position at session end (window mode only)", group = gS)
+
+
+gI = "Bias filter (5-min)"
+emaLen = input.int(25, "EMA length", 1, 500, group = gI)
+vwapAnchor = input.string("Daily open (00:00 UTC / BTC day)", "VWAP anchor",
+    options = ["Daily open (00:00 UTC / BTC day)", "NY session start"], group = gI,
+    tooltip = "Daily open = VWAP builds from the BTC day open (morning, 00:00 UTC ≈ 05:30 IST), so by the NY session it already reflects the whole day. Session = VWAP resets at 18:00 IST.")
+
+
+gE = "Entry structure (5-min · closing basis)"
+pvL       = input.int(5, "Swing left bars",  1, 50, group = gE)
+pvR       = input.int(2, "Swing right bars (retrace confirm)", 1, 50, group = gE)
+allowLong = input.bool(true,  "Longs",  inline = "d", group = gE)
+allowShort= input.bool(true,  "Shorts", inline = "d", group = gE)
+maxTrades = input.int(3, "Max trades per session", 1, 20, group = gE)
+
+
+gX = "Exit structure (higher-TF · opposite N)"
+exitTF = input.timeframe("15", "Exit timeframe", group = gX)
+xL     = input.int(5, "Exit swing left",  1, 50, group = gX)
+xR     = input.int(2, "Exit swing right", 1, 50, group = gX)
+
+
+gR = "Optional risk"
+slPerc = input.float(0.0, "Hard stop-loss % (0 = off)", 0, 50, step = 0.1, group = gR)
+
+
+// ─────────────────────────── Session ──────────────────────────
+inSess  = not na(time(timeframe.period, sess, tzInp))
+newSess = inSess and not inSess[1]
+sessEnd = not inSess and inSess[1]
+
+
+// When "whole day" is ON, entries are allowed 24h and state resets each new day.
+tradeWindow = tradeAllDay or inSess
+resetEvt    = tradeAllDay ? timeframe.change("1D") : newSess
+
+
+var int tradesThisSess = 0
+if resetEvt
+    tradesThisSess := 0
+
+
+// ────────────────────── Bias filter (5-min) ───────────────────
+emaV  = ta.ema(close, emaLen)
+// Default: anchor VWAP to the BTC daily open (00:00 UTC ≈ 05:30 IST morning) so it
+// carries the whole day into the NY session. Toggle to session-anchored if preferred.
+vwapAnchorEvt = vwapAnchor == "NY session start" ? newSess : timeframe.change("1D")
+vwapV = ta.vwap(hlc3, vwapAnchorEvt)
+aboveBoth = close > emaV and close > vwapV
+belowBoth = close < emaV and close < vwapV
+
+
+// ─────────────── Entry structure: N-pattern on closes ─────────────
+// Swing points on CLOSE (line-chart / closing basis, like the discretionary model).
+phC = ta.pivothigh(close, pvL, pvR)
+plC = ta.pivotlow(close,  pvL, pvR)
+
+
+var float longLvl  = na   // last swing-high made while ABOVE both -> re-break = LONG
+var float shortLvl = na   // last swing-low  made while BELOW both -> re-break = SHORT
+if resetEvt
+    longLvl  := na
+    shortLvl := na
+if not na(phC) and aboveBoth[pvR]
+    longLvl  := phC
+if not na(plC) and belowBoth[pvR]
+    shortLvl := plC
+
+
+canEnter = tradeWindow and strategy.position_size == 0 and tradesThisSess < maxTrades
+goLong  = canEnter and allowLong  and not na(longLvl)  and ta.crossover(close, longLvl)
+goShort = canEnter and allowShort and not na(shortLvl) and ta.crossunder(close, shortLvl)
+
+
+// ───────────── Exit structure: opposite N on the 15-min ────────────
+// Computed natively on the higher-TF series; confirmed pivots + lookahead_off.
+f_break() =>
+    ph = ta.pivothigh(close, xL, xR)
+    pl = ta.pivotlow(close,  xL, xR)
+    var float sh = na
+    var float sl = na
+    sh := not na(ph) ? ph : sh
+    sl := not na(pl) ? pl : sl
+    exLong  = not na(sl) and ta.crossunder(close, sl)   // inverted-N low break -> exit long
+    exShort = not na(sh) and ta.crossover(close, sh)     // N high break      -> exit short
+    [exLong, exShort]
+
+
+[exitLongSig, exitShortSig] = request.security(syminfo.tickerid, exitTF, f_break(), lookahead = barmerge.lookahead_off)
+
+
+// ─────────────────────────── Orders ───────────────────────────
+if goLong
+    strategy.entry("Long", strategy.long)
+    tradesThisSess += 1
+    longLvl := na                       // consume the level; next trade needs a fresh N
+if goShort
+    strategy.entry("Short", strategy.short)
+    tradesThisSess += 1
+    shortLvl := na
+
+
+if strategy.position_size > 0 and exitLongSig
+    strategy.close("Long", comment = "15m inv-N")
+if strategy.position_size < 0 and exitShortSig
+    strategy.close("Short", comment = "15m N")
+
+
+if slPerc > 0 and strategy.position_size != 0
+    ep = strategy.position_avg_price
+    strategy.exit("SL", stop = strategy.position_size > 0 ? ep * (1 - slPerc/100) : ep * (1 + slPerc/100))
+
+
+if closeAtEnd and not tradeAllDay and sessEnd and strategy.position_size != 0
+    strategy.close_all(comment = "session end")
+
+
+// ─────────────────────────── Visuals ──────────────────────────
+plot(emaV,  "EMA25", color = color.orange, linewidth = 2)
+plot(vwapV, "VWAP",  color = color.blue,   linewidth = 2)
+bgcolor(inSess ? color.new(color.teal, 92) : na, title = "NY session")
+// setup levels only shown while FLAT — once a trade is running the chart stays clean
+plot(strategy.position_size == 0 ? longLvl  : na, "Long trigger",  color = color.new(color.green, 0), style = plot.style_linebr)
+plot(strategy.position_size == 0 ? shortLvl : na, "Short trigger", color = color.new(color.red,   0), style = plot.style_linebr)
+plotshape(goLong,  "LONG",  shape.triangleup,   location.belowbar, color.green, size = size.small)
+plotshape(goShort, "SHORT", shape.triangledown, location.abovebar, color.red,   size = size.small)
+
+
+// ─────────────────────────── Alerts ───────────────────────────
+alertcondition(goLong,  "N-break LONG",  "LONG {{ticker}} @ {{close}}")
+alertcondition(goShort, "N-break SHORT", "SHORT {{ticker}} @ {{close}}")
+
+
+// ───────────────── Info dashboard (right side, beginner-friendly) ─────────────────
+showPanel = input.bool(true, "Show info box", group = "Display")
+var table dash = table.new(position.middle_right, 2, 8, border_width = 1,
+    frame_width = 2, frame_color = color.new(color.gray, 40), border_color = color.new(color.gray, 70))
+
+
+if showPanel and barstate.islast
+    pos     = strategy.position_size
+    inTrade = pos != 0
+    entryP  = strategy.position_avg_price
+    pnlPts  = inTrade ? (close - entryP) * (pos > 0 ? 1 : -1) : na
+    pnlPct  = inTrade ? pnlPts / entryP * 100 : na
+    pnlCur  = strategy.openprofit
+    exitNow = (pos > 0 and exitLongSig) or (pos < 0 and exitShortSig)
+    armed   = not na(longLvl) or not na(shortLvl)
+    hdrCol  = pos > 0 ? color.new(color.green, 0) : pos < 0 ? color.new(color.red, 0) : color.new(color.gray, 20)
+    sideTxt = pos > 0 ? "LONG  ▲ (running)" : pos < 0 ? "SHORT  ▼ (running)" : "FLAT — no trade"
+    pnlCol  = na(pnlPts) ? color.gray : pnlPts >= 0 ? color.green : color.red
+    exitTxt = not inTrade ? "—" : exitNow ? "⚠ YES — close it" : "not yet · keep holding"
+    exitCol = not inTrade ? color.new(color.gray, 30) : exitNow ? color.new(color.orange, 0) : color.new(color.gray, 30)
+    action  = not inTrade ? (not tradeWindow ? "Session OFF — do nothing" : armed ? "WAIT for the N-break" : "No setup yet — wait") : exitNow ? "EXIT the trade NOW" : "HOLD — trade is running"
+    actCol  = not inTrade ? color.new(color.gray, 20) : exitNow ? color.new(color.red, 0) : color.new(color.green, 0)
+
+
+    labBg = color.new(#0e1525, 0)       // dark panel bg for labels
+    valBg = color.new(#1b2436, 0)       // slightly lighter for values
+    table.cell(dash, 0, 0, "NY N-BREAK", text_color = color.white, bgcolor = hdrCol, text_size = size.normal)
+    table.cell(dash, 1, 0, sideTxt,       text_color = color.white, bgcolor = hdrCol, text_size = size.normal)
+    table.cell(dash, 0, 1, "Entry price", text_color = color.gray, bgcolor = labBg, text_size = size.small)
+    table.cell(dash, 1, 1, inTrade ? str.tostring(entryP, format.mintick) : "—", text_color = color.white, bgcolor = valBg, text_size = size.small)
+    table.cell(dash, 0, 2, "Price now",   text_color = color.gray, bgcolor = labBg, text_size = size.small)
+    table.cell(dash, 1, 2, str.tostring(close, format.mintick), text_color = color.white, bgcolor = valBg, text_size = size.small)
+    table.cell(dash, 0, 3, "P&L (points)", text_color = color.gray, bgcolor = labBg, text_size = size.small)
+    table.cell(dash, 1, 3, inTrade ? str.tostring(pnlPts, format.mintick) + "  (" + str.tostring(pnlPct, "#.##") + "%)" : "—", text_color = pnlCol, bgcolor = valBg, text_size = size.small)
+    table.cell(dash, 0, 4, "P&L (cash)",  text_color = color.gray, bgcolor = labBg, text_size = size.small)
+    table.cell(dash, 1, 4, inTrade ? str.tostring(pnlCur, "#.##") : "—", text_color = pnlCol, bgcolor = valBg, text_size = size.small)
+    table.cell(dash, 0, 5, "15m exit signal?", text_color = color.gray, bgcolor = labBg, text_size = size.small)
+    table.cell(dash, 1, 5, exitTxt, text_color = color.white, bgcolor = exitCol, text_size = size.small)
+    table.cell(dash, 0, 6, "Trades this session", text_color = color.gray, bgcolor = labBg, text_size = size.small)
+    table.cell(dash, 1, 6, str.tostring(tradesThisSess) + " / " + str.tostring(maxTrades), text_color = color.white, bgcolor = valBg, text_size = size.small)
+    table.cell(dash, 0, 7, "WHAT TO DO", text_color = color.white, bgcolor = color.new(color.blue, 20), text_size = size.small)
+    table.cell(dash, 1, 7, action, text_color = color.white, bgcolor = actCol, text_size = size.small)

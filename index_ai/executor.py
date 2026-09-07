@@ -29,7 +29,9 @@ class ExecutionPlan:
     signal: dict[str, Any]
 
 
-def _min_confidence_gate(signal_action: str, app_settings: AppSettings, learned: dict[str, Any]) -> float:
+def _min_confidence_gate(
+    signal_action: str, app_settings: AppSettings, learned: dict[str, Any]
+) -> float:
     """Buy setups use learned gate; credit spreads use CPR credit floor (not buy-tuned learning)."""
     from index_ai.pre_open_brief import entry_confidence_bump
 
@@ -57,7 +59,9 @@ def build_execution_plan(
     signal_action = str(signal.action)
     min_conf = _min_confidence_gate(signal_action, app_settings, learned)
     if option is None:
-        return ExecutionPlan(False, app_settings.risk.trading_mode, "No option selected.", option, signal.to_dict())
+        return ExecutionPlan(
+            False, app_settings.risk.trading_mode, "No option selected.", option, signal.to_dict()
+        )
     tx = str(option.get("transaction_type") or "BUY").upper()
     ok, reason = check_execution_gates(
         risk=app_settings.risk,
@@ -68,12 +72,16 @@ def build_execution_plan(
         strategy_mode=str(signal.strategy_mode or ""),
     )
     if not ok:
-        mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        mode = (
+            "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        )
         return ExecutionPlan(False, mode, reason, option, signal.to_dict())
 
     loss_guard = loss_guard_for_setup(instrument.key, signal_action)
     if loss_guard.get("blocked"):
-        mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        mode = (
+            "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        )
         guarded_signal = {
             **signal.to_dict(),
             "loss_guard": loss_guard,
@@ -88,7 +96,9 @@ def build_execution_plan(
         min_confidence=min_conf,
     )
     if not safety.ok:
-        mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        mode = (
+            "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        )
         return ExecutionPlan(False, mode, safety.reason, option, signal.to_dict())
 
     scoring_signal = {**signal.to_dict(), "signal_time": now_ist_iso()}
@@ -98,9 +108,21 @@ def build_execution_plan(
             float(learned.get("ml_min_win_prob") or 0.0),
             float(ml.get("min_win_prob_gate") or 0.52),
         )
+        # Per-lane bounds on the model's win-prob gate. Sell setups sit in a
+        # band (a credit spread is meant to win small and often, so the gate
+        # should not chase 70%+); buy setups only need a floor.
+        _sp = get_strategy_params()
+        if signal_action in CREDIT_ACTIONS or is_premium_sell_action(signal_action):
+            gate = min(max(gate, _sp.ml_gate_sell_min), _sp.ml_gate_sell_max)
+        else:
+            gate = max(gate, _sp.ml_gate_buy_min)
         win_p = float(ml["win_probability"])
         if bool(ml.get("gate_active")) and win_p < gate:
-            mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+            mode = (
+                "LIVE"
+                if app_settings.risk.trading_mode == "LIVE"
+                else app_settings.risk.trading_mode
+            )
             return ExecutionPlan(
                 False,
                 mode,
@@ -127,7 +149,9 @@ def build_execution_plan(
 
     hf = score_setup_hf(signal.to_dict(), option, instrument.key)
     if hf.get("ready") and hf.get("block_setup"):
-        mode = "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        mode = (
+            "LIVE" if app_settings.risk.trading_mode == "LIVE" else app_settings.risk.trading_mode
+        )
         return ExecutionPlan(
             False,
             mode,
@@ -170,7 +194,12 @@ def execute_plan(
         min_confidence=min_conf,
     )
     if not safety.ok:
-        return {"status": "BLOCKED", "reason": safety.reason, "safety_code": safety.code, "plan": plan.__dict__}
+        return {
+            "status": "BLOCKED",
+            "reason": safety.reason,
+            "safety_code": safety.code,
+            "plan": plan.__dict__,
+        }
 
     instrument_key = str(plan.option.get("instrument") or inst.key)
     lock = acquire_execution_lock(instrument_key)
@@ -186,10 +215,19 @@ def execute_plan(
             min_confidence=min_conf,
         )
         if not safety.ok:
-            return {"status": "BLOCKED", "reason": safety.reason, "safety_code": safety.code, "plan": plan.__dict__}
+            return {
+                "status": "BLOCKED",
+                "reason": safety.reason,
+                "safety_code": safety.code,
+                "plan": plan.__dict__,
+            }
 
         if trade_mode == "LIVE":
-            from index_ai.dhan_orders import attach_broker_orders, live_orders_enabled, place_live_entry_orders
+            from index_ai.dhan_orders import (
+                attach_broker_orders,
+                live_orders_enabled,
+                place_live_entry_orders,
+            )
 
             if not live_orders_enabled(fresh):
                 return {
@@ -210,16 +248,18 @@ def execute_plan(
             except Exception as exc:
                 return {"status": "LIVE_FAILED", "reason": str(exc), "plan": plan.__dict__}
 
-        option_payload = attach_broker_orders(dict(plan.option), broker_response) if broker_response else dict(plan.option)
+        option_payload = (
+            attach_broker_orders(dict(plan.option), broker_response)
+            if broker_response
+            else dict(plan.option)
+        )
         for leg in option_payload.get("legs") or []:
             if leg.get("ltp") is not None and leg.get("entry_ltp") is None:
                 leg["entry_ltp"] = leg["ltp"]
         if option_payload.get("ltp") is not None and option_payload.get("entry_ltp") is None:
             option_payload["entry_ltp"] = option_payload["ltp"]
         option_payload.setdefault("signal_time", now_ist_iso())
-        option_payload["ml_features"] = extract_features(
-            plan.signal, option_payload, inst.key
-        )
+        option_payload["ml_features"] = extract_features(plan.signal, option_payload, inst.key)
         ml_snap = score_trade_setup(plan.signal, option_payload, inst.key)
         if ml_snap.get("win_probability") is not None:
             option_payload["ml_win_probability"] = ml_snap["win_probability"]
@@ -262,6 +302,18 @@ def execute_plan(
             signal=plan.signal,
             status=status,
         )
+        if "REJECT" not in status.upper():
+            try:
+                from index_ai.notify import trade_opened
+
+                trade_opened(
+                    instrument=str(plan.option["instrument"]),
+                    action=str(plan.signal["action"]),
+                    mode=trade_mode,
+                    option=option_payload,
+                )
+            except Exception:
+                pass
         return {
             "status": status,
             "trade_id": trade_id,

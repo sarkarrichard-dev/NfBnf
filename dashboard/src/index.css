@@ -1,45 +1,72 @@
 @import "tailwindcss";
 
+/* Fresh look: flat near-black surface, hairline cards, single blue accent.
+   The old neon-cyan theme is remapped onto a neutral slate ramp so every
+   `*-cyan-*` / `*-violet-*` utility already in the components reads as clean
+   grey without touching those files. */
+@theme {
+  --color-cyan-50: #f8fafc;
+  --color-cyan-100: #f1f5f9;
+  --color-cyan-200: #e2e8f0;
+  --color-cyan-300: #cbd5e1;
+  --color-cyan-400: #94a3b8;
+  --color-cyan-500: #64748b;
+  --color-cyan-600: #475569;
+  --color-cyan-700: #334155;
+  --color-cyan-800: #1e293b;
+  --color-cyan-900: #0f172a;
+  --color-cyan-950: #020617;
+
+  --color-violet-50: #f8fafc;
+  --color-violet-100: #f1f5f9;
+  --color-violet-200: #e2e8f0;
+  --color-violet-300: #cbd5e1;
+  --color-violet-400: #94a3b8;
+  --color-violet-500: #64748b;
+  --color-violet-600: #475569;
+  --color-violet-700: #334155;
+  --color-violet-800: #1e293b;
+  --color-violet-900: #0f172a;
+  --color-violet-950: #020617;
+}
+
 :root {
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  --fx-bg: #050810;
-  --fx-cyan: rgba(34, 211, 238, 0.45);
-  --fx-violet: rgba(139, 92, 246, 0.35);
+
+  /* One accent, real saturation. Semantic pair for money (up/down) plus an
+     "armed" red that only appears when live orders are enabled. */
+  --acc: #22d3ee;
+  --acc-strong: #06b6d4;
+  --acc-ink: #06212a;
+  --up: #34d399;
+  --down: #fb7185;
+  --warn: #fbbf24;
+  --armed: #fb3d5b;
+  --panel: #111621;
+  --panel-hi: rgba(255, 255, 255, 0.055);
+  --hair: rgba(255, 255, 255, 0.09);
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  color: #e8f4ff;
-  background-color: var(--fx-bg);
+  color: #e8ebf0;
+  background-color: #0a0d14;
+  /* Two soft light sources instead of one barely-there wash — gives the near-black
+     ground some depth without turning it into a gradient. */
   background-image:
-    radial-gradient(ellipse 90% 55% at 50% -25%, rgba(34, 211, 238, 0.14), transparent 55%),
-    radial-gradient(ellipse 55% 45% at 100% 0%, rgba(139, 92, 246, 0.1), transparent 50%),
-    radial-gradient(ellipse 45% 35% at 0% 100%, rgba(16, 185, 129, 0.07), transparent 45%),
-    linear-gradient(180deg, #060a12 0%, #050810 40%, #030508 100%);
+    radial-gradient(ellipse 50% 38% at 18% -8%, rgba(34, 211, 238, 0.13), transparent 62%),
+    radial-gradient(ellipse 45% 34% at 88% -6%, rgba(129, 140, 248, 0.1), transparent 60%);
   background-attachment: fixed;
 }
 
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.35;
-  background-image:
-    linear-gradient(rgba(34, 211, 238, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(34, 211, 238, 0.03) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 80% 70% at 50% 30%, black 20%, transparent 75%);
+::selection {
+  background: rgba(34, 211, 238, 0.32);
+  color: #fff;
 }
 
 #root {
   min-height: 100vh;
   position: relative;
   z-index: 0;
-}
-
-::selection {
-  background: rgba(34, 211, 238, 0.25);
-  color: #fff;
 }

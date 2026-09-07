@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { pctRate } from '../lib/pnl'
+import { Button } from './ui/Button'
 
 export function LearningPanel() {
   const qc = useQueryClient()
@@ -48,27 +49,21 @@ export function LearningPanel() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
+        <Button
           onClick={() => optimize.mutate()}
-          className="rounded border border-slate-700 px-3 py-1.5 text-xs text-slate-300"
         >
           Optimize from OI
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
           onClick={() => retrain.mutate()}
-          className="rounded border border-slate-700 px-3 py-1.5 text-xs text-slate-300"
         >
           Retrain ML
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
           onClick={() => hfSync.mutate()}
-          className="rounded border border-slate-700 px-3 py-1.5 text-xs text-slate-300"
         >
           Sync HF dataset
-        </button>
+        </Button>
       </div>
 
       <p className="text-sm text-slate-400">

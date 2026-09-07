@@ -12,9 +12,39 @@ from index_ai.instruments import configured_index_keys, get_instrument
 from index_ai.options_oi import analyze_option_chain
 from index_ai.options_expiry import pick_nearest_expiry
 from index_ai.plan_builder import build_opportunity
+from index_ai.strategies.candlestick_sr import intraday_candle_trend
+from index_ai.strategies.pivot_points import classic_pivot_levels
 from index_ai.strategies.strategy_router import evaluate_dual_opportunities
 
 INDEX_KEYS = configured_index_keys()
+
+_BULLISH = {"BUY_CALL", "SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"}
+_BEARISH = {"BUY_PUT", "SELL_BEAR_CALL_SPREAD", "SELL_ATM_CALL"}
+
+
+def _pivot_target(
+    previous_day, cpr_regime, action: str, spot: float
+) -> tuple[float | None, str | None]:
+    """Nearest prior-session pivot / CPR level in the trade's favour — a
+    take-profit *reference* that arms the premium trail early, never a stop."""
+    a = str(action or "").upper()
+    if spot <= 0 or not (a in _BULLISH or a in _BEARISH):
+        return None, None
+    try:
+        pp, r1, s1, _ = classic_pivot_levels(previous_day)
+    except Exception:
+        return None, None
+    levels = {"PP": pp, "R1": r1, "S1": s1, "TC": cpr_regime.tc, "BC": cpr_regime.bc}
+    if a in _BULLISH:
+        favour = [(v, k) for k, v in levels.items() if v > spot]
+        pick = min(favour) if favour else None
+    else:
+        favour = [(v, k) for k, v in levels.items() if v < spot]
+        pick = max(favour) if favour else None
+    if not pick:
+        return None, None
+    v, k = pick
+    return round(v, 2), f"{k} {v:,.0f}"
 
 
 def plan_instrument(
@@ -58,6 +88,21 @@ def plan_instrument(
     )
     signal = dual.primary
     cpr_regime = dual.regime
+
+    today_session, prev_session = latest_two_sessions(candles)
+    regime_read: dict[str, Any] | None = None
+    try:
+        from index_ai.brain.regime import classify
+
+        regime_read = classify(
+            today_session, prev_session, cpr_width_pct=cpr_regime.width_pct
+        ).to_dict()
+    except Exception:
+        regime_read = None
+    try:
+        intraday_trend = intraday_candle_trend(today_session, lookback=15)
+    except Exception:
+        intraday_trend = "RANGE"
 
     oi_context: dict[str, Any] | None = None
     oi_fetch_error: str | None = None
@@ -103,6 +148,27 @@ def plan_instrument(
         lane="sell",
     )
 
+    open_range_pct = (regime_read or {}).get("open_range_pct")
+    for opp in (buy_opp, sell_opp):
+        if not opp:
+            continue
+        sig = opp.get("signal")
+        if isinstance(sig, dict):
+            sig["intraday_trend"] = intraday_trend
+            if open_range_pct is not None:
+                sig["open_range_pct"] = open_range_pct
+        if not opp.get("option"):
+            continue
+        tgt, label = _pivot_target(
+            previous,
+            cpr_regime,
+            str((sig or {}).get("action") or ""),
+            float((sig or {}).get("price") or 0),
+        )
+        if tgt is not None:
+            opp["option"]["pivot_target"] = tgt
+            opp["option"]["pivot_target_label"] = label
+
     opportunities: list[dict[str, Any]] = []
     for opp in (buy_opp, sell_opp):
         if opp and opp.get("plan", {}).get("allowed"):
@@ -124,7 +190,6 @@ def plan_instrument(
             capital = opp.get("capital_required")
             break
 
-    today_session, _ = latest_two_sessions(candles)
     from index_ai.session_snapshot import spot_session_metrics
 
     spot_session = spot_session_metrics(
@@ -142,6 +207,8 @@ def plan_instrument(
         "sell_opportunity": sell_opp,
         "opportunities": opportunities,
         "cpr_regime": cpr_regime.to_dict(),
+        "regime_read": regime_read,
+        "intraday_trend": intraday_trend,
         "oi": oi_context,
         "oi_fetch_error": oi_fetch_error,
         "expiry": expiry,

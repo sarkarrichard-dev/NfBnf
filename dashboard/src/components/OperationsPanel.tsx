@@ -1,8 +1,10 @@
+import { memo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
+import { Button } from './ui/Button'
 
 type OpsItem = { code?: string; title?: string; detail?: string }
 
@@ -43,7 +45,7 @@ function formatEvent(e: Record<string, unknown>): string {
   return parts.filter(Boolean).join(' · ')
 }
 
-export function OperationsPanel() {
+export const OperationsPanel = memo(function OperationsPanel() {
   const qc = useQueryClient()
   const poll = usePollMs(2_000)
 
@@ -132,27 +134,31 @@ export function OperationsPanel() {
       </p>
 
       <div className="mb-3 flex flex-wrap gap-2">
-        {['NIFTY', 'BANKNIFTY'].map((inst) => (
-          <button
+        {['NIFTY', 'BANKNIFTY', 'SENSEX'].map((inst) => (
+          <Button
             key={inst}
-            type="button"
-            disabled={probe.isPending}
+            pending={probe.isPending}
             onClick={() => probe.mutate(inst)}
-            className="rounded border border-cyan-500/30 px-2.5 py-1 text-xs text-cyan-100 hover:bg-cyan-500/10"
           >
             Test signal · {inst}
-          </button>
+          </Button>
         ))}
-        <button
-          type="button"
+        <Button
           onClick={() => {
-            void qc.invalidateQueries({ queryKey: ['ops-status'] })
-            void qc.invalidateQueries({ queryKey: ['auto-status'] })
+            for (const key of [
+              'ops-status',
+              'auto-status',
+              'status',
+              'analytics',
+              'journal',
+              'live-mtm',
+            ]) {
+              void qc.invalidateQueries({ queryKey: [key] })
+            }
           }}
-          className="rounded border border-slate-600 px-2.5 py-1 text-xs text-slate-300"
         >
           Refresh
-        </button>
+        </Button>
       </div>
 
       {probe.data ? (
@@ -180,4 +186,4 @@ export function OperationsPanel() {
       </details>
     </section>
   )
-}
+})

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import os
 from collections import deque
 from dataclasses import dataclass, field
@@ -38,13 +39,18 @@ from index_ai.position_exits import (
     is_intraday_stale_open,
     strategy_exit_reason,
 )
+from index_ai.scan_health import DEFAULT_TIMEOUT, ScanHealth, gather_limited, run_stage
 from index_ai.trailing import evaluate_open_trade
 
 _log_py = logging.getLogger(__name__)
+_health = ScanHealth()
 
 SCAN_INTERVAL_SECONDS = 90
 COOLDOWN_MINUTES = 20
 INDEX_SCAN_GAP_SECONDS = 5
+# Indices scanned concurrently. Dhan rate-limits per second, so keep this small;
+# 2-3 covers the configured universe in one round instead of N serial rounds.
+INDEX_SCAN_CONCURRENCY = int(os.getenv("INDEX_SCAN_CONCURRENCY", "2"))
 TRAIL_INDEX_GAP_SECONDS = 0.8
 BOOT_AUTO_START_DELAY_SECONDS = 1.5
 
@@ -71,6 +77,11 @@ class ScannerState:
     executions: int = 0
     pre_open_brief_date: str | None = None
     pre_open_brief: dict[str, Any] | None = None
+    pre_open_alert_date: str | None = None
+    last_reconcile: dict[str, Any] | None = None
+    market_context: dict[str, Any] | None = None
+    last_spread_sample: dict[str, Any] | None = None
+    last_eod: dict[str, Any] | None = None
     events: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=80))
 
 
@@ -84,6 +95,12 @@ def _friendly_error(exc: BaseException) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return explain_dhan_http_error(exc.response, "Dhan")
     return str(exc)
+
+
+def _without_event(payload: dict[str, Any]) -> dict[str, Any]:
+    """A paper lane's event dict minus its own 'event' key — that key collides
+    with _log's first positional parameter and raises TypeError on **splat."""
+    return {k: v for k, v in payload.items() if k != "event"}
 
 
 def _log(event: str, **fields: Any) -> None:
@@ -121,6 +138,12 @@ def scanner_status() -> dict[str, Any]:
         "pre_open_brief": _state.pre_open_brief,
         "pre_open_brief_date": _state.pre_open_brief_date,
         "market": mkt,
+        "health": _health.as_dict(),
+        "index_scan_concurrency": INDEX_SCAN_CONCURRENCY,
+        "last_reconcile": _state.last_reconcile,
+        "market_context": _state.market_context,
+        "last_spread_sample": _state.last_spread_sample,
+        "last_eod": _state.last_eod,
         "events": list(_state.events),
     }
 
@@ -273,6 +296,85 @@ async def _apply_strategy_exits_for_index(
         await asyncio.sleep(TRAIL_INDEX_GAP_SECONDS)
 
 
+async def _run_futures_paper(client: DhanClient) -> None:
+    """Directional index-futures paper strategy — separate from the options path."""
+    try:
+        from index_ai.strategies.futures.paper import enabled, scan_futures_paper
+
+        if not enabled():
+            return
+        events = await asyncio.to_thread(scan_futures_paper, client)
+        for e in events:
+            if e.get("event") in {"entry", "exit"}:
+                # the lane's own dict carries an "event" key — passing it through
+                # as **kwargs collides with _log's first parameter (TypeError)
+                _log("futures_paper", kind=e.get("event"), **_without_event(e))
+    except Exception as exc:  # never let this break the options scanner
+        _note_auth_failure(exc)
+        _log("futures_paper_error", error=_friendly_error(exc))
+
+
+async def _run_options_cpr_paper(client: DhanClient) -> None:
+    """CPR + EMA option-buying paper strategy — separate from the options-sell path."""
+    try:
+        from index_ai.strategies.options_cpr.paper import enabled, scan_options_cpr_paper
+
+        if not enabled():
+            return
+        events = await asyncio.to_thread(scan_options_cpr_paper, client)
+        for e in events:
+            if e.get("event") in {"entry", "exit", "partial"}:
+                _log("options_cpr_paper", kind=e.get("event"), **_without_event(e))
+    except Exception as exc:  # never let this break the options scanner
+        _note_auth_failure(exc)
+        _log("options_cpr_paper_error", error=_friendly_error(exc))
+
+
+async def _sample_spreads(client: DhanClient) -> None:
+    """Measure the live option book — runs whether or not any lane is trading."""
+    from index_ai.daily_ops import sample_spreads
+
+    out = await asyncio.to_thread(sample_spreads, client)
+    if out.get("sampled"):
+        _state.last_spread_sample = out
+
+
+async def _run_eod_if_due() -> None:
+    """After square-off, once a day: retrain the brain and write the session report."""
+    from index_ai.daily_ops import eod_due, run_eod
+
+    if not eod_due():
+        return
+    report = await asyncio.to_thread(run_eod)
+    _state.last_eod = {
+        "date": report.get("date"),
+        "brain_trained": bool((report.get("brain") or {}).get("trained")),
+    }
+    _log(
+        "eod_report",
+        date=report.get("date"),
+        brain=(report.get("brain") or {}).get("reason")
+        or ("trained" if (report.get("brain") or {}).get("trained") else "not trained"),
+    )
+
+
+async def _run_reconcile(client: DhanClient, cfg: AppSettings) -> None:
+    """Broker-vs-journal drift check. Read-only unless RECONCILE_AUTO_REPAIR."""
+    if cfg.risk.trading_mode != "LIVE":
+        return
+    from index_ai.reconcile import reconcile
+
+    result = await asyncio.to_thread(reconcile, client, mode="LIVE")
+    _state.last_reconcile = result
+    if result.get("issues"):
+        _log(
+            "reconcile_drift",
+            issues=len(result["issues"]),
+            kinds=sorted({i["kind"] for i in result["issues"]}),
+            repaired=len(result.get("repaired") or []),
+        )
+
+
 async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
     open_list = open_trades_for_mode(cfg.risk.trading_mode)
     prices = await _fetch_index_prices(client, open_list=open_list)
@@ -335,10 +437,34 @@ async def _square_off_open(client: DhanClient, cfg: AppSettings) -> None:
         await asyncio.sleep(TRAIL_INDEX_GAP_SECONDS)
 
 
+async def _run_market_context_if_due() -> None:
+    """From 09:00 IST — build the day's external context once per session.
+
+    Runs before the first entry (09:20) and needs no broker data, so it works in
+    the 09:00-09:15 auction window where there are no live candles yet: NSE
+    participant OI (prior session), India VIX, and the derived trading conditions.
+    """
+    from index_ai.market_context import context as mkt
+
+    cur = mkt.latest()
+    if cur and cur.get("session") == today_ist_date():
+        return
+    ctx = await asyncio.to_thread(mkt.build, refresh=True)
+    _state.market_context = ctx
+    _log(
+        "market_context",
+        sources=ctx.get("sources"),
+        notes=ctx.get("notes"),
+        blocks=(ctx.get("conditions") or {}).get("blocks"),
+    )
+
+
 async def _run_pre_open_brief_if_due(client: DhanClient, cfg: AppSettings) -> None:
-    """9:15–9:30 IST — refresh OI, spot volume, CPR, and EMA before first entry at 9:30."""
+    """9:00–9:20 IST — context, OI, spot volume, CPR and EMA before first entry at 9:20."""
     if not is_pre_open_analysis_window():
         return
+
+    await _run_market_context_if_due()
 
     from index_ai.pre_open_brief import build_pre_open_brief
 
@@ -351,6 +477,18 @@ async def _run_pre_open_brief_if_due(client: DhanClient, cfg: AppSettings) -> No
         confidence_bump=brief.get("confidence_bump"),
         notes=brief.get("notes"),
     )
+
+    # One Telegram pre-open read near 9:20, once the window's data has settled.
+    from datetime import time as _time
+
+    if now_ist().time() >= _time(9, 18) and _state.pre_open_alert_date != today_ist_date():
+        _state.pre_open_alert_date = today_ist_date()
+        try:
+            from index_ai.notify import pre_open
+
+            pre_open(brief)
+        except Exception:
+            pass
 
 
 async def _scan_index(
@@ -387,6 +525,7 @@ async def _scan_index(
         confidence=signal_data.get("confidence"),
         cpr_regime=cpr.get("day_bias"),
         cpr_width_class=cpr.get("width_class"),
+        regime=(result.get("regime_read") or {}).get("regime"),
         plan_allowed=plan_data.get("allowed"),
         plan_reason=plan_data.get("reason"),
     )
@@ -468,6 +607,32 @@ async def _scan_index(
             _log("skip_cooldown", instrument=instrument_key, action=opp_action, lane=lane)
             continue
 
+        regime_read = result.get("regime_read")
+        if lane == "sell":
+            from index_ai.entry_guard import check as _entry_guard
+
+            guard_block, guard_reason = _entry_guard(
+                instrument_key,
+                active_mode,
+                cpr,
+                lane=lane,
+                regime_read=regime_read,
+                intraday_trend=result.get("intraday_trend"),
+            )
+        else:
+            from index_ai.entry_guard import regime_blocks_lane
+
+            guard_block, guard_reason = regime_blocks_lane(regime_read, lane)
+        if guard_block:
+            _log(
+                "skip_entry_guard",
+                instrument=instrument_key,
+                action=opp_action,
+                lane=lane,
+                reason=guard_reason,
+            )
+            continue
+
         plan = ExecutionPlan(
             allowed=True,
             mode=str(opp_plan.get("mode") or cfg.risk.trading_mode),
@@ -515,7 +680,11 @@ async def _scan_index(
 
 async def _run_loop() -> None:
     global _state
-    _log("scanner_started", indices=list(configured_index_keys()), skipped=list(unconfigured_index_keys()))
+    _log(
+        "scanner_started",
+        indices=list(configured_index_keys()),
+        skipped=list(unconfigured_index_keys()),
+    )
     backoff = SCAN_INTERVAL_SECONDS
 
     while _state.running:
@@ -550,28 +719,76 @@ async def _run_loop() -> None:
         client = DhanClient(cfg.dhan)
         rate_limited = False
         entries_ok = is_trading_entries_allowed()
-        try:
-            if cfg.risk.trading_mode == "LIVE":
-                from index_ai.dhan_orders import sync_open_live_trades
+        cycle_started = time.monotonic()
 
-                synced = sync_open_live_trades(client)
-                if synced:
-                    _log("live_orders_synced", updated=synced)
-            await _run_pre_open_brief_if_due(client, cfg)
-            await _close_stale_session_positions(client, cfg)
-            await _check_trails(client, cfg)
+        def _stage_failed(name: str, exc: BaseException) -> None:
+            _note_auth_failure(exc)
+            _log("stage_error", stage=name, error=_friendly_error(exc))
+
+        async def _sync_live() -> None:
+            if cfg.risk.trading_mode != "LIVE":
+                return
+            from index_ai.dhan_orders import sync_open_live_trades
+
+            synced = await asyncio.to_thread(sync_open_live_trades, client)
+            if synced:
+                _log("live_orders_synced", updated=synced)
+
+        try:
+            # Stages are isolated: one failing step no longer aborts the cycle,
+            # so a flaky lane can't stop trailing stops from being checked.
+            # The paper lanes fetch an option chain + intraday history per
+            # index; under Dhan rate-limiting that can run past the 60s
+            # default and trip the breaker. Give them room.
+            _slow = {"options_cpr_paper": 150.0, "futures_paper": 150.0}
+            for name, factory in (
+                ("market_context", _run_market_context_if_due),
+                ("live_order_sync", _sync_live),
+                ("pre_open_brief", lambda: _run_pre_open_brief_if_due(client, cfg)),
+                ("stale_positions", lambda: _close_stale_session_positions(client, cfg)),
+                ("trails", lambda: _check_trails(client, cfg)),
+                ("futures_paper", lambda: _run_futures_paper(client)),
+                ("options_cpr_paper", lambda: _run_options_cpr_paper(client)),
+                ("reconcile", lambda: _run_reconcile(client, cfg)),
+                ("spread_sampling", lambda: _sample_spreads(client)),
+                ("eod_report", _run_eod_if_due),
+            ):
+                if not _state.running:
+                    break
+                await run_stage(
+                    _health,
+                    name,
+                    factory,
+                    timeout=_slow.get(name, DEFAULT_TIMEOUT),
+                    on_error=_stage_failed,
+                )
 
             if is_square_off_window():
-                await _square_off_open(client, cfg)
+                await run_stage(
+                    _health,
+                    "square_off",
+                    lambda: _square_off_open(client, cfg),
+                    on_error=_stage_failed,
+                )
             else:
-                for key in configured_index_keys():
-                    if not _state.running:
-                        break
-                    await _scan_index(client, cfg, key, allow_entries=entries_ok)
-                    await asyncio.sleep(INDEX_SCAN_GAP_SECONDS)
+                keys = [k for k in configured_index_keys()]
+                await run_stage(
+                    _health,
+                    "index_scans",
+                    lambda: gather_limited(
+                        [
+                            (lambda k=k: _scan_index(client, cfg, k, allow_entries=entries_ok))
+                            for k in keys
+                        ],
+                        limit=INDEX_SCAN_CONCURRENCY,
+                    ),
+                    timeout=SCAN_INTERVAL_SECONDS,
+                    on_error=_stage_failed,
+                )
 
             _state.cycles += 1
             _state.last_cycle_at = now_ist_iso()
+            _health.last_cycle_ms = (time.monotonic() - cycle_started) * 1000
             backoff = SCAN_INTERVAL_SECONDS
         except DhanRateLimitError as exc:
             rate_limited = True

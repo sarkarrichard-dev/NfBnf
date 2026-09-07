@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import threading
 import os
 from typing import Any
 
-from index_ai.instruments import IndexInstrument, instruments
+from index_ai.instruments import (
+    IndexInstrument,
+    configured_index_keys,
+    get_instrument,
+)
 from index_ai.learning import connect, now_utc
 from index_ai.risk_policy import HARDCODED_RISK
 
@@ -69,8 +74,17 @@ def set_lots_per_trade(lots: int) -> dict[str, Any]:
     return lots_settings_summary()
 
 
+# read-modify-write: two fast clicks on "+" both read the same value and the
+# second write discards the first, so the counter and the real lot size diverge.
+# On a trading system that means orders sized differently from what is displayed.
+_LOTS_LOCK = threading.Lock()
+
+
 def adjust_lots_per_trade(delta: int) -> dict[str, Any]:
-    return set_lots_per_trade(get_lots_per_trade() + int(delta))
+    """Relative change, serialized. Prefer set_lots_per_trade() from a UI — an
+    absolute target is idempotent and cannot drift from what the user sees."""
+    with _LOTS_LOCK:
+        return set_lots_per_trade(get_lots_per_trade() + int(delta))
 
 
 def order_quantity(instrument: IndexInstrument) -> int:
@@ -91,7 +105,8 @@ def stamp_option_quantities(option: dict[str, Any], instrument: IndexInstrument)
 def lots_settings_summary() -> dict[str, Any]:
     lots = get_lots_per_trade()
     per_index: dict[str, dict[str, int | str]] = {}
-    for key, inst in instruments().items():
+    for key in configured_index_keys():  # paused indices drop out of the UI qty line
+        inst = get_instrument(key)
         qty = int(inst.lot_size) * lots
         per_index[key] = {
             "units_per_lot": int(inst.lot_size),

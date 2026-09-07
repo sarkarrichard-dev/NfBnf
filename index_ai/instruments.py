@@ -126,11 +126,22 @@ def get_instrument(key: str) -> IndexInstrument:
     return lookup[normalized]
 
 
+def index_paused(key: str) -> bool:
+    """ENABLE_<KEY>=false in .env / feature toggles takes an index offline without
+    touching its security id. Default on. Currently only SENSEX is exposed."""
+    return os.getenv(f"ENABLE_{key.upper()}", "true").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
 def configured_index_keys() -> tuple[str, ...]:
     return tuple(
         key
         for key, inst in instruments().items()
-        if inst.underlying_security_id is not None
+        if inst.underlying_security_id is not None and not index_paused(key)
     )
 
 
@@ -138,5 +149,5 @@ def unconfigured_index_keys() -> tuple[str, ...]:
     return tuple(
         key
         for key, inst in instruments().items()
-        if inst.underlying_security_id is None
+        if inst.underlying_security_id is None or index_paused(key)
     )

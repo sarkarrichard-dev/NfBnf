@@ -10,7 +10,6 @@ Exits: Supertrend flip or session square-off (15:15 IST).
 
 from __future__ import annotations
 
-from typing import Any
 
 import pandas as pd
 

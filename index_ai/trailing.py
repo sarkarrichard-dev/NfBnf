@@ -215,7 +215,37 @@ def evaluate_open_trade(
     mtm = option.get("mtm_pnl")
     profit_hit = False
     profit_reason: str | None = None
-    if mtm is not None:
+
+    # Premium trail on the option price (NIFTY / BANKNIFTY buy lane): quarter-of-
+    # premium target, then a fixed bounce off the best. Replaces the rupee profit
+    # trail for those indices; the index trail + supertrend stay as backstops.
+    from index_ai.premium_trail import (
+        init_premium_trail,
+        premium_trail_enabled,
+        update_premium_trail,
+    )
+
+    pt_evaluated = False
+    if premium_trail_enabled(instrument_key):
+        entry_px = float(option.get("ltp") or 0)
+        cur_px = option.get("last_option_ltp")
+        if entry_px > 0 and cur_px is not None:
+            pt_evaluated = True
+            if "pt_entry" not in updated:
+                updated.update(init_premium_trail(entry_premium=entry_px, direction=1))
+            updated, pt_hit, pt_reason = update_premium_trail(
+                updated,
+                float(cur_px),
+                instrument_key,
+                index_price=current_index_price,
+                pivot_target=option.get("pivot_target"),
+            )
+            if pt_hit:
+                profit_hit, profit_reason = True, pt_reason
+
+    if not pt_evaluated and mtm is not None:
+        # legacy index (SENSEX) or a tick with no option quote — keep the rupee
+        # profit-giveback trail as the profit protection.
         from index_ai.profit_trail import evaluate_profit_trail
 
         updated, profit_hit, profit_reason = evaluate_profit_trail(updated, float(mtm))

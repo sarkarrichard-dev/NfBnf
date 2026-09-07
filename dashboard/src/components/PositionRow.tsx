@@ -1,6 +1,8 @@
-import { memo } from 'react'
+import { memo, useEffect } from 'react'
 import { cn } from '../lib/cn'
 import { formatPrice, legDisplayName, legPctChange, legPnlValue, money, pnlClass, signedQty } from '../lib/pnl'
+import { getSeries, pushPoint } from '../hooks/useSeries'
+import { Sparkline } from './Sparkline'
 import type { LogRow } from '../types/analytics'
 
 function PositionRowInner({ row }: { row: LogRow }) {
@@ -8,6 +10,12 @@ function PositionRowInner({ row }: { row: LogRow }) {
   const qty = signedQty(row)
   const pnl = legPnlValue(row)
   const pct = legPctChange(row)
+
+  const seriesKey = `pos:${row.trade_id}:${row.leg_index ?? 0}`
+  useEffect(() => {
+    pushPoint(seriesKey, pnl)
+  }, [seriesKey, pnl])
+  const trend = getSeries(seriesKey)
 
   return (
     <tr className="border-b border-slate-800/70 bg-emerald-500/[0.03] text-slate-200">
@@ -24,7 +32,12 @@ function PositionRowInner({ row }: { row: LogRow }) {
           {isBuy ? 'B' : 'S'}
         </span>
       </td>
-      <td className="max-w-xs px-3 py-2 text-slate-100">{legDisplayName(row)}</td>
+      <td className="max-w-xs px-3 py-2 text-slate-100">
+        <span>{legDisplayName(row)}</span>
+        {trend.length > 1 ? (
+          <Sparkline points={trend} width={64} height={12} className="mt-0.5 block" />
+        ) : null}
+      </td>
       <td className="px-3 py-2">
         <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300">
           {row.mode || '—'}

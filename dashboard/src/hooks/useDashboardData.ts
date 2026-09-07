@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import {
@@ -14,8 +14,8 @@ import type {
   LiveMtmResponse,
 } from '../types/analytics'
 
-const ANALYTICS_MS = 20_000
-const JOURNAL_MS = 10_000
+const ANALYTICS_MS = 12_000
+const JOURNAL_MS = 5_000
 const MTM_MS = 1_500
 
 export function useDashboardData() {
@@ -26,12 +26,14 @@ export function useDashboardData() {
     queryKey: ['analytics'],
     queryFn: () => api<AnalyticsResponse>('/api/analytics?enrich_mtm=false'),
     refetchInterval: analyticsPoll,
+    placeholderData: keepPreviousData,
   })
 
   const journalQuery = useQuery({
     queryKey: ['journal'],
     queryFn: () => api<JournalResponse>('/api/trades/recent?limit=80'),
     refetchInterval: journalPoll,
+    placeholderData: keepPreviousData,
   })
 
   const hasOpen = useMemo(() => {
@@ -46,6 +48,7 @@ export function useDashboardData() {
     queryFn: () => api<LiveMtmResponse>('/api/trades/live-mtm'),
     refetchInterval: mtmPoll,
     enabled: hasOpen,
+    placeholderData: keepPreviousData,
   })
 
   const trades = useMemo(() => {

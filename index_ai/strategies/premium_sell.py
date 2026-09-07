@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 PREMIUM_SELL_ACTIONS = frozenset(
     {
         "SELL_ATM_PUT",

@@ -21,12 +21,15 @@ def analyze_bar_volume(
     if frame is None or frame.empty or "volume" not in frame.columns:
         return {"ready": False, "ratio": 1.0}
 
-    vol = frame["volume"].astype(float)
+    # The live frame's last row is the bar still forming this minute — its volume
+    # is a fraction of a full bar (10-40s in when the scanner runs) and would fail
+    # any ratio gate. Confirm participation on the last *closed* bar instead.
+    vol = frame["volume"].astype(float).iloc[:-1]
     if len(vol) < 2:
         return {"ready": False, "ratio": 1.0}
 
     last = float(vol.iloc[-1])
-    prior = vol.iloc[-lookback - 1 : -1] if len(vol) > 1 else vol.iloc[:-1]
+    prior = vol.iloc[-lookback - 1 : -1]
     if prior.empty:
         return {"ready": False, "ratio": 1.0}
 

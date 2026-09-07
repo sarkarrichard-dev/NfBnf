@@ -4,29 +4,17 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime, time
+from datetime import datetime, time
 from typing import Any
 
 from index_ai.config import MEMORY_DIR
-from index_ai.market_clock import now_ist
+from index_ai.market_clock import now_ist, parse_time_env
 
 _STATE_PATH = MEMORY_DIR / "dhan_token_schedule.json"
 
 
-def _parse_time(name: str, default: time) -> time:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    for fmt in ("%H:%M", "%H:%M:%S"):
-        try:
-            return datetime.strptime(raw, fmt).time()
-        except ValueError:
-            continue
-    return default
-
-
 def daily_renew_time() -> time:
-    return _parse_time("DAILY_RENEW_IST", time(8, 0))
+    return parse_time_env("DAILY_RENEW_IST", time(8, 0))
 
 
 def renew_on_startup_enabled() -> bool:

@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from index_ai.config import AppSettings, DhanSettings
+from index_ai.config import AppSettings
 from index_ai.dhan import DhanClient
 
 _REJECTED_STATUSES = frozenset({"REJECTED", "CANCELLED", "EXPIRED"})

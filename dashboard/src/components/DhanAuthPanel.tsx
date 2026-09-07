@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
+import { Button } from './ui/Button'
 
 export function DhanAuthPanel() {
   const [token, setToken] = useState('')
@@ -59,35 +60,27 @@ export function DhanAuthPanel() {
           placeholder="Paste eyJ… JWT or tokenId"
           className="min-w-[16rem] flex-1 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
         />
-        <button
-          type="button"
+        <Button size="md" variant="primary"
           onClick={() => saveToken.mutate()}
           disabled={!token.trim() || saveToken.isPending}
-          className="rounded-md bg-cyan-500 px-3 py-2 text-sm font-medium text-slate-950"
         >
           Save token
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button size="md"
           onClick={() => verify.mutate()}
-          className="rounded-md border border-slate-700 px-3 py-2 text-sm text-slate-300"
         >
           Verify
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button size="md"
           onClick={() => renew.mutate()}
-          className="rounded-md border border-slate-700 px-3 py-2 text-sm text-slate-300"
         >
           Renew
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button size="md"
           onClick={() => totpLogin.mutate()}
-          className="rounded-md border border-slate-700 px-3 py-2 text-sm text-slate-300"
         >
           TOTP login
-        </button>
+        </Button>
       </div>
       <pre className="max-h-48 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 text-[11px] text-slate-400">
         {output}

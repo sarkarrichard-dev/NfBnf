@@ -11,37 +11,39 @@ IST = ZoneInfo("Asia/Kolkata")
 # NSE index F&O regular session (IST)
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
-# Algo window: analyse 9:15–9:30 (OI, volume, CPR, EMA), entries 9:30–15:15, flat by 15:15
-TRADING_ENTRIES_START = time(9, 30)
-TRADING_ENTRIES_END = time(15, 15)
-SQUARE_OFF_TIME = time(15, 15)
-PRE_OPEN_ANALYSIS_START = time(9, 15)
-PRE_OPEN_ANALYSIS_END = time(9, 30)
+# Algo window: analyse from 9:00 (participant OI, VIX, CPR levels, pre-open auction),
+# entries 9:20–15:00, hard square-off 15:10.
+# 9:00–9:15 has no live index candles — the exchange pre-open auction runs then — so
+# analysis in that slice uses prior-session data (CPR, participant OI, VIX) plus the
+# auction print. Live-candle work only becomes possible from 9:15.
+TRADING_ENTRIES_START = time(9, 20)
+TRADING_ENTRIES_END = time(15, 0)
+SQUARE_OFF_TIME = time(15, 10)
+PRE_OPEN_ANALYSIS_START = time(9, 0)
+PRE_OPEN_ANALYSIS_END = time(9, 20)
 
 
-def _parse_time_env(name: str, default: time) -> time:
+def parse_time_env(name: str, default: time) -> time:
+    """An HH:MM[:SS] env override, or the default. Shared by the token / apex schedulers."""
     raw = os.getenv(name, "").strip()
     if not raw:
         return default
-    for fmt in ("%H:%M", "%H:%M:%S"):
-        try:
-            parsed = datetime.strptime(raw, fmt).time()
-            return parsed
-        except ValueError:
-            continue
-    return default
+    try:
+        return time.fromisoformat(raw)  # 3.11+ accepts HH:MM and HH:MM:SS
+    except ValueError:
+        return default
 
 
 def session_times() -> dict[str, time]:
     """Effective session times (env overrides for testing/tuning)."""
     return {
-        "market_open": _parse_time_env("MARKET_OPEN_TIME", MARKET_OPEN),
-        "market_close": _parse_time_env("MARKET_CLOSE_TIME", MARKET_CLOSE),
-        "entries_start": _parse_time_env("TRADING_ENTRIES_START", TRADING_ENTRIES_START),
-        "entries_end": _parse_time_env("TRADING_ENTRIES_END", TRADING_ENTRIES_END),
-        "square_off": _parse_time_env("SQUARE_OFF_TIME", SQUARE_OFF_TIME),
-        "pre_open_start": _parse_time_env("PRE_OPEN_ANALYSIS_START", PRE_OPEN_ANALYSIS_START),
-        "pre_open_end": _parse_time_env("PRE_OPEN_ANALYSIS_END", PRE_OPEN_ANALYSIS_END),
+        "market_open": parse_time_env("MARKET_OPEN_TIME", MARKET_OPEN),
+        "market_close": parse_time_env("MARKET_CLOSE_TIME", MARKET_CLOSE),
+        "entries_start": parse_time_env("TRADING_ENTRIES_START", TRADING_ENTRIES_START),
+        "entries_end": parse_time_env("TRADING_ENTRIES_END", TRADING_ENTRIES_END),
+        "square_off": parse_time_env("SQUARE_OFF_TIME", SQUARE_OFF_TIME),
+        "pre_open_start": parse_time_env("PRE_OPEN_ANALYSIS_START", PRE_OPEN_ANALYSIS_START),
+        "pre_open_end": parse_time_env("PRE_OPEN_ANALYSIS_END", PRE_OPEN_ANALYSIS_END),
     }
 
 
@@ -142,7 +144,7 @@ def is_market_open(when: datetime | None = None) -> bool:
 
 
 def is_pre_open_analysis_window(when: datetime | None = None) -> bool:
-    """9:15–9:30 IST — learning/OI/sentiment brief before first entry."""
+    """9:00–9:20 IST — context/OI/sentiment brief before the first entry."""
     dt = when or now_ist()
     if not is_trading_day(dt):
         return False
@@ -152,7 +154,7 @@ def is_pre_open_analysis_window(when: datetime | None = None) -> bool:
 
 
 def is_trading_entries_allowed(when: datetime | None = None) -> bool:
-    """New entries only between 9:30 and 15:15 IST."""
+    """New entries only between 9:20 and 15:00 IST."""
     dt = when or now_ist()
     if not is_trading_day(dt):
         return False
@@ -167,7 +169,7 @@ def is_entry_session_timestamp(when: datetime | None = None) -> bool:
 
 
 def is_square_off_window(when: datetime | None = None) -> bool:
-    """From 15:15 IST — close all open algo positions (until session end)."""
+    """From 15:10 IST — close all open algo positions (until session end)."""
     dt = when or now_ist()
     if not is_trading_day(dt):
         return False
@@ -240,7 +242,9 @@ def market_status(when: datetime | None = None) -> dict[str, Any]:
         message = f"Entry window closed — session ends {format_ist_time_of_day(times['market_close'])} IST."
     else:
         phase = "closed"
-        message = f"Market closed — session ended {format_ist_time_of_day(times['market_close'])} IST."
+        message = (
+            f"Market closed — session ended {format_ist_time_of_day(times['market_close'])} IST."
+        )
 
     next_open: str | None = None
     if not session_on:

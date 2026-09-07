@@ -37,6 +37,9 @@ class StrategyParams:
     max_sideways_ema_spread_pct: float = 0.08
     breakout_confidence_boost: float = 0.06
     exit_on_supertrend_flip: bool = True
+    exit_credit_on_signal_flip: bool = True
+    reentry_cooldown_bars: int = 0
+    credit_spot_stop_pct: float = 0.012
     enforce_cost_economics: bool = True
     min_edge_to_cost_multiple: float = 1.5
     exit_buy_on_cloud_reentry: bool = False
@@ -51,7 +54,11 @@ class StrategyParams:
     credit_min_confidence: float = 0.58
     credit_min_volume_ratio: float = 0.85
     credit_volume_lookback_bars: int = 20
-    credit_min_reward_to_risk: float = 0.12
+    credit_min_reward_to_risk: float = 0.05
+    sell_allow_trend_override: bool = True
+    ml_gate_sell_min: float = 0.45
+    ml_gate_sell_max: float = 0.65
+    ml_gate_buy_min: float = 0.50
     buy_min_volume_ratio: float = 0.85
     buy_volume_lookback_bars: int = 20
     auto_buy_trending_only: bool = True
@@ -112,6 +119,9 @@ def get_strategy_params() -> StrategyParams:
         max_sideways_ema_spread_pct=_float("MAX_SIDEWAYS_EMA_SPREAD_PCT", 0.08),
         breakout_confidence_boost=_float("BREAKOUT_CONFIDENCE_BOOST", 0.06),
         exit_on_supertrend_flip=_bool("EXIT_ON_SUPERTREND_FLIP", True),
+        exit_credit_on_signal_flip=_bool("EXIT_CREDIT_ON_SIGNAL_FLIP", True),
+        reentry_cooldown_bars=_int("REENTRY_COOLDOWN_BARS", 0),
+        credit_spot_stop_pct=_float("CREDIT_SPOT_STOP_PCT", 0.012),
         enforce_cost_economics=_bool("ENFORCE_COST_ECONOMICS", True),
         min_edge_to_cost_multiple=_float("MIN_EDGE_TO_COST_MULTIPLE", 1.5),
         exit_buy_on_cloud_reentry=_bool("EXIT_BUY_ON_CLOUD_REENTRY", False),
@@ -126,7 +136,11 @@ def get_strategy_params() -> StrategyParams:
         credit_min_confidence=_float("CPR_CREDIT_MIN_CONFIDENCE", 0.58),
         credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.85),
         credit_volume_lookback_bars=_int("CREDIT_VOLUME_LOOKBACK_BARS", 20),
-        credit_min_reward_to_risk=_float("CREDIT_MIN_REWARD_TO_RISK", 0.12),
+        credit_min_reward_to_risk=_float("CREDIT_MIN_REWARD_TO_RISK", 0.05),
+        sell_allow_trend_override=_bool("SELL_ALLOW_TREND_OVERRIDE", True),
+        ml_gate_sell_min=_float("ML_GATE_SELL_MIN", 0.45),
+        ml_gate_sell_max=_float("ML_GATE_SELL_MAX", 0.65),
+        ml_gate_buy_min=_float("ML_GATE_BUY_MIN", 0.50),
         buy_min_volume_ratio=_float("BUY_MIN_VOLUME_RATIO", 0.85),
         buy_volume_lookback_bars=_int("BUY_VOLUME_LOOKBACK_BARS", 20),
         auto_buy_trending_only=_bool("AUTO_BUY_TRENDING_ONLY", True),
@@ -220,6 +234,10 @@ def strategy_tuning_summary() -> dict[str, object]:
         "credit_min_volume_ratio": p.credit_min_volume_ratio,
         "credit_volume_lookback_bars": p.credit_volume_lookback_bars,
         "credit_min_reward_to_risk": p.credit_min_reward_to_risk,
+        "sell_allow_trend_override": p.sell_allow_trend_override,
+        "ml_gate_sell_min": p.ml_gate_sell_min,
+        "ml_gate_sell_max": p.ml_gate_sell_max,
+        "ml_gate_buy_min": p.ml_gate_buy_min,
         "buy_min_volume_ratio": p.buy_min_volume_ratio,
         "buy_volume_lookback_bars": p.buy_volume_lookback_bars,
         "credit_profit_target_pct": p.credit_profit_target_pct,
@@ -283,6 +301,7 @@ def strategy_tuning_summary() -> dict[str, object]:
             "CREDIT_MIN_VOLUME_RATIO",
             "CREDIT_VOLUME_LOOKBACK_BARS",
             "CREDIT_MIN_REWARD_TO_RISK",
+            "SELL_ALLOW_TREND_OVERRIDE",
             "BUY_MIN_VOLUME_RATIO",
             "BUY_VOLUME_LOOKBACK_BARS",
             "CREDIT_WING_STRIKES",
