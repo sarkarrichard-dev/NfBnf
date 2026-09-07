@@ -35,8 +35,7 @@ def test_send_posts_when_configured(monkeypatch) -> None:
     sent: dict[str, object] = {}
 
     class _Resp:
-        def raise_for_status(self) -> None:
-            pass
+        status_code = 200
 
     def _fake_post(url, json, timeout):  # noqa: ANN001
         sent["url"], sent["json"] = url, json
@@ -48,6 +47,25 @@ def test_send_posts_when_configured(monkeypatch) -> None:
     assert notify._post("hello") is True
     assert sent["url"].endswith("/bottok/sendMessage")
     assert sent["json"]["chat_id"] == "42" and sent["json"]["text"] == "hello"
+
+
+def test_send_logs_a_failed_telegram_response(monkeypatch, caplog) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+
+    class _Resp:
+        status_code = 400
+
+        @staticmethod
+        def json() -> dict:
+            return {"ok": False, "description": "Bad Request: can't parse entities"}
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    with caplog.at_level("WARNING"):
+        assert notify._post("<b>oops") is False
+    assert "can't parse entities" in caplog.text
 
 
 def test_chats_from_updates_finds_group_from_any_update_kind() -> None:

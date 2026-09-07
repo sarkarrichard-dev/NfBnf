@@ -1481,6 +1481,11 @@ def configure_server_logging() -> Path:
         lg = logging.getLogger(name)
         lg.handlers = []
         lg.propagate = True
+    # httpx logs every request URL at INFO — for the Telegram API that URL
+    # carries the bot token, which would then be written to server.log (and the
+    # S3 backup) on every send. Quiet the HTTP client loggers.
+    for name in ("httpx", "httpcore", "hpack", "h11"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     return log_path
 
 
