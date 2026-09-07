@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
-import { inr, num, ok, pnlCls, usd } from '../lib/cryptoFmt'
+import { inr, inr0, num, ok, pnlCls, usd, usd0 } from '../lib/cryptoFmt'
 import { Button } from './ui/Button'
 import { CollapsibleSection } from './CollapsibleSection'
 import { Sparkline } from './Sparkline'
@@ -14,13 +14,23 @@ import { CryptoExecutionPanel } from './CryptoExecutionPanel'
 type Status = {
   paper_enabled: boolean
   lanes: { ny_n_break: boolean; ichimoku: boolean }
-  sizing: { deploy_usd: number; leverage: number; max_concurrent: number }
+  sizing: { lots: number; deploy_cap_usd: number; leverage: number; max_concurrent: number }
   session_ist: { start: string; end: string }
   ichimoku_tf: string
   symbols: string[]
   available_symbols: string[]
   half_spread_bps: Record<string, { measured: number | null; fallback: number | null }>
 }
+type LotRow = {
+  symbol: string
+  coin_per_lot: number | null
+  notional_per_lot_usd: number | null
+  margin_per_lot_usd: number | null
+  margin_per_lot_inr: number | null
+  source?: string
+  note?: string
+}
+type Lots = { lots: number; leverage: number; deploy_cap_usd: number; table: LotRow[] }
 type DaySum = { trades: number; wins: number; losses: number; net_usd: number; net_inr: number }
 type Day = { ny_session_date: string; utc_date: string; ny_n_break: DaySum; ichimoku: DaySum }
 type PaperPos = {
@@ -107,9 +117,15 @@ export function CryptoPanel() {
     queryFn: () => api<{ trades: Trade[] }>('/api/crypto/journal?limit=50'),
     refetchInterval: 60_000,
   })
+  const lotsQ = useQuery({
+    queryKey: ['crypto', 'lots'],
+    queryFn: () => api<Lots>('/api/crypto/lots'),
+    refetchInterval: 60_000,
+  })
 
   const s = status.data
-  const [deploy, setDeploy] = useState('')
+  const [lots, setLots] = useState('')
+  const [cap, setCap] = useState('')
   const [lev, setLev] = useState('')
 
   const cfg = useMutation({
@@ -117,7 +133,8 @@ export function CryptoPanel() {
       api('/api/crypto/config', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       toast.success('Saved — restart the server to apply')
-      setDeploy('')
+      setLots('')
+      setCap('')
       setLev('')
       void qc.invalidateQueries({ queryKey: ['crypto'] })
     },
@@ -126,10 +143,9 @@ export function CryptoPanel() {
 
   const trades = journal.data?.trades ?? []
   const equity = equityCurve(trades)
-  const picked = new Set(s?.symbols ?? [])
   // union: every perp Delta lists, plus any already-picked symbol whose
   // contract cache hasn't refreshed yet
-  const chipSymbols = [...new Set([...(s?.available_symbols ?? []), ...(s?.symbols ?? [])])].sort()
+  const allSymbols = [...new Set([...(s?.available_symbols ?? []), ...(s?.symbols ?? [])])].sort()
   const inputCls =
     'w-24 rounded-lg border border-[var(--hair)] bg-black/30 px-2 py-1 font-mono text-xs ' +
     'text-slate-100 outline-none focus:border-[var(--acc)]'
@@ -199,24 +215,12 @@ export function CryptoPanel() {
           <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
             Trade symbols
           </span>
-          <div className="flex flex-wrap gap-2">
-            {chipSymbols.map((sym) => {
-              const on = picked.has(sym)
-              return (
-                <Chip
-                  key={sym}
-                  label={sym}
-                  on={on}
-                  showState={false}
-                  onClick={() => {
-                    const next = on ? [...picked].filter((x) => x !== sym) : [...picked, sym]
-                    if (!next.length) return toast.error('Keep at least one symbol')
-                    cfg.mutate({ symbols: next })
-                  }}
-                />
-              )
-            })}
-          </div>
+          <SymbolSelect
+            all={allSymbols}
+            picked={s?.symbols ?? []}
+            pending={cfg.isPending}
+            onApply={(next) => cfg.mutate({ symbols: next })}
+          />
           {(s?.symbols?.length ?? 0) > 4 ? (
             <p className="text-[11px] text-[var(--warn)]/80">
               {s?.symbols.length} symbols × ~5 Delta calls per 60s scan — within Delta's quota,
@@ -225,19 +229,20 @@ export function CryptoPanel() {
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
-          <label className="flex items-center gap-2">
-            Deploy $ / trade (min 100)
+        {/* sizing — universal lot count */}
+        <div className="flex flex-wrap items-end gap-4 text-xs text-slate-400">
+          <label className="flex flex-col gap-1">
+            <span>Lots (universal — N contracts per symbol)</span>
             <input
               className={inputCls}
-              inputMode="decimal"
-              placeholder={num(s?.sizing.deploy_usd, 0)}
-              value={deploy}
-              onChange={(e) => setDeploy(e.target.value)}
+              inputMode="numeric"
+              placeholder={num(s?.sizing.lots, 0)}
+              value={lots}
+              onChange={(e) => setLots(e.target.value)}
             />
           </label>
-          <label className="flex items-center gap-2">
-            Leverage
+          <label className="flex flex-col gap-1">
+            <span>Leverage</span>
             <input
               className={inputCls}
               inputMode="decimal"
@@ -246,14 +251,25 @@ export function CryptoPanel() {
               onChange={(e) => setLev(e.target.value)}
             />
           </label>
+          <label className="flex flex-col gap-1">
+            <span>Margin cap $ / trade (blank = off)</span>
+            <input
+              className={inputCls}
+              inputMode="decimal"
+              placeholder={s?.sizing.deploy_cap_usd ? num(s.sizing.deploy_cap_usd, 0) : 'none'}
+              value={cap}
+              onChange={(e) => setCap(e.target.value)}
+            />
+          </label>
           <Button
             variant="secondary"
             pending={cfg.isPending}
-            disabled={!deploy && !lev}
+            disabled={!lots && !lev && !cap}
             onClick={() =>
               cfg.mutate({
-                ...(deploy ? { deploy_usd: Number(deploy) } : {}),
+                ...(lots ? { lots: Number(lots) } : {}),
                 ...(lev ? { leverage: Number(lev) } : {}),
+                ...(cap ? { deploy_cap_usd: Number(cap) } : {}),
               })
             }
           >
@@ -263,6 +279,9 @@ export function CryptoPanel() {
             window {s?.session_ist.start}–{s?.session_ist.end} IST · Ichimoku {s?.ichimoku_tf}
           </span>
         </div>
+
+        {/* what one lot costs, per symbol */}
+        <LotTable rows={lotsQ.data?.table ?? []} />
         <p className="text-[11px] text-slate-600">
           spread cost:{' '}
           {Object.entries(s?.half_spread_bps ?? {}).map(([sym, v], i) => (
@@ -386,17 +405,7 @@ export function CryptoPanel() {
   )
 }
 
-function Chip({
-  label,
-  on,
-  onClick,
-  showState = true,
-}: {
-  label: string
-  on: boolean
-  onClick: () => void
-  showState?: boolean
-}) {
+function Chip({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -408,8 +417,126 @@ function Chip({
           : 'border-[var(--hair)] bg-white/[0.03] text-slate-400 hover:text-slate-200',
       )}
     >
-      {label}
-      {showState ? `: ${on ? 'on' : 'off'}` : ''}
+      {label}: {on ? 'on' : 'off'}
     </button>
+  )
+}
+
+/** Dropdown checkbox multi-select for the tradable perps. Local draft until Apply. */
+function SymbolSelect({
+  all,
+  picked,
+  pending,
+  onApply,
+}: {
+  all: string[]
+  picked: string[]
+  pending: boolean
+  onApply: (next: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState<string[]>(picked)
+  // resync the draft whenever the popover opens or the saved set changes
+  const key = picked.join(',')
+  const [seen, setSeen] = useState(key)
+  if (seen !== key) {
+    setSeen(key)
+    setDraft(picked)
+  }
+  const dirty = [...draft].sort().join(',') !== [...picked].sort().join(',')
+  const toggle = (sym: string) =>
+    setDraft((d) => (d.includes(sym) ? d.filter((x) => x !== sym) : [...d, sym]))
+
+  return (
+    <details
+      open={open}
+      onToggle={(e) => {
+        setOpen(e.currentTarget.open)
+        if (e.currentTarget.open) setDraft(picked)
+      }}
+      className="relative inline-block"
+    >
+      <summary className="flex w-72 max-w-full cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-[var(--hair)] bg-black/30 px-3 py-1.5 text-xs text-slate-100 [&::-webkit-details-marker]:hidden">
+        <span className="truncate">
+          {picked.length} symbol{picked.length === 1 ? '' : 's'}: {picked.join(', ') || '—'}
+        </span>
+        <span className="text-slate-500">▾</span>
+      </summary>
+      <div className="absolute z-20 mt-1 w-72 max-w-full rounded-lg border border-[var(--hair)] bg-[var(--panel)] p-2 shadow-lg">
+        <div className="max-h-56 space-y-0.5 overflow-auto">
+          {all.map((sym) => (
+            <label
+              key={sym}
+              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-slate-200 hover:bg-white/[0.04]"
+            >
+              <input
+                type="checkbox"
+                className="accent-[var(--acc)]"
+                checked={draft.includes(sym)}
+                onChange={() => toggle(sym)}
+              />
+              {sym}
+            </label>
+          ))}
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-2 border-t border-[var(--hair)] pt-2">
+          <span className="text-[11px] text-slate-500">{draft.length} selected</span>
+          <Button
+            variant="secondary"
+            pending={pending}
+            disabled={!dirty || !draft.length}
+            onClick={() => {
+              onApply(draft)
+              setOpen(false)
+            }}
+          >
+            {draft.length ? 'Apply' : 'Pick at least one'}
+          </Button>
+        </div>
+      </div>
+    </details>
+  )
+}
+
+function LotTable({ rows }: { rows: LotRow[] }) {
+  if (!rows.length) return null
+  return (
+    <div className="overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
+      <table className="min-w-full text-xs">
+        <thead className="text-cyan-200/50">
+          <tr className="border-b border-slate-800 [&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
+            <th>Symbol</th>
+            <th>1 lot =</th>
+            <th>Notional / lot</th>
+            <th>Margin / lot ($)</th>
+            <th>Margin / lot (₹)</th>
+          </tr>
+        </thead>
+        <tbody className="font-mono">
+          {rows.map((r) => (
+            <tr
+              key={r.symbol}
+              className="border-b border-slate-800/60 text-slate-200 [&>td]:px-3 [&>td]:py-2"
+            >
+              <td>{r.symbol}</td>
+              <td className="tabular-nums text-slate-400">
+                {ok(r.coin_per_lot) ? `${r.coin_per_lot} ${r.symbol.replace(/USD.?$/, '')}` : '—'}
+              </td>
+              <td className="tabular-nums text-slate-400">{usd0(r.notional_per_lot_usd)}</td>
+              <td className="tabular-nums">
+                {usd0(r.margin_per_lot_usd)}
+                {r.source === 'delta' ? (
+                  <span className="text-slate-600"> · Delta</span>
+                ) : null}
+              </td>
+              <td className="tabular-nums">
+                {inr0(r.margin_per_lot_inr)}
+                {r.note ? <span className="text-[var(--warn)]/80"> · {r.note}</span> : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }

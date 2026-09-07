@@ -19,6 +19,14 @@ export const inr = (v: number | null | undefined) =>
     ? `${v >= 0 ? '+' : '−'}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
     : '—'
 
+/** Unsigned USD, 2dp, e.g. "$20.40" — for cost/margin cells, not P&L. */
+export const usd0 = (v: number | null | undefined) =>
+  ok(v) ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'
+
+/** Unsigned INR, whole rupees, e.g. "₹1,795". */
+export const inr0 = (v: number | null | undefined) =>
+  ok(v) ? `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—'
+
 export const pnlCls = (v: number | null | undefined) =>
   ok(v) && v > 0
     ? 'text-[var(--up)]'
