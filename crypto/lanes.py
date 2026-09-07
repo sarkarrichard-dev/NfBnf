@@ -17,7 +17,7 @@ import pandas as pd
 
 from crypto import charges, executor, journal, notify
 from crypto.charges import round_trip_cost_usd
-from crypto.config import PERP_SYMBOLS, crypto_settings
+from crypto.config import crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient
 from crypto.session import crypto_day, in_ny_window, ny_session_date
@@ -120,7 +120,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
         return [{"event": "error", "where": "products", "error": str(exc)}]
 
     # measure the real top-of-book spread while we are here (Phase 3 cost path)
-    for sym in PERP_SYMBOLS:
+    for sym in s.symbols:
         try:
             charges.sample_spread(sym, market_data.depth(sym, client=client))
         except Exception:
@@ -150,7 +150,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
         strategies.append("ichimoku")
 
     for strat in strategies:
-        for sym in PERP_SYMBOLS:
+        for sym in s.symbols:
             contract = contracts.get(sym)
             if not contract or not contract.usable:
                 events.append({"event": "skip", "strategy": strat, "asset": sym,
@@ -245,7 +245,7 @@ def _entry_features(strat: str, sym: str, frame, side: str) -> dict[str, Any]:
 
     feats: dict[str, Any] = {
         "venue": "delta",
-        "is_btc": 1.0 if sym == "BTCUSD" else 0.0,
+        "asset": sym,  # one-hot at model time — do not bake per-symbol flags in
         "strategy_ny_n_break": 1.0 if strat == "ny_n_break" else 0.0,
         "side_long": 1.0 if side == "long" else 0.0,
     }

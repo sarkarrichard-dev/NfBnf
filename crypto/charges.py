@@ -37,9 +37,11 @@ MAKER_RATE = _pct("DELTA_MAKER_FEE_PCT", 0.02) / 100.0
 GST_ON_FEE = _pct("DELTA_GST_PCT", 18.0) / 100.0
 
 # Fallback half-spread, basis points of price, per asset — used until measured.
+# Any symbol not listed falls back to 2.0 bps (see half_spread_usd).
 _HALF_SPREAD_BPS = {
     "BTCUSD": _pct("DELTA_HALF_SPREAD_BPS_BTC", 1.0),
     "ETHUSD": _pct("DELTA_HALF_SPREAD_BPS_ETH", 2.0),
+    "PAXGUSD": _pct("DELTA_HALF_SPREAD_BPS_PAXG", 1.0),  # gold trades tight
 }
 
 
@@ -123,8 +125,11 @@ def round_trip_cost_usd(notional_usd: float, symbol: str, mark_price: float, siz
 
 
 if __name__ == "__main__":  # self-check
+    _SAMPLES_PATH = CRYPTO_MEMORY / "_no_such_spread_samples.jsonl"  # force the bps fallback
     assert abs(fee_usd(1000) - 0.59) < 1e-6, fee_usd(1000)
     assert abs(half_spread_usd("BTCUSD", 60000) - 6.0) < 1e-6  # 1 bp of 60k (fallback)
+    assert abs(half_spread_usd("PAXGUSD", 3000) - 0.3) < 1e-9  # 1 bp of 3k
+    assert abs(half_spread_usd("SOLUSD", 200) - 0.04) < 1e-9   # 2 bp default
     book = {"bids": [{"price": 100.0}], "asks": [{"price": 100.4}]}
     assert abs(half_spread_usd("BTCUSD", 100, book=book) - 0.2) < 1e-9
     rt = round_trip_cost_usd(6000, "BTCUSD", 60000, 100, 0.001)

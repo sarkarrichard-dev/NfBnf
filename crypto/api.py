@@ -13,7 +13,7 @@ import os
 from fastapi import APIRouter, Body, HTTPException
 
 from crypto import charges, executor, journal
-from crypto.config import PERP_SYMBOLS, crypto_settings
+from crypto.config import crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient, DeltaError
 from crypto.live import (
@@ -55,13 +55,14 @@ def crypto_status() -> dict:
         "session_ist": {"start": s.ny_start, "end": s.ny_end},
         "ichimoku_tf": s.ichimoku_tf,
         "hard_stops_pct": {"ny_n_break": s.nbreak_sl_pct, "ichimoku": s.ichimoku_sl_pct},
-        "symbols": list(PERP_SYMBOLS),
+        "symbols": list(s.symbols),
+        "available_symbols": products.available_symbols(),
         "half_spread_bps": {
             sym: {
                 "measured": charges.measured_half_spread_bps(sym),
-                "fallback": charges._HALF_SPREAD_BPS.get(sym),
+                "fallback": charges._HALF_SPREAD_BPS.get(sym, 2.0),
             }
-            for sym in PERP_SYMBOLS
+            for sym in s.symbols
         },
         # --- live execution (Phase 4) ---
         "trading_mode": s.trading_mode,
@@ -108,7 +109,7 @@ def _health_blocking() -> dict:
     }
     client = DeltaClient(s)
 
-    for sym in PERP_SYMBOLS:
+    for sym in s.symbols:
         try:
             tk = market_data.ticker(sym, client=client)
             q = tk.get("quotes") or {}
@@ -278,12 +279,22 @@ def set_config(
     paper_enabled: bool | None = Body(None, embed=True),
     ny_n_break_enabled: bool | None = Body(None, embed=True),
     ichimoku_enabled: bool | None = Body(None, embed=True),
+    symbols: list[str] | None = Body(None, embed=True),
 ) -> dict:
     """Non-financial-in-paper knobs — plain write, no confirm (Delta keys are
     the only crypto setting that needs the money-path treatment)."""
     from index_ai.config import update_env_values
 
     values: dict[str, str] = {}
+    if symbols is not None:
+        want = [str(x).strip().upper() for x in symbols if str(x).strip()]
+        listed = set(products.available_symbols())
+        if not listed:
+            raise HTTPException(502, "Delta contract master unavailable — try again shortly.")
+        keep = [x for i, x in enumerate(want) if x not in want[:i] and x in listed]
+        if not keep:
+            raise HTTPException(400, "None of those symbols are live Delta perpetuals.")
+        values["CRYPTO_SYMBOLS"] = ",".join(keep)
     if deploy_usd is not None:
         values["CRYPTO_DEPLOY_USD"] = str(max(100.0, float(deploy_usd)))
     if leverage is not None:

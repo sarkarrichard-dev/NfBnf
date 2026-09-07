@@ -162,6 +162,7 @@ def _nbreak_frame() -> pd.DataFrame:
 def live_lane(tmp_path, monkeypatch):
     monkeypatch.setenv("CRYPTO_TRADING_MODE", "LIVE")
     monkeypatch.setenv("CRYPTO_ALLOW_LIVE", "true")
+    monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,ETHUSD")
     monkeypatch.setenv("DELTA_API_KEY", "k")
     monkeypatch.setenv("DELTA_API_SECRET", "s")
     monkeypatch.setenv("ENABLE_CRYPTO_PAPER", "false")

@@ -18,9 +18,10 @@ CRYPTO_MEMORY = MEMORY_DIR
 
 DELTA_PROD_URL = "https://api.india.delta.exchange"
 
-# Perpetual contracts the crypto lane trades. Delta symbols; the numeric
-# product_id is resolved at runtime from the contract master.
-PERP_SYMBOLS: tuple[str, ...] = ("BTCUSD", "ETHUSD")
+# Default perpetual contracts. Override at runtime with CRYPTO_SYMBOLS (a
+# comma-separated list) — see crypto_settings().symbols. A symbol Delta does not
+# list live is dropped by crypto/delta/products.py, never fabricated.
+PERP_SYMBOLS: tuple[str, ...] = ("BTCUSD", "ETHUSD", "SOLUSD", "PAXGUSD")
 
 
 def _b(name: str, default: bool) -> bool:
@@ -49,11 +50,22 @@ def _mode(name: str) -> str:
     return m if m in {"PAPER", "LIVE"} else "PAPER"
 
 
+def _symbols() -> tuple[str, ...]:
+    raw = os.getenv("CRYPTO_SYMBOLS", "")
+    picked = [x.strip().upper() for x in raw.split(",") if x.strip()]
+    out: list[str] = []
+    for s in picked or PERP_SYMBOLS:
+        if s not in out:
+            out.append(s)
+    return tuple(out)
+
+
 @dataclass(frozen=True)
 class CryptoSettings:
     api_key: str
     api_secret: str
     base_url: str
+    symbols: tuple[str, ...]   # perps to trade — CRYPTO_SYMBOLS
     # sizing (capital-first — see crypto/sizing.py in Phase 2)
     deploy_usd: float          # per-trade capital; hard floor 100
     leverage: float            # target leverage; clamped per-product at runtime
@@ -100,6 +112,7 @@ def crypto_settings() -> CryptoSettings:
         api_key=os.getenv("DELTA_API_KEY", "").strip(),
         api_secret=os.getenv("DELTA_API_SECRET", "").strip(),
         base_url=os.getenv("DELTA_BASE_URL", DELTA_PROD_URL).rstrip("/"),
+        symbols=_symbols(),
         deploy_usd=max(100.0, _f("CRYPTO_DEPLOY_USD", 100.0)),
         leverage=max(1.0, _f("CRYPTO_LEVERAGE", 3.0)),
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
@@ -124,6 +137,7 @@ CRYPTO_ENV_KEYS = (
     "DELTA_API_KEY",
     "DELTA_API_SECRET",
     "DELTA_BASE_URL",
+    "CRYPTO_SYMBOLS",
     "ENABLE_CRYPTO_PAPER",
     "CRYPTO_NY_NBREAK_ENABLED",
     "CRYPTO_ICHIMOKU_ENABLED",
@@ -152,4 +166,10 @@ if __name__ == "__main__":  # self-check
     assert not s.base_url.endswith("/")
     assert s.trading_mode in {"PAPER", "LIVE"}
     assert not s.live_orders_enabled or (s.trading_mode == "LIVE" and s.live_armed)
-    print("crypto.config self-check ok —", s.base_url, "mode", s.trading_mode, "lev", s.leverage)
+    assert s.symbols and all(x == x.upper() for x in s.symbols)
+    assert len(set(s.symbols)) == len(s.symbols)  # deduped
+    import os as _o
+    _o.environ["CRYPTO_SYMBOLS"] = "btcusd, ethusd ,BTCUSD"
+    assert _symbols() == ("BTCUSD", "ETHUSD")
+    _o.environ.pop("CRYPTO_SYMBOLS")
+    print("crypto.config self-check ok —", s.base_url, "symbols", s.symbols)

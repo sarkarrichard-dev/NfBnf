@@ -148,6 +148,7 @@ def paper_env(tmp_path, monkeypatch):
     monkeypatch.setenv("ENABLE_CRYPTO_PAPER", "true")
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,ETHUSD")
     monkeypatch.setenv("CRYPTO_USDINR", "88")
     monkeypatch.setenv("CRYPTO_PAPER_BANKROLL", "5000")
     monkeypatch.setattr(journal, "STATE_PATH", tmp_path / "state.json")

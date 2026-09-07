@@ -5,16 +5,21 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from crypto import journal
+from crypto.delta import products
 from index_ai.server import app
 
 client = TestClient(app)
 
+_FAKE_LISTED = ["BTCUSD", "ETHUSD", "SOLUSD", "PAXGUSD", "XRPUSD"]
 
-def test_status_ok():
+
+def test_status_ok(monkeypatch):
+    monkeypatch.setattr(products, "available_symbols", lambda *a, **k: list(_FAKE_LISTED))
     r = client.get("/api/crypto/status")
     assert r.status_code == 200
     body = r.json()
-    assert body["symbols"] == ["BTCUSD", "ETHUSD"]
+    assert "BTCUSD" in body["symbols"] and "ETHUSD" in body["symbols"]
+    assert body["available_symbols"] == _FAKE_LISTED
     assert "deploy_usd" in body["sizing"]
     assert body["session_ist"]["start"] and body["session_ist"]["end"]
 
@@ -61,6 +66,24 @@ def test_config_validates_and_clamps(monkeypatch):
 
     empty = client.post("/api/crypto/config", json={})
     assert empty.status_code == 400
+
+
+def test_config_symbols_validated_against_contract_master(monkeypatch):
+    saved = {}
+    monkeypatch.setattr("index_ai.config.update_env_values", lambda v: saved.update(v))
+    monkeypatch.setattr(products, "available_symbols", lambda *a, **k: list(_FAKE_LISTED))
+
+    # unknown symbol dropped, order + dedup preserved
+    r = client.post(
+        "/api/crypto/config",
+        json={"symbols": ["solusd", "BTCUSD", "SOLUSD", "DOGEUSD"]},
+    )
+    assert r.status_code == 200
+    assert saved["CRYPTO_SYMBOLS"] == "SOLUSD,BTCUSD"
+
+    # nothing Delta lists → 400
+    bad = client.post("/api/crypto/config", json={"symbols": ["DOGEUSD"]})
+    assert bad.status_code == 400
 
 
 def test_credentials_requires_confirm():

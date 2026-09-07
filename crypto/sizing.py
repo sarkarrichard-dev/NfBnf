@@ -8,6 +8,7 @@ contract count. ``crypto/executor.py`` (Phase 4) confirms against Delta's own
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 
@@ -17,11 +18,37 @@ _WALLET_SAFETY = 0.90  # keep 10% of the bankroll free
 _FEE_BUFFER = 1.02     # margin headroom over the raw notional/leverage figure
 
 # Plausible mark-price band per asset — rejects a corrupted feed or a units
-# mix-up before it silently sizes the position 10x off. Wide on purpose.
+# mix-up before it silently sizes the position 10x off. Wide on purpose. Only
+# BTC/ETH have a built-in band; any other symbol just needs mark > 0 (the
+# deploy-cap and 90% wallet guard bound the risk regardless), unless the
+# operator sets CRYPTO_SANE_MIN_<SYM> / CRYPTO_SANE_MAX_<SYM>.
 _SANE_PRICE = {
     "BTCUSD": (1_000.0, 10_000_000.0),
     "ETHUSD": (10.0, 1_000_000.0),
 }
+_warned: set[str] = set()
+
+
+def _band(symbol: str) -> tuple[float, float]:
+    sym = symbol.upper()
+    if sym in _SANE_PRICE:
+        return _SANE_PRICE[sym]
+    import os
+
+    def _env(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, str(default)))
+        except (TypeError, ValueError):
+            return default
+
+    lo = _env(f"CRYPTO_SANE_MIN_{sym}", 0.0)
+    hi = _env(f"CRYPTO_SANE_MAX_{sym}", float("inf"))
+    if lo == 0.0 and hi == float("inf") and sym not in _warned:
+        _warned.add(sym)
+        logging.getLogger(__name__).info(
+            "crypto sizing: no sane-price band for %s — accepting any mark > 0", sym
+        )
+    return lo, hi
 
 
 @dataclass(frozen=True)
@@ -54,7 +81,7 @@ def size_position(
     mark = float(mark_price)
     if mark <= 0 or contract.contract_value <= 0:
         return _fail("no usable mark price / contract value", lev=lev)
-    lo, hi = _SANE_PRICE.get(contract.symbol.upper(), (0.0, float("inf")))
+    lo, hi = _band(contract.symbol)
     if not (lo <= mark <= hi):
         return _fail(f"mark {mark:,.2f} outside the sane band for {contract.symbol}", mark=mark, lev=lev)
 
@@ -114,4 +141,9 @@ if __name__ == "__main__":  # self-check
     # bankroll too small
     r4 = size_position(btc, 60_000, deploy_usd=100, leverage=3, wallet_usd=10)
     assert not r4.ok and "bankroll" in r4.reason
+    # a new symbol with no built-in band: any mark > 0 is accepted (PAXG ~ $3k)
+    paxg = Contract("PAXGUSD", 84, contract_value=0.001, tick_size=0.1, min_size=1, max_leverage=100)
+    r5 = size_position(paxg, 3_000, deploy_usd=100, leverage=3, wallet_usd=2000)
+    assert r5.ok and r5.size >= 1
+    assert not size_position(paxg, 0, deploy_usd=100, leverage=3, wallet_usd=2000).ok
     print("crypto.sizing self-check ok")

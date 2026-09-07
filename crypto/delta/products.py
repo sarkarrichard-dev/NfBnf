@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from crypto.config import CRYPTO_MEMORY, PERP_SYMBOLS
+from crypto.config import CRYPTO_MEMORY, crypto_settings
 from crypto.delta.client import DeltaClient
 
 logger = logging.getLogger(__name__)
@@ -39,20 +39,19 @@ class Contract:
 
 
 def _pull(client: DeltaClient) -> dict[str, Any]:
+    """Cache EVERY live perpetual Delta lists. all_contracts() then filters to
+    the operator's CRYPTO_SYMBOLS; available_symbols() offers the full picklist."""
     raw = client.get_public("/v2/products")
-    want = set(PERP_SYMBOLS)
     contracts: dict[str, Any] = {}
     for p in raw or []:
         sym = str(p.get("symbol") or "")
-        if sym not in want or p.get("contract_type") != "perpetual_futures":
+        if not sym or p.get("contract_type") != "perpetual_futures":
             continue
         if p.get("state") != "live" or p.get("trading_status") != "operational":
-            logger.warning("Delta %s not live/operational — skipping", sym)
             continue
         specs = p.get("product_specs") or {}
         cv = float(p.get("contract_value") or 0)
         if cv <= 0:
-            logger.error("Delta %s has no contract_value — cannot size it, skipping", sym)
             continue
         contracts[sym] = {
             "symbol": sym,
@@ -120,20 +119,43 @@ def get(symbol: str, client: DeltaClient | None = None) -> Contract | None:
 
 
 def all_contracts(client: DeltaClient | None = None) -> dict[str, Contract]:
-    return {k: _to_contract(v) for k, v in _blob(client)["contracts"].items()}
+    """Only the perps the operator picked (CRYPTO_SYMBOLS) that Delta lists live.
+    A picked symbol Delta doesn't list is dropped with a warning, never faked."""
+    cache = _blob(client)["contracts"]
+    out: dict[str, Contract] = {}
+    for sym in crypto_settings().symbols:
+        if sym in cache:
+            out[sym] = _to_contract(cache[sym])
+        else:
+            logger.warning("crypto: %s is not a live Delta perp — skipped", sym)
+    return out
+
+
+def available_symbols(client: DeltaClient | None = None) -> list[str]:
+    """Every perp Delta currently lists — the full picklist for the dashboard."""
+    try:
+        return sorted(_blob(client)["contracts"].keys())
+    except Exception:
+        return []
 
 
 if __name__ == "__main__":  # self-check — no network (uses a fake blob)
+    import os as _o
+
     _mem = {
         "fetched_at": time.time(),
         "contracts": {
-            "BTCUSD": {
-                "symbol": "BTCUSD", "product_id": 27, "contract_value": 0.001,
-                "tick_size": 0.5, "min_size": 1, "max_leverage": 100,
-            }
+            "BTCUSD": {"symbol": "BTCUSD", "product_id": 27, "contract_value": 0.001,
+                       "tick_size": 0.5, "min_size": 1, "max_leverage": 100},
+            "PAXGUSD": {"symbol": "PAXGUSD", "product_id": 84, "contract_value": 0.001,
+                        "tick_size": 0.1, "min_size": 1, "max_leverage": 100},
         },
     }
     c = get("btcusd")
-    assert c and c.usable and c.product_id == 27 and c.contract_value == 0.001
+    assert c and c.usable and c.product_id == 27
     assert get("DOGEUSD") is None
+    assert sorted(available_symbols()) == ["BTCUSD", "PAXGUSD"]
+    _o.environ["CRYPTO_SYMBOLS"] = "PAXGUSD,DOGEUSD"  # DOGE not in cache → dropped
+    assert set(all_contracts()) == {"PAXGUSD"}
+    _o.environ.pop("CRYPTO_SYMBOLS")
     print("crypto.delta.products self-check ok")
