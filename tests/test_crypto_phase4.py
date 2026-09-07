@@ -112,7 +112,7 @@ def test_live_gate_disarms_on_kill_switch(tmp_path, monkeypatch):
     monkeypatch.setattr(journal, "JOURNAL_PATH", tmp_path / "j.jsonl")
     disarmed = {}
     monkeypatch.setattr(executor, "disarm_crypto_live", lambda: disarmed.setdefault("hit", True))
-    monkeypatch.setattr(executor, "_kill_alerted", None)
+    monkeypatch.setattr("crypto.notify.alert", lambda *a, **k: None)
     today = datetime.now(timezone.utc).date().isoformat()
     for _ in range(3):
         journal.journal({"mode": "live", "closed_at": f"{today}T10:00:00", "pnl_usd": -5.0})
@@ -128,10 +128,18 @@ def test_live_gate_disarms_on_kill_switch(tmp_path, monkeypatch):
 
 def test_reconcile_flags_mismatch_without_trading(tmp_path, monkeypatch):
     monkeypatch.setattr(journal, "STATE_PATH", tmp_path / "s.json")
-    journal.save_state({"ny_n_break:BTCUSD": {"position": {"asset": "BTCUSD", "side": "long"}}})
-    monkeypatch.setattr(notify, "send", lambda *a, **k: None)
+    journal.save_state(
+        {"ny_n_break:BTCUSD": {"position": {"asset": "BTCUSD", "side": "long", "mode": "live"}}}
+    )
+    monkeypatch.setattr("crypto.notify.alert", lambda *a, **k: None)
     issues = executor.reconcile(_Client(positions=[]))  # Delta shows flat
     assert any("Delta shows FLAT" in i for i in issues)
+
+    # a paper position is never a Delta mismatch
+    journal.save_state(
+        {"ny_n_break:ETHUSD": {"position": {"asset": "ETHUSD", "side": "long", "mode": "paper"}}}
+    )
+    assert executor.reconcile(_Client(positions=[])) == []
 
 
 # ---------------------------------------------------------------------------

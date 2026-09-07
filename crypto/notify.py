@@ -6,11 +6,40 @@ currency; INR is shown alongside so the wallet impact is legible.
 
 from __future__ import annotations
 
+import json
+import os
+import time
 from typing import Any
 
+from crypto.config import CRYPTO_MEMORY
 from index_ai.notify import send
 
 _TAG = {"ny_n_break": "6PM", "ichimoku": "Ichimoku"}
+
+_STAMPS = CRYPTO_MEMORY / "crypto_alert_stamps.json"
+
+
+def alert(text: str, *, key: str, gap_s: float = 600.0) -> None:
+    """Fire-and-forget Telegram, deduped per ``key`` — the stamp is on disk so a
+    server restart doesn't re-send a still-fresh alert (reconcile / kill switch
+    would otherwise fire on every boot)."""
+    now = time.time()
+    try:
+        stamps = json.loads(_STAMPS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        stamps = {}
+    if now - float(stamps.get(key, 0) or 0) < gap_s:
+        return
+    stamps[key] = now
+    stamps = {k: v for k, v in stamps.items() if now - float(v or 0) < 86_400}
+    try:
+        CRYPTO_MEMORY.mkdir(parents=True, exist_ok=True)
+        tmp = _STAMPS.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(stamps), encoding="utf-8")
+        os.replace(tmp, _STAMPS)
+    except OSError:
+        pass
+    send(text)
 
 
 def _usd(v: Any) -> str:
@@ -83,4 +112,14 @@ if __name__ == "__main__":  # self-check — no send unless Telegram is configur
         }
     )
     day_summary("2026-09-07", [{"pnl_usd": 2.68, "pnl_inr": 235.0}])
+    # persistent per-key dedup (rebinds the module globals alert() reads)
+    import tempfile
+    from pathlib import Path
+
+    _STAMPS = Path(tempfile.mkdtemp()) / "s.json"
+    _sent: list[str] = []
+    send = _sent.append  # noqa: F811
+    alert("x", key="k", gap_s=999)
+    alert("x again", key="k", gap_s=999)  # deduped inside the window
+    assert _sent == ["x"], _sent
     print("crypto.notify self-check ok (messages only sent if TELEGRAM_* set)")

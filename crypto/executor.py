@@ -59,9 +59,6 @@ def kill_switch(settings: CryptoSettings | None = None) -> tuple[bool, str]:
     return False, ""
 
 
-_kill_alerted: str | None = None
-
-
 def live_gate(settings: CryptoSettings | None = None) -> tuple[bool, str]:
     """Call before every live entry. Blocks (and auto-disarms) on the kill switch."""
     s = settings or crypto_settings()
@@ -69,17 +66,16 @@ def live_gate(settings: CryptoSettings | None = None) -> tuple[bool, str]:
         return False, "live orders not enabled (mode / arm / credentials)"
     tripped, why = kill_switch(s)
     if tripped:
-        global _kill_alerted
         disarm_crypto_live()
-        today = datetime.now(timezone.utc).date().isoformat()
-        if _kill_alerted != today:
-            _kill_alerted = today
-            try:
-                from index_ai.notify import send
+        try:
+            from crypto import notify
 
-                send(f"\U0001f6d1 <b>CRYPTO KILL SWITCH</b> — live disarmed\n{why}")
-            except Exception:
-                pass
+            notify.alert(
+                f"\U0001f6d1 <b>CRYPTO KILL SWITCH</b> — live disarmed\n{why}",
+                key="kill_switch", gap_s=3600,
+            )
+        except Exception:
+            pass
         return False, f"kill switch: {why}"
     return True, ""
 
@@ -219,13 +215,15 @@ def fill_price(client: DeltaClient, order_id: str | None) -> float | None:
 # --- reconciliation --------------------------------------------------------
 
 def reconcile(client: DeltaClient) -> list[str]:
-    """Compare crypto_state.json open positions against Delta's live positions.
-    Reports mismatches — never trades to 'fix' one. Trust Delta."""
+    """Compare crypto_state.json **live** open positions against Delta's live
+    positions. Paper positions are never a Delta mismatch. Reports only — never
+    trades to 'fix' one. Trust Delta."""
     st = journal.load_state()
     local = {
         v["position"].get("asset"): k
         for k, v in st.items()
         if ":" in k and isinstance(v, dict) and v.get("position")
+        and str((v["position"] or {}).get("mode")) == "live"
     }
     try:
         delta_open = {
@@ -246,9 +244,12 @@ def reconcile(client: DeltaClient) -> list[str]:
     if issues:
         logger.error("crypto reconcile mismatch: %s", " | ".join(issues))
         try:
-            from index_ai.notify import send
+            from crypto import notify
 
-            send("⚠️ <b>CRYPTO RECONCILE</b>\n" + "\n".join(issues))
+            notify.alert(
+                "⚠️ <b>CRYPTO RECONCILE</b>\n" + "\n".join(issues),
+                key="reconcile", gap_s=3600,
+            )
         except Exception:
             pass
     return issues

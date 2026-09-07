@@ -49,6 +49,7 @@ def test_resample_ohlcv():
 
 def test_products_parse_from_blob(monkeypatch):
     fake = {
+        "schema": products._SCHEMA,
         "fetched_at": 9e18,  # far future so it never refreshes
         "contracts": {
             "BTCUSD": {

@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 _CACHE_PATH = CRYPTO_MEMORY / "crypto_products.json"
 _MAX_AGE_SECONDS = 24 * 3600
+_SCHEMA = 2  # bump when _pull's shape/filter changes so a stale disk cache is dropped
 _mem: dict[str, Any] | None = None
 
 
@@ -66,7 +67,7 @@ def _pull(client: DeltaClient) -> dict[str, Any]:
                 or 100
             ),
         }
-    return {"fetched_at": time.time(), "contracts": contracts}
+    return {"schema": _SCHEMA, "fetched_at": time.time(), "contracts": contracts}
 
 
 def _load_disk() -> dict[str, Any] | None:
@@ -82,14 +83,22 @@ def _save_disk(blob: dict[str, Any]) -> None:
     os.replace(tmp, _CACHE_PATH)
 
 
+def _fresh(blob: dict[str, Any] | None, now: float) -> bool:
+    return bool(
+        blob
+        and int(blob.get("schema", 1)) == _SCHEMA
+        and now - float(blob.get("fetched_at", 0)) < _MAX_AGE_SECONDS
+    )
+
+
 def _blob(client: DeltaClient | None = None, *, force: bool = False) -> dict[str, Any]:
     global _mem
     now = time.time()
-    if not force and _mem and now - float(_mem.get("fetched_at", 0)) < _MAX_AGE_SECONDS:
+    if not force and _fresh(_mem, now):
         return _mem
     if not force:
         disk = _load_disk()
-        if disk and now - float(disk.get("fetched_at", 0)) < _MAX_AGE_SECONDS:
+        if _fresh(disk, now):
             _mem = disk
             return _mem
     fresh = _pull(client or DeltaClient())
@@ -143,6 +152,7 @@ if __name__ == "__main__":  # self-check — no network (uses a fake blob)
     import os as _o
 
     _mem = {
+        "schema": _SCHEMA,
         "fetched_at": time.time(),
         "contracts": {
             "BTCUSD": {"symbol": "BTCUSD", "product_id": 27, "contract_value": 0.001,
@@ -158,4 +168,7 @@ if __name__ == "__main__":  # self-check — no network (uses a fake blob)
     _o.environ["CRYPTO_SYMBOLS"] = "PAXGUSD,DOGEUSD"  # DOGE not in cache → dropped
     assert set(all_contracts()) == {"PAXGUSD"}
     _o.environ.pop("CRYPTO_SYMBOLS")
+    # a cache from an older schema is stale even if recent
+    assert not _fresh({"fetched_at": time.time()}, time.time())
+    assert _fresh({"schema": _SCHEMA, "fetched_at": time.time()}, time.time())
     print("crypto.delta.products self-check ok")
