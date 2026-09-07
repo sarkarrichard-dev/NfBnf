@@ -6,8 +6,10 @@ its own `.env` keys (`DELTA_*` / `CRYPTO_*`), its own journals
 the index code.
 
 **Status: paper by default, live available.** All four phases are built. The
-paper lane runs behind `ENABLE_CRYPTO_PAPER` (**default on**). Live order
-placement (`crypto/executor.py`) has its own two-lock arming
+section runs whenever a strategy is enabled (`CRYPTO_NY_NBREAK_ENABLED` /
+`CRYPTO_ICHIMOKU_ENABLED`, both default on); turning both off is the pause
+switch. PAPER vs LIVE is the execution mode. Live order placement
+(`crypto/executor.py`) has its own two-lock arming
 (`CRYPTO_TRADING_MODE=LIVE` + `CRYPTO_ALLOW_LIVE=true` + the phrase
 "ARM CRYPTO LIVE"), fully separate from the index `arm_live_trading`, and the
 operator switches Paper↔Live manually from the Crypto tab.

@@ -75,8 +75,7 @@ class CryptoSettings:
     max_concurrent: int
     paper_bankroll_usd: float
     allow_min_one: bool        # take 1 contract even if 1-contract margin > deploy_usd
-    # lanes
-    paper_enabled: bool
+    # lanes — the section runs when either strategy is enabled
     ny_nbreak_enabled: bool
     ichimoku_enabled: bool
     # 6 PM (NY N-Break) session window, IST, 24h "HH:MM"
@@ -125,7 +124,6 @@ def crypto_settings() -> CryptoSettings:
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
         paper_bankroll_usd=max(100.0, _f("CRYPTO_PAPER_BANKROLL", 2000.0)),
         allow_min_one=_b("CRYPTO_ALLOW_MIN_ONE", False),
-        paper_enabled=_b("ENABLE_CRYPTO_PAPER", True),
         ny_nbreak_enabled=_b("CRYPTO_NY_NBREAK_ENABLED", True),
         ichimoku_enabled=_b("CRYPTO_ICHIMOKU_ENABLED", True),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
@@ -149,7 +147,6 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_FORCE_IPV4",
     "CRYPTO_SYMBOLS",
     "CRYPTO_LOTS",
-    "ENABLE_CRYPTO_PAPER",
     "CRYPTO_NY_NBREAK_ENABLED",
     "CRYPTO_ICHIMOKU_ENABLED",
     "CRYPTO_DEPLOY_USD",
