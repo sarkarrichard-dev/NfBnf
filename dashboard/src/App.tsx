@@ -43,8 +43,8 @@ const LanesPanel = lazy(() =>
 const DayReviewPanel = lazy(() =>
   import('./components/DayReviewPanel').then((m) => ({ default: m.DayReviewPanel })),
 )
-const CryptoSetupPanel = lazy(() =>
-  import('./components/CryptoSetupPanel').then((m) => ({ default: m.CryptoSetupPanel })),
+const CryptoPanel = lazy(() =>
+  import('./components/CryptoPanel').then((m) => ({ default: m.CryptoPanel })),
 )
 
 type StatusResponse = {
@@ -141,6 +141,7 @@ function App() {
           { id: 'trade', label: 'Trade', badge: openCount || null },
           { id: 'strategies', label: 'Strategies' },
           { id: 'research', label: 'Research' },
+          { id: 'crypto', label: 'Crypto' },
           { id: 'setup', label: 'Setup' },
         ]}
         value={tab}
@@ -230,6 +231,14 @@ function App() {
         </div>
       ) : null}
 
+      {tab === 'crypto' ? (
+        <CollapsibleSection title="Crypto — Delta Exchange (paper)" defaultOpen>
+          <Suspense fallback={<PanelFallback />}>
+            <CryptoPanel />
+          </Suspense>
+        </CollapsibleSection>
+      ) : null}
+
       {tab === 'setup' ? (
         <div className="space-y-6">
           <div className="grid gap-6 xl:grid-cols-2">
@@ -246,11 +255,6 @@ function App() {
             <CollapsibleSection title="Strategy tuning (.env)" defaultOpen>
               <Suspense fallback={<PanelFallback />}>
                 <StrategyTuningPanel strategy={status.data?.strategy} />
-              </Suspense>
-            </CollapsibleSection>
-            <CollapsibleSection title="Crypto — Delta Exchange (paper)" defaultOpen>
-              <Suspense fallback={<PanelFallback />}>
-                <CryptoSetupPanel />
               </Suspense>
             </CollapsibleSection>
           </div>

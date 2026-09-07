@@ -12,9 +12,11 @@ import os
 
 from fastapi import APIRouter, Body, HTTPException
 
+from crypto import journal
 from crypto.config import PERP_SYMBOLS, crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient, DeltaError
+from crypto.session import crypto_day, ny_session_date
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +121,96 @@ def crypto_contracts() -> dict:
         }
         for sym, c in cs.items()
     }
+
+
+@router.get("/positions", include_in_schema=False)
+def crypto_positions() -> dict:
+    st = journal.load_state()
+    open_pos = [
+        {"key": k, **(v["position"])}
+        for k, v in st.items()
+        if ":" in k and isinstance(v, dict) and v.get("position")
+    ]
+    live: list = []
+    s = crypto_settings()
+    if s.credentials_ready:
+        try:
+            for p in DeltaClient(s).positions():
+                sz = _num(p.get("size")) or 0.0
+                if sz:
+                    live.append(
+                        {
+                            "symbol": p.get("product_symbol"),
+                            "size": sz,
+                            "entry_price": _num(p.get("entry_price")),
+                            "unrealized_pnl": _num(p.get("unrealized_pnl")),
+                        }
+                    )
+        except DeltaError as exc:
+            live = [{"error": str(exc)}]
+    return {"paper": open_pos, "live": live}
+
+
+@router.get("/journal", include_in_schema=False)
+def crypto_journal(limit: int = 100) -> dict:
+    return {"trades": journal.recent(max(1, min(500, limit)))}
+
+
+@router.get("/day", include_in_schema=False)
+def crypto_today() -> dict:
+    s = crypto_settings()
+    ny = ny_session_date(s.ny_start, s.ny_end)
+    utc = crypto_day()
+
+    def _sum(rows: list) -> dict:
+        return {
+            "trades": len(rows),
+            "wins": sum(1 for r in rows if float(r.get("pnl_usd") or 0) > 0),
+            "losses": sum(1 for r in rows if float(r.get("pnl_usd") or 0) < 0),
+            "net_usd": round(sum(float(r.get("pnl_usd") or 0) for r in rows), 2),
+            "net_inr": round(sum(float(r.get("pnl_inr") or 0) for r in rows), 0),
+        }
+
+    return {
+        "ny_session_date": ny,
+        "utc_date": utc,
+        "ny_n_break": _sum(journal.day_rows(ny, strategy="ny_n_break")),
+        "ichimoku": _sum(journal.day_rows(utc, strategy="ichimoku")),
+    }
+
+
+@router.post("/config", include_in_schema=False)
+def set_config(
+    deploy_usd: float | None = Body(None, embed=True),
+    leverage: float | None = Body(None, embed=True),
+    max_concurrent: int | None = Body(None, embed=True),
+    paper_enabled: bool | None = Body(None, embed=True),
+    ny_n_break_enabled: bool | None = Body(None, embed=True),
+    ichimoku_enabled: bool | None = Body(None, embed=True),
+) -> dict:
+    """Non-financial-in-paper knobs — plain write, no confirm (Delta keys are
+    the only crypto setting that needs the money-path treatment)."""
+    from index_ai.config import update_env_values
+
+    values: dict[str, str] = {}
+    if deploy_usd is not None:
+        values["CRYPTO_DEPLOY_USD"] = str(max(100.0, float(deploy_usd)))
+    if leverage is not None:
+        values["CRYPTO_LEVERAGE"] = str(min(100.0, max(1.0, float(leverage))))
+    if max_concurrent is not None:
+        values["CRYPTO_MAX_CONCURRENT"] = str(min(10, max(1, int(max_concurrent))))
+    if paper_enabled is not None:
+        values["ENABLE_CRYPTO_PAPER"] = "true" if paper_enabled else "false"
+    if ny_n_break_enabled is not None:
+        values["CRYPTO_NY_NBREAK_ENABLED"] = "true" if ny_n_break_enabled else "false"
+    if ichimoku_enabled is not None:
+        values["CRYPTO_ICHIMOKU_ENABLED"] = "true" if ichimoku_enabled else "false"
+    if not values:
+        raise HTTPException(400, "No settings provided.")
+    update_env_values(values)
+    for k, v in values.items():
+        os.environ[k] = v
+    return {"saved": list(values.keys()), "status": crypto_status()}
 
 
 @router.post("/credentials", include_in_schema=False)
