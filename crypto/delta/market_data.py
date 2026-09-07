@@ -34,6 +34,13 @@ _TTL = 5.0
 _cache: dict[str, tuple[float, Any]] = {}
 
 
+def _f(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def _cached(key: str, ttl: float, produce):
     now = time.monotonic()
     hit = _cache.get(key)
@@ -123,11 +130,13 @@ def candles(
                 o, h, low, cl, vol = k.get("open"), k.get("high"), k.get("low"), k.get("close"), k.get("volume")
             else:
                 continue
+            o, h, low, cl = _f(o), _f(h), _f(low), _f(cl)
+            if not (o > 0 and h > 0 and low > 0 and cl > 0) or ts in (None, ""):
+                continue  # skip a malformed candle rather than poison the frame
             rows.append(
                 {
-                    "datetime": datetime.fromtimestamp(int(ts), tz=timezone.utc),
-                    "open": float(o), "high": float(h), "low": float(low),
-                    "close": float(cl), "volume": float(vol or 0),
+                    "datetime": datetime.fromtimestamp(int(_f(ts)), tz=timezone.utc),
+                    "open": o, "high": h, "low": low, "close": cl, "volume": _f(vol),
                 }
             )
 

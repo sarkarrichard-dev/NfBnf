@@ -18,7 +18,7 @@ from crypto import journal, notify
 from crypto.charges import round_trip_cost_usd
 from crypto.config import PERP_SYMBOLS, crypto_settings
 from crypto.delta import market_data, products
-from crypto.delta.client import DeltaClient, DeltaError
+from crypto.delta.client import DeltaClient
 from crypto.session import crypto_day, in_ny_window, ny_session_date
 from crypto.sizing import size_position
 from crypto.strategies import ichimoku as ichi
@@ -62,13 +62,13 @@ def _stop_price(side: str, entry: float, sl_pct: float) -> float | None:
 def _fx_rate(client: DeltaClient, s) -> float:
     if s.credentials_ready:
         try:
-            bal = client.wallet()
-            usd = sum(float(w.get("balance") or 0) for w in bal)
-            inr = sum(float(w.get("balance_inr") or 0) for w in bal)
+            bal = client.wallet() or []
+            usd = sum(float(w.get("balance") or 0) for w in bal if isinstance(w, dict))
+            inr = sum(float(w.get("balance_inr") or 0) for w in bal if isinstance(w, dict))
             if usd > 0 and inr > 0:
                 return inr / usd
-        except DeltaError:
-            pass
+        except Exception:
+            logger.debug("crypto fx from wallet failed, using fallback", exc_info=True)
     try:
         return float(os.getenv("CRYPTO_USDINR", "88") or 88)
     except ValueError:
@@ -83,11 +83,18 @@ def scan_crypto_paper(client: DeltaClient | None = None) -> list[dict[str, Any]]
     s = crypto_settings()
     if not s.paper_enabled:
         return []
-    client = client or DeltaClient(s)
+    try:
+        return _scan(s, client)
+    except Exception as exc:  # the "never raises" contract — the loop must survive
+        logger.warning("crypto scan aborted", exc_info=True)
+        return [{"event": "error", "where": "scan", "error": str(exc)}]
 
+
+def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
+    client = client or DeltaClient(s)
     try:
         contracts = products.all_contracts(client)
-    except DeltaError as exc:
+    except Exception as exc:
         return [{"event": "error", "where": "products", "error": str(exc)}]
 
     st = journal.load_state()
@@ -127,30 +134,52 @@ def scan_crypto_paper(client: DeltaClient | None = None) -> list[dict[str, Any]]
                     ch = _closed(market_data.candles(sym, s.ichimoku_tf, days=days, client=client))
                     new_state, ev = ichi.step(sym, ch, state=slot.get("strategy"), cfg=_ichi_cfg(s))
                     day = crypto_day(now_utc)
-            except (DeltaError, ValueError, KeyError) as exc:
+
+                slot["strategy"] = new_state
+                action = ev.get("event")
+
+                if action == "enter":
+                    _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, open_slots)
+                    if slot.get("position"):
+                        open_slots += 1
+                elif action == "exit":
+                    row = _build_exit_row(ev, slot, strat, sym, fx)
+                    if row is not None:
+                        slot["position"] = None
+                        st[key] = slot
+                        journal.save_state(st)  # persist the close BEFORE journalling it
+                        if not _already_journalled(row["exit_id"]):
+                            journal.journal(row)
+                            notify.closed(row)
+                        open_slots = max(0, open_slots - 1)
+                        ev.update(pnl_usd=row["pnl_usd"], pnl_inr=row["pnl_inr"])
+            except Exception as exc:
                 events.append({"event": "error", "strategy": strat, "asset": sym, "error": str(exc)})
                 continue
 
-            slot["strategy"] = new_state
-            action = ev.get("event")
-
-            if action == "enter":
-                _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, open_slots)
-                if slot.get("position"):
-                    open_slots += 1
-            elif action == "exit":
-                _apply_exit(ev, slot, strat, sym, fx)
-                open_slots = max(0, open_slots - 1)
-
             st[key] = slot
+            try:
+                journal.save_state(st)  # persist each symbol's change as it happens
+            except OSError:
+                logger.warning("crypto_state.json write failed", exc_info=True)
             events.append(ev)
 
     _maybe_day_summary(st, s, in_ny, ny_date)
-    journal.save_state(st)
+    try:
+        journal.save_state(st)
+    except OSError:
+        pass
     return events
 
 
+def _already_journalled(exit_id: str) -> bool:
+    return any(r.get("exit_id") == exit_id for r in journal.recent(200))
+
+
 def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, open_slots):
+    if slot.get("position"):  # defensive — the engine already guards, but never double-open
+        ev.update(event="hold", reason="position already open")
+        return
     if open_slots >= s.max_concurrent:
         new_state["position"] = None
         ev.update(event="wait", reason=f"max {s.max_concurrent} concurrent positions")
@@ -179,10 +208,13 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
     notify.opened(pos)
 
 
-def _apply_exit(ev, slot, strat, sym, fx):
+def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
+    """The closed-trade row. Does NOT persist — the caller saves state (position
+    cleared) before appending this, so a crash between the two loses a record
+    rather than double-counting P&L."""
     pos = slot.get("position")
     if not pos:
-        return
+        return None
     exit_px = float(ev["price"])
     direction = 1 if pos["side"] == "long" else -1
     coins = float(pos["size"]) * float(pos["contract_value"])
@@ -191,8 +223,10 @@ def _apply_exit(ev, slot, strat, sym, fx):
         float(pos["notional_usd"]), sym, exit_px, float(pos["size"]), float(pos["contract_value"])
     )
     pnl_usd = gross - cost
-    row = {
+    return {
         "venue": "delta", "day": pos["day"], "strategy": strat, "asset": sym,
+        "exit_id": f"{strat}:{sym}:{pos.get('entry_time')}:{pos.get('opened_at')}",
+        "opened_at": pos.get("opened_at"),
         "side": pos["side"], "size": pos["size"], "leverage": pos["leverage"],
         "entry_price": pos["entry_price"], "entry_time": pos["entry_time"],
         "exit_price": exit_px, "exit_time": ev.get("ts"),
@@ -202,10 +236,6 @@ def _apply_exit(ev, slot, strat, sym, fx):
         "exit_reason": ev.get("reason"),
         "features": {},  # populated in Phase 3
     }
-    journal.journal(row)
-    notify.closed(row)
-    slot["position"] = None
-    ev.update(pnl_usd=row["pnl_usd"], pnl_inr=row["pnl_inr"])
 
 
 def _maybe_day_summary(st: dict[str, Any], s, in_ny: bool, ny_date: str) -> None:

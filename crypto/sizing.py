@@ -16,6 +16,13 @@ from crypto.delta.products import Contract
 _WALLET_SAFETY = 0.90  # keep 10% of the bankroll free
 _FEE_BUFFER = 1.02     # margin headroom over the raw notional/leverage figure
 
+# Plausible mark-price band per asset — rejects a corrupted feed or a units
+# mix-up before it silently sizes the position 10x off. Wide on purpose.
+_SANE_PRICE = {
+    "BTCUSD": (1_000.0, 10_000_000.0),
+    "ETHUSD": (10.0, 1_000_000.0),
+}
+
 
 @dataclass(frozen=True)
 class SizingResult:
@@ -47,6 +54,9 @@ def size_position(
     mark = float(mark_price)
     if mark <= 0 or contract.contract_value <= 0:
         return _fail("no usable mark price / contract value", lev=lev)
+    lo, hi = _SANE_PRICE.get(contract.symbol.upper(), (0.0, float("inf")))
+    if not (lo <= mark <= hi):
+        return _fail(f"mark {mark:,.2f} outside the sane band for {contract.symbol}", mark=mark, lev=lev)
 
     per_contract_notional = contract.contract_value * mark
     margin1 = per_contract_notional / lev * _FEE_BUFFER
@@ -55,7 +65,8 @@ def size_position(
 
     size = int(math.floor(deploy / margin1))
     if size < 1:
-        if allow_min_one and margin1 <= wallet_usd * _WALLET_SAFETY:
+        # allow_min_one still refuses to deploy far past the operator's intent
+        if allow_min_one and margin1 <= min(wallet_usd * _WALLET_SAFETY, deploy * 2.0):
             size = 1
         else:
             return _fail(

@@ -42,6 +42,13 @@ def test_sizing_hundred_dollars_three_x():
     assert not r2.ok
 
 
+def test_sizing_rejects_an_insane_mark():
+    btc = Contract("BTCUSD", 27, 0.001, 0.5, 1, 100)
+    # a 10x-off / corrupted feed price is refused, not silently sized off
+    assert not size_position(btc, 6.0, deploy_usd=100, leverage=3, wallet_usd=2000).ok
+    assert not size_position(btc, 60_000_000, deploy_usd=100, leverage=3, wallet_usd=1e9).ok
+
+
 # ---------------------------------------------------------------------------
 # strategy engines
 # ---------------------------------------------------------------------------
@@ -158,19 +165,21 @@ def paper_env(tmp_path, monkeypatch):
     monkeypatch.setattr(notify, "closed", lambda r: closed.append(r))
     monkeypatch.setattr(notify, "day_summary", lambda *a, **k: None)
     # a 5m frame whose last *closed* bar (after the forming bar is dropped) is a
-    # fresh re-break above the swing high at 135
-    closes = (
+    # fresh re-break above the swing high — scaled to a realistic BTC price so the
+    # sizer's sanity band accepts the mark
+    base = (
         list(range(100, 131))
         + [131, 132, 133, 134, 135, 134, 133, 132]
         + [133, 131, 129, 128, 128, 129, 130, 132, 133, 134, 134, 133, 134, 136, 130]
     )
+    closes = [c * 450.0 for c in base]
     df5 = pd.DataFrame(
         {
             "datetime": pd.date_range("2026-09-07 18:00", periods=len(closes), freq="5min", tz=IST),
-            "open": [float(c) for c in closes],
-            "high": [float(c) + 1 for c in closes],
-            "low": [float(c) - 1 for c in closes],
-            "close": [float(c) for c in closes],
+            "open": closes,
+            "high": [c + 450 for c in closes],
+            "low": [c - 450 for c in closes],
+            "close": closes,
             "volume": [10.0] * len(closes),
         }
     )
@@ -211,6 +220,36 @@ def test_lane_opens_and_journals_a_paper_trade(paper_env, monkeypatch):
     assert "pnl_usd" in row and "pnl_inr" in row and row["fx_usdinr"] == 88.0
     assert journal.load_state()["ny_n_break:BTCUSD"]["position"] is None
     assert len(paper_env["closed"]) == 1
+
+    # simulate a crash between the journal append and the state save: both the
+    # lane position and the strategy position come back. Next scan must NOT
+    # double-count — the exit_id already in the journal is honoured.
+    st = journal.load_state()
+    pos = {
+        "strategy": "ny_n_break",
+        "asset": "BTCUSD",
+        "side": "long",
+        "day": "2026-09-07",
+        "entry_price": row["entry_price"],
+        "entry_time": row["entry_time"],
+        "opened_at": row.get("opened_at"),
+        "size": row["size"],
+        "contract_value": 0.001,
+        "leverage": row["leverage"],
+        "margin_total_usd": row["margin_usd"],
+        "notional_usd": row["notional_usd"],
+        "stop_price": None,
+    }
+    st["ny_n_break:BTCUSD"]["position"] = dict(pos)
+    st["ny_n_break:BTCUSD"]["strategy"]["position"] = {
+        "side": "long",
+        "entry_price": row["entry_price"],
+        "entry_time": row["entry_time"],
+    }
+    journal.save_state(st)
+    lanes.scan_crypto_paper()  # session still over → strategy re-emits "exit"
+    assert len(journal.recent()) == 1  # still one row, not two
+    assert journal.load_state()["ny_n_break:BTCUSD"]["position"] is None
 
 
 def test_lane_noop_when_disabled(monkeypatch):
