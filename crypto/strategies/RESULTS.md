@@ -37,7 +37,7 @@ net − (near-breakeven on a 20-day slice, −$1,128 over 45 days). The losses a
 structural (5m scalp friction), not a parameter-tuning problem.
 `tuned_params()` therefore returns `{}` and the strategies use their defaults.
 
-## Verdict
+## Verdict (the three video strategies)
 
 **None of the three is enabled.** All stay as dormant modules
 (`CRYPTO_{EMA_JAGUAR,BB_REVERSAL,VP_EDGE}_ENABLED` default `false`, no chip on
@@ -47,4 +47,39 @@ real costs; friction is the binding constraint. `retune_all()` still runs
 nightly — if the walk-forward net ever turns stably positive as more history
 accumulates, flip the flag.
 
-The two live crypto strategies remain **`ny_n_break`** (6 PM) and **`ichimoku`**.
+---
+
+# candle_renko — 2026-09-08
+
+Richard's own spec: 5-minute candlestick reversal bar (engulfing / hammer /
+shooting-star) gated by a 15-minute Supertrend trend and an ATR-sized Renko
+brick-direction agreement; exit on the P&L trailing engine or a 15m Supertrend
+flip. Module `crypto/strategies/candle_renko.py`.
+
+## Backtest — video-style defaults (atr_len 14, renko_atr_mult 1.0, st 10/3.0), 90 days
+
+| symbol | trades | net USD | win rate |
+|---|---:|---:|---:|
+| BTCUSD | 1233 | **−$2,026** | 22% |
+| ETHUSD | 1217 | **−$570** | 22% |
+| SOLUSD | 1188 | **−$2,619** | 24% |
+| **total** | **3638** | **−$5,215** | 22% |
+
+~40 trades/day, `avg win $3.24` vs `avg loss −$2.77` — the same ~1:1 payoff at a
+~22% hit rate that sank the three video strategies, and the triple filter
+(pattern + Supertrend + Renko) barely thins the trade count. Structurally the
+worst of the four candidates on raw net.
+
+## Status
+
+**Enabled anyway, at Richard's explicit request (2026-09-08): "make the renko
+supertrand not dormant but an active strategy."** `CRYPTO_CANDLE_RENKO_ENABLED`
+defaults `true`; it runs in the paper lane alongside `ny_n_break` and
+`ichimoku`. Live orders still need `CRYPTO_TRADING_MODE=LIVE` +
+`CRYPTO_ALLOW_LIVE=true` + the arm phrase — **do not arm it live**: on this
+measurement it loses about as fast as fees can take it. `retune_all()` tunes it
+nightly through `crypto/ml/optimize.py` (`SEARCH_SPACE["candle_renko"]`); the
+walk-forward OOS result is the number to watch before it goes near live.
+
+The live crypto strategies are now **`ny_n_break`** (6 PM), **`ichimoku`**, and
+**`candle_renko`** (paper only until it clears the cost floor).

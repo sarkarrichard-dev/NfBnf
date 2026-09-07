@@ -13,6 +13,7 @@ import os
 from fastapi import APIRouter, Body, HTTPException
 
 from crypto import charges, executor, journal, sizing
+from crypto._util import num
 from crypto.ml import gate as ml_gate
 from crypto.ml import model as ml_model
 from crypto.config import crypto_settings
@@ -46,14 +47,17 @@ def crypto_status() -> dict:
         "credentials_ready": s.credentials_ready,
         "api_key_preview": _mask(s.api_key),
         "base_url": s.base_url,
-        "lanes": {"ny_n_break": s.ny_nbreak_enabled, "ichimoku": s.ichimoku_enabled},
+        "lanes": {
+            "ny_n_break": s.ny_nbreak_enabled,
+            "ichimoku": s.ichimoku_enabled,
+            "candle_renko": s.candle_renko_enabled,
+        },
         "sizing": {
             "lots": s.lots,
             "deploy_cap_usd": s.deploy_usd,
             "leverage": s.leverage,
             "max_concurrent": s.max_concurrent,
             "paper_bankroll_usd": s.paper_bankroll_usd,
-            "allow_min_one": s.allow_min_one,
         },
         "session_ist": {"start": s.ny_start, "end": s.ny_end},
         "ichimoku_tf": s.ichimoku_tf,
@@ -166,10 +170,7 @@ def _health_blocking() -> dict:
 
 
 def _num(v) -> float | None:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
+    return num(v, None)
 
 
 @router.get("/health", include_in_schema=False)

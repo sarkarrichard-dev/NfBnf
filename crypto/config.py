@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from crypto._util import env_float as _f
 from index_ai.config import MEMORY_DIR, _load_env
 
 # crypto journals / caches live alongside the index ones
@@ -38,13 +39,6 @@ def _b(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _f(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        return default
 
 
 def _i(name: str, default: int) -> int:
@@ -84,10 +78,11 @@ class CryptoSettings:
     leverage: float            # fixed 100x for crypto; clamped per-product at runtime
     max_concurrent: int
     paper_bankroll_usd: float
-    allow_min_one: bool        # take 1 contract even if 1-contract margin > deploy_usd
-    # lanes — the section runs when any strategy is enabled. The 3 video
-    # strategies default off; they turn on only after crypto/ml/optimize.py
-    # shows a stable positive walk-forward net (per crypto/strategies/RESULTS.md).
+    # lanes — the section runs when any strategy is enabled. ny_n_break,
+    # ichimoku and candle_renko default on. The 3 video strategies
+    # (bb_reversal / ema_jaguar / vp_edge) default off: they turn on only after
+    # crypto/ml/optimize.py shows a stable positive walk-forward net (per
+    # crypto/strategies/RESULTS.md).
     ny_nbreak_enabled: bool
     ichimoku_enabled: bool
     bb_reversal_enabled: bool
@@ -139,13 +134,12 @@ def crypto_settings() -> CryptoSettings:
         leverage=max(1.0, _f("CRYPTO_LEVERAGE", 100.0)),
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
         paper_bankroll_usd=max(100.0, _f("CRYPTO_PAPER_BANKROLL", 2000.0)),
-        allow_min_one=_b("CRYPTO_ALLOW_MIN_ONE", False),
         ny_nbreak_enabled=_b("CRYPTO_NY_NBREAK_ENABLED", True),
         ichimoku_enabled=_b("CRYPTO_ICHIMOKU_ENABLED", True),
         bb_reversal_enabled=_b("CRYPTO_BB_REVERSAL_ENABLED", False),
         ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
         vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
-        candle_renko_enabled=_b("CRYPTO_CANDLE_RENKO_ENABLED", False),
+        candle_renko_enabled=_b("CRYPTO_CANDLE_RENKO_ENABLED", True),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
@@ -177,7 +171,6 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_LEVERAGE",
     "CRYPTO_MAX_CONCURRENT",
     "CRYPTO_PAPER_BANKROLL",
-    "CRYPTO_ALLOW_MIN_ONE",
     "CRYPTO_NY_START",
     "CRYPTO_NY_END",
     "CRYPTO_ICHIMOKU_TF",

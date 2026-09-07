@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from crypto._util import num as _f
+
 # per-asset one-hot — a fixed set so the vector width is stable; anything else
 # lands in ``asset_other``. Extend when a new symbol has enough trades to matter.
 _ASSETS: tuple[str, ...] = ("BTCUSD", "ETHUSD", "SOLUSD", "PAXGUSD", "XRPUSD")
@@ -27,14 +29,6 @@ FEATURES: tuple[str, ...] = (
     *(f"is_{a.lower()}" for a in _ASSETS),
     "asset_other",
 )
-
-
-def _f(v: Any, default: float = 0.0) -> float:
-    try:
-        out = float(v)
-        return out if out == out else default  # NaN guard
-    except (TypeError, ValueError):
-        return default
 
 
 def entry_snapshot(strat: str, sym: str, frame: Any, side: str) -> dict[str, Any]:

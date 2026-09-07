@@ -161,6 +161,7 @@ def test_journal_roundtrip(tmp_path, monkeypatch):
 def paper_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_CANDLE_RENKO_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,ETHUSD")
     monkeypatch.setenv("CRYPTO_USDINR", "88")
     monkeypatch.setenv("CRYPTO_PAPER_BANKROLL", "5000")
@@ -275,5 +276,6 @@ def test_lane_opens_and_journals_a_paper_trade(paper_env, monkeypatch):
 def test_lane_noop_when_disabled(monkeypatch):
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_CANDLE_RENKO_ENABLED", "false")
     assert lanes.scan_crypto_paper() == []
     assert lanes.enabled() is False
