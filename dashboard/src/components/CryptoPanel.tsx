@@ -49,11 +49,15 @@ type Trade = {
   exit_reason?: string
 }
 
+const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const num = (v: number | null | undefined, d = 2) =>
-  v == null ? '—' : v.toLocaleString(undefined, { maximumFractionDigits: d })
-const money = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-const rupees = (v: number) => `${v >= 0 ? '+' : '−'}₹${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-const pnlCls = (v: number) => (v > 0 ? 'text-emerald-300' : v < 0 ? 'text-rose-300' : 'text-slate-400')
+  ok(v) ? v.toLocaleString(undefined, { maximumFractionDigits: d }) : '—'
+const money = (v: number | null | undefined) =>
+  ok(v) ? `${v >= 0 ? '+' : '−'}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'
+const rupees = (v: number | null | undefined) =>
+  ok(v) ? `${v >= 0 ? '+' : '−'}₹${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'
+const pnlCls = (v: number | null | undefined) =>
+  ok(v) && v > 0 ? 'text-emerald-300' : ok(v) && v < 0 ? 'text-rose-300' : 'text-slate-400'
 
 function DayCard({ title, s }: { title: string; s: DaySum }) {
   return (
@@ -230,7 +234,9 @@ export function CryptoPanel() {
                     </td>
                     <td className={pnlCls(p.unrealized_usd)}>
                       {money(p.unrealized_usd)} <span className="text-slate-600">{rupees(p.unrealized_inr)}</span>
-                      {p.unrealized_pct ? <span className="text-slate-600"> ({p.unrealized_pct > 0 ? '+' : ''}{p.unrealized_pct}%)</span> : null}
+                      {ok(p.unrealized_pct) && p.unrealized_pct !== 0 ? (
+                        <span className="text-slate-600"> ({p.unrealized_pct > 0 ? '+' : ''}{p.unrealized_pct}%)</span>
+                      ) : null}
                     </td>
                     <td className="text-slate-400">
                       ${num(p.margin_total_usd)} · {num(p.leverage, 0)}x

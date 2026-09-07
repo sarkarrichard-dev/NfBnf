@@ -161,18 +161,24 @@ def crypto_positions() -> dict:
         if sym and sym not in marks:
             try:
                 marks[sym] = _num(market_data.ticker(sym, client=client).get("mark_price")) or 0.0
-            except DeltaError:
+            except Exception:
                 marks[sym] = 0.0
         mark = marks.get(sym, 0.0)
         direction = 1 if p.get("side") == "long" else -1
         coins = float(p.get("size") or 0) * float(p.get("contract_value") or 0)
-        upnl = (mark - float(p.get("entry_price") or 0)) * direction * coins if mark else 0.0
-        p["mark"] = mark
-        p["unrealized_usd"] = round(upnl, 2)
-        p["unrealized_inr"] = round(upnl * fx, 0)
-        notional = float(p.get("notional_usd") or 0)
-        p["unrealized_pct"] = round(upnl / notional * 100.0, 2) if notional else 0.0
-        open_pnl_usd += upnl
+        if mark > 0 and coins > 0:
+            upnl = (mark - float(p.get("entry_price") or 0)) * direction * coins
+            notional = float(p.get("notional_usd") or 0)
+            p["mark"] = round(mark, 2)
+            p["unrealized_usd"] = round(upnl, 2)
+            p["unrealized_inr"] = round(upnl * fx, 0)
+            p["unrealized_pct"] = round(upnl / notional * 100.0, 2) if notional else None
+            open_pnl_usd += upnl
+        else:  # no live mark — show the position but not a fake $0 P&L
+            p["mark"] = None
+            p["unrealized_usd"] = None
+            p["unrealized_inr"] = None
+            p["unrealized_pct"] = None
         open_pos.append({"key": k, **p})
 
     live: list = []
