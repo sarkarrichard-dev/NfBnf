@@ -75,9 +75,14 @@ class CryptoSettings:
     max_concurrent: int
     paper_bankroll_usd: float
     allow_min_one: bool        # take 1 contract even if 1-contract margin > deploy_usd
-    # lanes — the section runs when either strategy is enabled
+    # lanes — the section runs when any strategy is enabled. The 3 video
+    # strategies default off; they turn on only after crypto/ml/optimize.py
+    # shows a stable positive walk-forward net (per crypto/strategies/RESULTS.md).
     ny_nbreak_enabled: bool
     ichimoku_enabled: bool
+    bb_reversal_enabled: bool
+    ema_jaguar_enabled: bool
+    vp_edge_enabled: bool
     # 6 PM (NY N-Break) session window, IST, 24h "HH:MM"
     ny_start: str
     ny_end: str
@@ -126,6 +131,9 @@ def crypto_settings() -> CryptoSettings:
         allow_min_one=_b("CRYPTO_ALLOW_MIN_ONE", False),
         ny_nbreak_enabled=_b("CRYPTO_NY_NBREAK_ENABLED", True),
         ichimoku_enabled=_b("CRYPTO_ICHIMOKU_ENABLED", True),
+        bb_reversal_enabled=_b("CRYPTO_BB_REVERSAL_ENABLED", False),
+        ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
+        vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
@@ -149,6 +157,9 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_LOTS",
     "CRYPTO_NY_NBREAK_ENABLED",
     "CRYPTO_ICHIMOKU_ENABLED",
+    "CRYPTO_BB_REVERSAL_ENABLED",
+    "CRYPTO_EMA_JAGUAR_ENABLED",
+    "CRYPTO_VP_EDGE_ENABLED",
     "CRYPTO_DEPLOY_USD",
     "CRYPTO_LEVERAGE",
     "CRYPTO_MAX_CONCURRENT",

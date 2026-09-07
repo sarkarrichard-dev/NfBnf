@@ -42,6 +42,27 @@ def pivot_low(series: pd.Series, left: int, right: int) -> pd.Series:
     return s.where(s <= win_min).shift(right)
 
 
+def bollinger(series: pd.Series, length: int, dev: float) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """(mid, upper, lower) — SMA ± dev·stdev (population)."""
+    s = series.astype(float)
+    mid = s.rolling(length, min_periods=length).mean()
+    sd = s.rolling(length, min_periods=length).std(ddof=0)
+    return mid, mid + dev * sd, mid - dev * sd
+
+
+def cross_dir(a: pd.Series, b: pd.Series) -> int:
+    """+1 if ``a`` closed the last bar crossing above ``b``, -1 if below, else 0."""
+    if len(a) < 2 or len(b) < 2:
+        return 0
+    a0, a1 = float(a.iloc[-2]), float(a.iloc[-1])
+    b0, b1 = float(b.iloc[-2]), float(b.iloc[-1])
+    if a0 <= b0 and a1 > b1:
+        return 1
+    if a0 >= b0 and a1 < b1:
+        return -1
+    return 0
+
+
 def crossed_over(series: pd.Series, level: float) -> bool:
     """True if the last closed bar crossed up through ``level``."""
     if level is None or len(series) < 2:
@@ -72,4 +93,9 @@ if __name__ == "__main__":  # self-check
     assert abs(ema(df["close"], 3).iloc[-1] - 12.36) < 0.2
     v = anchored_vwap(df)
     assert len(v) == 10 and v.notna().all()
+    mid, up, lo = bollinger(df["close"], 3, 2.0)
+    assert (up.dropna() >= mid.dropna()).all() and (lo.dropna() <= mid.dropna()).all()
+    assert cross_dir(pd.Series([1.0, 3.0]), pd.Series([2.0, 2.0])) == 1
+    assert cross_dir(pd.Series([3.0, 1.0]), pd.Series([2.0, 2.0])) == -1
+    assert cross_dir(pd.Series([1.0, 1.5]), pd.Series([2.0, 2.0])) == 0
     print("crypto.strategies.indicators self-check ok")
