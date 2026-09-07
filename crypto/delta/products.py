@@ -141,11 +141,14 @@ def all_contracts(client: DeltaClient | None = None) -> dict[str, Contract]:
 
 
 def available_symbols(client: DeltaClient | None = None) -> list[str]:
-    """Every perp Delta currently lists — the full picklist for the dashboard."""
+    """The dashboard picklist: the CRYPTO_ALLOWLIST coins Delta lists live."""
+    from crypto.config import CRYPTO_ALLOWLIST
+
     try:
-        return sorted(_blob(client)["contracts"].keys())
+        live = set(_blob(client)["contracts"].keys())
     except Exception:
         return []
+    return [s for s in CRYPTO_ALLOWLIST if s in live]
 
 
 if __name__ == "__main__":  # self-check — no network (uses a fake blob)
@@ -161,10 +164,13 @@ if __name__ == "__main__":  # self-check — no network (uses a fake blob)
                         "tick_size": 0.1, "min_size": 1, "max_leverage": 100},
         },
     }
+    _mem["contracts"]["FOOUSD"] = {"symbol": "FOOUSD", "product_id": 9, "contract_value": 1.0,
+                                   "tick_size": 0.1, "min_size": 1, "max_leverage": 50}
     c = get("btcusd")
     assert c and c.usable and c.product_id == 27
     assert get("DOGEUSD") is None
-    assert sorted(available_symbols()) == ["BTCUSD", "PAXGUSD"]
+    # available_symbols is the allowlist ∩ live — FOOUSD (not on the allowlist) is hidden
+    assert available_symbols() == ["BTCUSD", "PAXGUSD"]
     _o.environ["CRYPTO_SYMBOLS"] = "PAXGUSD,DOGEUSD"  # DOGE not in cache → dropped
     assert set(all_contracts()) == {"PAXGUSD"}
     _o.environ.pop("CRYPTO_SYMBOLS")

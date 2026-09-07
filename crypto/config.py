@@ -18,9 +18,18 @@ CRYPTO_MEMORY = MEMORY_DIR
 
 DELTA_PROD_URL = "https://api.india.delta.exchange"
 
-# Default perpetual contracts. Override at runtime with CRYPTO_SYMBOLS (a
-# comma-separated list) — see crypto_settings().symbols. A symbol Delta does not
-# list live is dropped by crypto/delta/products.py, never fabricated.
+# The only coins this section will trade (Richard, 2026-09-08). The dashboard
+# picklist is this list intersected with the perps Delta lists live
+# (crypto/delta/products.available_symbols); USDT / USDC are the quote asset,
+# not tradable perps, so they are not here. "PaxUsd" = PAXGUSD (PAX Gold).
+CRYPTO_ALLOWLIST: tuple[str, ...] = (
+    "BTCUSD", "ETHUSD", "BNBUSD", "XRPUSD", "SOLUSD",
+    "TRXUSD", "DOGEUSD", "ADAUSD", "PAXGUSD",
+)
+
+# Default active set. Override at runtime with CRYPTO_SYMBOLS (a comma-separated
+# list, validated against the allowlist). A symbol Delta does not list live is
+# dropped by crypto/delta/products.py, never fabricated.
 PERP_SYMBOLS: tuple[str, ...] = ("BTCUSD", "ETHUSD", "SOLUSD", "PAXGUSD")
 
 
@@ -53,11 +62,12 @@ def _mode(name: str) -> str:
 def _symbols() -> tuple[str, ...]:
     raw = os.getenv("CRYPTO_SYMBOLS", "")
     picked = [x.strip().upper() for x in raw.split(",") if x.strip()]
+    allow = set(CRYPTO_ALLOWLIST)
     out: list[str] = []
     for s in picked or PERP_SYMBOLS:
-        if s not in out:
+        if s in allow and s not in out:
             out.append(s)
-    return tuple(out)
+    return tuple(out or PERP_SYMBOLS)
 
 
 @dataclass(frozen=True)

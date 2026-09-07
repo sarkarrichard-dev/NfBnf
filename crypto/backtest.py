@@ -193,14 +193,15 @@ def backtest_simple(name: str, sym: str, days: float, s, *, cfg_overrides: dict 
     module, tf, make_cfg = _SIMPLE[name]
     contract = _contract(sym)
     fr = frame if frame is not None else market_data.candles(sym, tf, days=days)
-    if len(fr) < _WINDOW + 10:
+    win_n = 160  # these strategies need << the shared _WINDOW (EMA89 / VP128 / BB30)
+    if len(fr) < win_n + 10:
         return []
     cfg = make_cfg(s, **(cfg_overrides or {}))
     state: dict[str, Any] | None = None
     open_pos: dict[str, Any] | None = None
     trades: list[Trade] = []
-    for i in range(_WINDOW, len(fr)):
-        win = fr.iloc[i - _WINDOW : i + 1].reset_index(drop=True)
+    for i in range(win_n, len(fr)):
+        win = fr.iloc[i - win_n : i + 1].reset_index(drop=True)
         state, ev = module.step(sym, win, state=state, cfg=cfg)
         px = float(win["close"].iloc[-1])
         ts = win["datetime"].iloc[-1]
