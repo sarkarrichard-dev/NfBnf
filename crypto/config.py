@@ -18,9 +18,18 @@ CRYPTO_MEMORY = MEMORY_DIR
 
 DELTA_PROD_URL = "https://api.india.delta.exchange"
 
-# Default perpetual contracts. Override at runtime with CRYPTO_SYMBOLS (a
-# comma-separated list) — see crypto_settings().symbols. A symbol Delta does not
-# list live is dropped by crypto/delta/products.py, never fabricated.
+# The only coins this section will trade (Richard, 2026-09-08). The dashboard
+# picklist is this list intersected with the perps Delta lists live
+# (crypto/delta/products.available_symbols); USDT / USDC are the quote asset,
+# not tradable perps, so they are not here. "PaxUsd" = PAXGUSD (PAX Gold).
+CRYPTO_ALLOWLIST: tuple[str, ...] = (
+    "BTCUSD", "ETHUSD", "BNBUSD", "XRPUSD", "SOLUSD",
+    "TRXUSD", "DOGEUSD", "ADAUSD", "PAXGUSD",
+)
+
+# Default active set. Override at runtime with CRYPTO_SYMBOLS (a comma-separated
+# list, validated against the allowlist). A symbol Delta does not list live is
+# dropped by crypto/delta/products.py, never fabricated.
 PERP_SYMBOLS: tuple[str, ...] = ("BTCUSD", "ETHUSD", "SOLUSD", "PAXGUSD")
 
 
@@ -53,11 +62,12 @@ def _mode(name: str) -> str:
 def _symbols() -> tuple[str, ...]:
     raw = os.getenv("CRYPTO_SYMBOLS", "")
     picked = [x.strip().upper() for x in raw.split(",") if x.strip()]
+    allow = set(CRYPTO_ALLOWLIST)
     out: list[str] = []
     for s in picked or PERP_SYMBOLS:
-        if s not in out:
+        if s in allow and s not in out:
             out.append(s)
-    return tuple(out)
+    return tuple(out or PERP_SYMBOLS)
 
 
 @dataclass(frozen=True)
@@ -75,9 +85,14 @@ class CryptoSettings:
     max_concurrent: int
     paper_bankroll_usd: float
     allow_min_one: bool        # take 1 contract even if 1-contract margin > deploy_usd
-    # lanes — the section runs when either strategy is enabled
+    # lanes — the section runs when any strategy is enabled. The 3 video
+    # strategies default off; they turn on only after crypto/ml/optimize.py
+    # shows a stable positive walk-forward net (per crypto/strategies/RESULTS.md).
     ny_nbreak_enabled: bool
     ichimoku_enabled: bool
+    bb_reversal_enabled: bool
+    ema_jaguar_enabled: bool
+    vp_edge_enabled: bool
     # 6 PM (NY N-Break) session window, IST, 24h "HH:MM"
     ny_start: str
     ny_end: str
@@ -126,6 +141,9 @@ def crypto_settings() -> CryptoSettings:
         allow_min_one=_b("CRYPTO_ALLOW_MIN_ONE", False),
         ny_nbreak_enabled=_b("CRYPTO_NY_NBREAK_ENABLED", True),
         ichimoku_enabled=_b("CRYPTO_ICHIMOKU_ENABLED", True),
+        bb_reversal_enabled=_b("CRYPTO_BB_REVERSAL_ENABLED", False),
+        ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
+        vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
@@ -149,6 +167,9 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_LOTS",
     "CRYPTO_NY_NBREAK_ENABLED",
     "CRYPTO_ICHIMOKU_ENABLED",
+    "CRYPTO_BB_REVERSAL_ENABLED",
+    "CRYPTO_EMA_JAGUAR_ENABLED",
+    "CRYPTO_VP_EDGE_ENABLED",
     "CRYPTO_DEPLOY_USD",
     "CRYPTO_LEVERAGE",
     "CRYPTO_MAX_CONCURRENT",

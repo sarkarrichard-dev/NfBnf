@@ -79,8 +79,17 @@ def crypto_status() -> dict:
         "arm_phrase": CRYPTO_ARM_PHRASE,
         "egress": _egress(s),
         "kill_switch": _kill_switch_state(s),
-        "ml": ml_gate.status(),
+        "ml": {**ml_gate.status(), "tuning": _tuning_status()},
     }
+
+
+def _tuning_status() -> dict:
+    try:
+        from crypto.ml.optimize import status as _s
+
+        return _s()
+    except Exception:
+        return {}
 
 
 def _egress(s) -> dict:
@@ -314,6 +323,23 @@ def crypto_journal(limit: int = 100) -> dict:
 def crypto_ml_train(force: bool = Body(False, embed=True)) -> dict:
     """Retrain the crypto model from the journal. Plain def — threadpooled."""
     return ml_model.train(force=bool(force))
+
+
+@router.get("/day-review", include_in_schema=False)
+def crypto_day_review(refresh: bool = False) -> dict:
+    """Today's crypto summary + advisory AI review. Plain def — threadpooled."""
+    from crypto.day_review import build_crypto_review
+
+    return build_crypto_review(refresh=bool(refresh))
+
+
+@router.post("/ml/optimize", include_in_schema=False)
+def crypto_ml_optimize() -> dict:
+    """Walk-forward re-tune the video strategies' parameters. Slow — plain def,
+    Starlette threadpools it; the dashboard button shows a spinner."""
+    from crypto.ml.optimize import retune_all
+
+    return retune_all()
 
 
 @router.get("/day", include_in_schema=False)

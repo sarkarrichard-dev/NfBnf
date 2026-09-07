@@ -45,9 +45,24 @@ def _alert(text: str, *, key: str | None = None, min_gap_s: float = 600.0) -> No
 
 def enabled() -> bool:
     """The section runs whenever a strategy is enabled. PAPER vs LIVE is the
-    execution mode; turning both strategy toggles off is the pause switch."""
+    execution mode; turning every strategy toggle off is the pause switch."""
     s = crypto_settings()
-    return s.ny_nbreak_enabled or s.ichimoku_enabled
+    return bool(_enabled_strategies(s))
+
+
+def _enabled_strategies(s) -> list[str]:
+    out = []
+    if s.ny_nbreak_enabled:
+        out.append("ny_n_break")
+    if s.ichimoku_enabled:
+        out.append("ichimoku")
+    if s.bb_reversal_enabled:
+        out.append("bb_reversal")
+    if s.ema_jaguar_enabled:
+        out.append("ema_jaguar")
+    if s.vp_edge_enabled:
+        out.append("vp_edge")
+    return out
 
 
 def _closed(df: pd.DataFrame) -> pd.DataFrame:
@@ -76,6 +91,51 @@ def _ichi_cfg(s) -> ichi.IchimokuConfig:
     return ichi.IchimokuConfig(trail=_trail_cfg(s))
 
 
+def _tuned(name: str) -> dict:
+    """Walk-forward params from crypto/ml/optimize.py, else {} → module defaults."""
+    try:
+        from crypto.ml.optimize import tuned_params
+
+        return tuned_params(name)
+    except Exception:
+        return {}
+
+
+def _bb_cfg(s):
+    from crypto.strategies.bb_reversal import BBReversalConfig
+
+    return BBReversalConfig(**_tuned("bb_reversal"), trail=_trail_cfg(s))
+
+
+def _ema_jaguar_cfg(s):
+    from crypto.strategies.ema_jaguar import EmaJaguarConfig
+
+    return EmaJaguarConfig(**_tuned("ema_jaguar"), trail=_trail_cfg(s))
+
+
+def _vp_edge_cfg(s):
+    from crypto.strategies.vp_edge import VpEdgeConfig
+
+    return VpEdgeConfig(**_tuned("vp_edge"), trail=_trail_cfg(s))
+
+
+# name -> builder returning (module, timeframe, days-of-history, cfg)
+_SIMPLE: dict[str, "Any"] = {}
+
+
+def _register_simple() -> None:
+    from crypto.strategies import bb_reversal, ema_jaguar, vp_edge
+
+    _SIMPLE.update({
+        "bb_reversal": lambda s: (bb_reversal, "5m", 2, _bb_cfg(s)),
+        "ema_jaguar": lambda s: (ema_jaguar, "5m", 2, _ema_jaguar_cfg(s)),
+        "vp_edge": lambda s: (vp_edge, "15m", 6, _vp_edge_cfg(s)),
+    })
+
+
+_register_simple()
+
+
 def _fx_rate(client: DeltaClient, s) -> float:
     if s.credentials_ready:
         try:
@@ -98,7 +158,7 @@ def _open_count(state: dict[str, Any]) -> int:
 
 def scan_crypto_paper(client: DeltaClient | None = None) -> list[dict[str, Any]]:
     s = crypto_settings()
-    if not (s.ny_nbreak_enabled or s.ichimoku_enabled):
+    if not _enabled_strategies(s):
         return []
     try:
         return _scan(s, client)
@@ -138,11 +198,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
             st["_live_reconciled"] = today
             journal.save_state(st)
 
-    strategies = []
-    if s.ny_nbreak_enabled:
-        strategies.append("ny_n_break")
-    if s.ichimoku_enabled:
-        strategies.append("ichimoku")
+    strategies = _enabled_strategies(s)
 
     for strat in strategies:
         for sym in s.symbols:
@@ -162,11 +218,16 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         in_session=in_ny, session_date=ny_date,
                     )
                     day, frame = ny_date, c5
-                else:
+                elif strat == "ichimoku":
                     days = _ICHI_DAYS.get(s.ichimoku_tf, 15)
                     ch = _closed(market_data.candles(sym, s.ichimoku_tf, days=days, client=client))
                     new_state, ev = ichi.step(sym, ch, state=slot.get("strategy"), cfg=_ichi_cfg(s))
                     day, frame = crypto_day(now_utc), ch
+                else:
+                    mod, tf, days_n, cfg = _SIMPLE[strat](s)
+                    fr = _closed(market_data.candles(sym, tf, days=days_n, client=client))
+                    new_state, ev = mod.step(sym, fr, state=slot.get("strategy"), cfg=cfg)
+                    day, frame = crypto_day(now_utc), fr
 
                 slot["strategy"] = new_state
                 action = ev.get("event")
@@ -389,6 +450,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
         "stop_price": bracket_stop_price(entry_px, side, _trail_cfg(s)),
         "opened_at": now_utc.isoformat(),
         "order_id": order_id,
+        "entry_reason": ev.get("reason"),
         "features": snapshot,
     }
     slot["position"] = pos
@@ -426,6 +488,7 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
         "gross_usd": round(gross, 4), "fees_usd": round(cost, 4),
         "pnl_usd": round(pnl_usd, 4), "pnl_inr": round(pnl_usd * fx, 2), "fx_usdinr": round(fx, 4),
         "pnl_pct": round(gross / float(pos["notional_usd"]) * 100.0, 4) if pos.get("notional_usd") else 0.0,
+        "entry_reason": pos.get("entry_reason"),
         "exit_reason": ev.get("reason"),
         "peak_pnl_pct": pos.get("peak_pnl_pct"),
         "trail_stop_pnl_pct": pos.get("trail_stop_pnl_pct"),

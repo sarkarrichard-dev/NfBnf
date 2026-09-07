@@ -25,9 +25,19 @@ from crypto.delta import market_data, products
 from crypto.delta.products import Contract
 from crypto.session import in_ny_window, ny_session_date
 from crypto.sizing import size_position
-from crypto.strategies import ichimoku as ichi
-from crypto.strategies import ny_n_break as nb
+from crypto.strategies import bb_reversal, ema_jaguar, ichimoku as ichi, ny_n_break as nb, vp_edge
 from crypto.strategies.trailing import TrailConfig
+
+# name -> (module, timeframe, cfg factory taking (settings, **overrides))
+_SIMPLE = {
+    "bb_reversal": (bb_reversal, "5m",
+                    lambda s, **kw: bb_reversal.BBReversalConfig(trail=_trail(s), **kw)),
+    "ema_jaguar": (ema_jaguar, "5m",
+                   lambda s, **kw: ema_jaguar.EmaJaguarConfig(trail=_trail(s), **kw)),
+    "vp_edge": (vp_edge, "15m",
+                lambda s, **kw: vp_edge.VpEdgeConfig(trail=_trail(s), **kw)),
+}
+ALL_STRATEGIES = ["ny_n_break", "ichimoku", *_SIMPLE]
 
 
 def _trail(s) -> TrailConfig:
@@ -175,6 +185,34 @@ def backtest_ichimoku(sym: str, days: float, s) -> list[Trade]:
     return trades
 
 
+def backtest_simple(name: str, sym: str, days: float, s, *, cfg_overrides: dict | None = None,
+                    frame: pd.DataFrame | None = None) -> list[Trade]:
+    """Generic replay for a strategy with the plain step(sym, candles, *, state, cfg)
+    shape (bb_reversal / ema_jaguar / vp_edge). ``frame`` overrides the fetched
+    candles (used by the walk-forward optimiser to score one fold)."""
+    module, tf, make_cfg = _SIMPLE[name]
+    contract = _contract(sym)
+    fr = frame if frame is not None else market_data.candles(sym, tf, days=days)
+    win_n = 160  # these strategies need << the shared _WINDOW (EMA89 / VP128 / BB30)
+    if len(fr) < win_n + 10:
+        return []
+    cfg = make_cfg(s, **(cfg_overrides or {}))
+    state: dict[str, Any] | None = None
+    open_pos: dict[str, Any] | None = None
+    trades: list[Trade] = []
+    for i in range(win_n, len(fr)):
+        win = fr.iloc[i - win_n : i + 1].reset_index(drop=True)
+        state, ev = module.step(sym, win, state=state, cfg=cfg)
+        px = float(win["close"].iloc[-1])
+        ts = win["datetime"].iloc[-1]
+        if ev["event"] == "enter":
+            open_pos = {"side": ev["side"], "entry": px, "entry_ts": str(ts)}
+        elif ev["event"] == "exit" and open_pos:
+            _record_exit(trades, name, sym, open_pos, px, ts, ev.get("reason", ""), s, contract)
+            open_pos = None
+    return trades
+
+
 def run(days: float = 120, assets: list[str] | None = None,
         strategies: list[str] | None = None) -> Result:
     s = crypto_settings()
@@ -186,6 +224,9 @@ def run(days: float = 120, assets: list[str] | None = None,
             res.trades += backtest_ny_n_break(sym, days, s)
         if "ichimoku" in strategies:
             res.trades += backtest_ichimoku(sym, days, s)
+        for name in _SIMPLE:
+            if name in strategies:
+                res.trades += backtest_simple(name, sym, days, s)
     return res
 
 
@@ -193,7 +234,7 @@ def _main() -> None:
     ap = argparse.ArgumentParser(description="Replay crypto strategies over Delta history")
     ap.add_argument("--days", type=float, default=120)
     ap.add_argument("--asset", action="append", choices=list(PERP_SYMBOLS))
-    ap.add_argument("--strategy", action="append", choices=["ny_n_break", "ichimoku"])
+    ap.add_argument("--strategy", action="append", choices=ALL_STRATEGIES)
     args = ap.parse_args()
     res = run(args.days, args.asset, args.strategy)
     summary = res.summary()
