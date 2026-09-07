@@ -9,12 +9,13 @@ import {
   rowOpenMtm,
 } from '../lib/pnl'
 import { fx } from '../lib/theme'
-import type { LogRow, PeriodKey, TradeRow } from '../types/analytics'
+import type { DateRange, LogRow, PeriodKey, TradeRow } from '../types/analytics'
 
 type Props = {
   logRows: LogRow[]
   trades: TradeRow[]
   period: PeriodKey
+  range?: DateRange
   mtmUpdatedAt?: string
   hideTitle?: boolean
 }
@@ -36,10 +37,10 @@ function groupByIndex(rows: LogRow[]) {
     .map(([instrument, groupRows]) => ({ instrument, rows: groupRows }))
 }
 
-export function TradeLogTable({ logRows, trades, period, mtmUpdatedAt, hideTitle }: Props) {
+export function TradeLogTable({ logRows, trades, period, range, mtmUpdatedAt, hideTitle }: Props) {
   const rows = useMemo(
-    () => logRowsForPeriod(logRows, trades, period),
-    [logRows, trades, period],
+    () => logRowsForPeriod(logRows, trades, period, range),
+    [logRows, trades, period, range],
   )
 
   const groups = useMemo(() => groupByIndex(rows), [rows])

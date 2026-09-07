@@ -23,6 +23,23 @@ export function istWeekStartMs(when = new Date()): number {
   return dayStart - offset * 24 * 60 * 60 * 1000
 }
 
+/** IST bounds for a custom [from, to] range of YYYY-MM-DD dates, end-inclusive. */
+export function istRangeBoundsMs(from: string, to: string): { start: number; end: number } {
+  const start = Date.parse(`${from}T00:00:00+05:30`)
+  const end = Date.parse(`${to}T00:00:00+05:30`) + 24 * 60 * 60 * 1000
+  return { start, end }
+}
+
+/** Today's IST date as YYYY-MM-DD — the max selectable date. */
+export function istTodayDate(when = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(when)
+}
+
 export function istMonthStartMs(when = new Date()): number {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('en-CA', {

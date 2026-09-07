@@ -1,25 +1,22 @@
 import { useEffect } from 'react'
 import { cn } from '../lib/cn'
-import { money, pctRate, periodBlock, pnlClass } from '../lib/pnl'
+import { computePeriodStats, money, pctRate, periodBlock, pnlClass, tradesForPeriod } from '../lib/pnl'
 import { fx } from '../lib/theme'
 import { getSeries, pushPoint } from '../hooks/useSeries'
+import { PeriodBar } from './PeriodBar'
 import { Sparkline } from './Sparkline'
-import type { AnalyticsResponse, PeriodKey } from '../types/analytics'
-
-const PERIODS: { id: PeriodKey; label: string }[] = [
-  { id: 'today', label: 'Today' },
-  { id: 'week', label: 'Week' },
-  { id: 'month', label: 'Month' },
-  { id: 'all', label: 'All' },
-]
+import type { AnalyticsResponse, DateRange, PeriodKey, TradeRow } from '../types/analytics'
 
 type Props = {
   period: PeriodKey
   onPeriodChange: (p: PeriodKey) => void
+  range: DateRange
+  onRangeChange: (r: DateRange) => void
   updatedLabel?: string
   marketMessage?: string
   marketOpen?: boolean
   analytics: AnalyticsResponse | null | undefined
+  trades: TradeRow[]
   openMtmRupees: number
   isLoading?: boolean
 }
@@ -37,14 +34,20 @@ function equityCurve(analytics: AnalyticsResponse | null | undefined): number[] 
 export function StatsOverview({
   period,
   onPeriodChange,
+  range,
+  onRangeChange,
   updatedLabel,
   marketMessage,
   marketOpen,
   analytics,
+  trades,
   openMtmRupees,
   isLoading,
 }: Props) {
-  const block = periodBlock(analytics ?? null, period)
+  const block =
+    period === 'custom'
+      ? computePeriodStats(tradesForPeriod(trades, 'custom', range))
+      : periodBlock(analytics ?? null, period)
 
   const stats = [
     { key: 'trades', label: 'Trades', value: String(block.trades ?? 0), n: block.trades ?? 0 },
@@ -87,29 +90,12 @@ export function StatsOverview({
   return (
     <section className={cn(fx.panel, 'mb-4 px-3 py-2.5')}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <div
-          className="flex items-center gap-0.5 rounded-lg border border-white/[0.06] bg-white/[0.02] p-0.5"
-          role="tablist"
-          aria-label="Stats period"
-        >
-          {PERIODS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              role="tab"
-              aria-selected={period === p.id}
-              onClick={() => onPeriodChange(p.id)}
-              className={cn(
-                'rounded-md px-3 py-1 text-xs font-medium transition',
-                period === p.id
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-400 hover:text-slate-200',
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <PeriodBar
+          period={period}
+          onPeriodChange={onPeriodChange}
+          range={range}
+          onRangeChange={onRangeChange}
+        />
         <div className="flex items-center gap-3">
           {equity.length > 1 ? (
             <div className="flex items-center gap-2" title="Cumulative realized PnL (last 31 days)">

@@ -11,7 +11,7 @@ import { StatsOverview } from './components/StatsRail'
 import { useDashboardData } from './hooks/useDashboardData'
 import { usePollMs } from './hooks/usePageVisible'
 import { api } from './lib/api'
-import type { PeriodKey } from './types/analytics'
+import type { DateRange, PeriodKey } from './types/analytics'
 
 const DhanAccountPanel = lazy(() =>
   import('./components/DhanAccountPanel').then((m) => ({ default: m.DhanAccountPanel })),
@@ -75,6 +75,7 @@ function PanelFallback() {
 
 function App() {
   const [period, setPeriod] = useState<PeriodKey>('today')
+  const [range, setRange] = useState<DateRange>({ from: '', to: '' })
   const statusPoll = usePollMs(20_000)
 
   const status = useQuery({
@@ -153,10 +154,13 @@ function App() {
           <StatsOverview
             period={period}
             onPeriodChange={setPeriod}
+            range={range}
+            onRangeChange={setRange}
             updatedLabel={refreshLabel}
             marketMessage={status.data?.market?.message}
             marketOpen={status.data?.market?.is_open}
             analytics={dashboard.analytics}
+            trades={dashboard.trades}
             openMtmRupees={dashboard.openMtmRupees}
             isLoading={dashboard.isLoading}
           />
@@ -181,6 +185,7 @@ function App() {
               logRows={dashboard.logRows}
               trades={dashboard.trades}
               period={period}
+              range={range}
               mtmUpdatedAt={dashboard.mtmUpdatedAt}
             />
             <aside className="space-y-4">

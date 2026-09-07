@@ -1,5 +1,5 @@
-import { istDayBoundsMs, istMonthStartMs, istWeekStartMs } from './ist'
-import type { LogRow, PeriodKey, PeriodStats, TradeRow } from '../types/analytics'
+import { istDayBoundsMs, istMonthStartMs, istRangeBoundsMs, istWeekStartMs } from './ist'
+import type { DateRange, LogRow, PeriodKey, PeriodStats, TradeRow } from '../types/analytics'
 
 export function money(v?: number | null): string {
   if (v == null || Number.isNaN(Number(v))) return '—'
@@ -139,8 +139,12 @@ export function legPctChange(row: LogRow): number | null {
 export function tradesForPeriod(
   trades: TradeRow[],
   period: PeriodKey,
+  range?: DateRange,
 ): TradeRow[] {
   if (period === 'all') {
+    return trades.filter((t) => t.entry_session_ok !== false)
+  }
+  if (period === 'custom' && !(range?.from && range?.to)) {
     return trades.filter((t) => t.entry_session_ok !== false)
   }
 
@@ -154,6 +158,10 @@ export function tradesForPeriod(
     startMs = istWeekStartMs()
   } else if (period === 'month') {
     startMs = istMonthStartMs()
+  } else if (period === 'custom' && range) {
+    const bounds = istRangeBoundsMs(range.from, range.to)
+    startMs = bounds.start
+    endMs = bounds.end
   }
 
   return trades.filter((t) => {
@@ -168,9 +176,28 @@ export function logRowsForPeriod(
   logRows: LogRow[],
   trades: TradeRow[],
   period: PeriodKey,
+  range?: DateRange,
 ): LogRow[] {
-  const tradeIds = new Set(tradesForPeriod(trades, period).map((t) => t.id))
+  const tradeIds = new Set(tradesForPeriod(trades, period, range).map((t) => t.id))
   return sortLogRowsStable(logRows.filter((r) => tradeIds.has(String(r.trade_id || ''))))
+}
+
+/** PeriodStats computed client-side from a trade list — for the custom range,
+ *  where the server has no pre-aggregated block. Mirrors _period_stats. */
+export function computePeriodStats(trades: TradeRow[]): PeriodStats {
+  const closed = trades.filter((t) => t.pnl != null)
+  const open = trades.filter((t) => t.pnl == null)
+  const wins = closed.filter((t) => Number(t.pnl) > 0).length
+  const losses = closed.filter((t) => Number(t.pnl) < 0).length
+  return {
+    trades: trades.length,
+    closed: closed.length,
+    open: open.length,
+    wins,
+    losses,
+    win_rate: closed.length ? wins / closed.length : null,
+    pnl_rupees: closed.reduce((s, t) => s + Number(t.pnl || 0), 0),
+  }
 }
 
 export function openLegRows(
