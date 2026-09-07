@@ -233,6 +233,29 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             pass
 
     warm_task = asyncio.create_task(_warm())
+
+    async def _eod_catch_up() -> None:
+        """If the server is (re)started after square-off and today's EOD summary
+        never ran — because the scanner was idle — run it once from here. The
+        eod_date marker in run_eod keeps it to once per day."""
+        await asyncio.sleep(20)
+        try:
+            from index_ai import scanner
+            from index_ai.daily_ops import eod_due, run_eod
+
+            if not eod_due():
+                return
+            if not getattr(scanner._state, "running", False):
+                logging.getLogger("index_ai.daily_ops").info(
+                    "eod: scanner idle — running from boot catch-up"
+                )
+            await asyncio.to_thread(run_eod)
+        except Exception:
+            logging.getLogger("index_ai.daily_ops").warning(
+                "eod boot catch-up failed", exc_info=True
+            )
+
+    eod_catch_up_task = asyncio.create_task(_eod_catch_up())
     if cfg.dhan.ready:
         try:
             from index_ai.candle_cache import ensure_active_interval_cache, sync_all_configured
@@ -251,7 +274,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     tick_task.cancel()
     warm_task.cancel()
     crypto_task.cancel()
-    for task in (renew_task, boot_scanner_task, cache_task, tick_task, warm_task, crypto_task):
+    eod_catch_up_task.cancel()
+    for task in (
+        renew_task,
+        boot_scanner_task,
+        cache_task,
+        tick_task,
+        warm_task,
+        crypto_task,
+        eod_catch_up_task,
+    ):
         try:
             await task
         except asyncio.CancelledError:

@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import pytest
+
 import index_ai.notify as notify
+
+
+@pytest.fixture(autouse=True)
+def _isolate_dedup(tmp_path, monkeypatch):
+    monkeypatch.setattr(notify, "_dedup_path", lambda: str(tmp_path / "dedup.json"))
+
 
 _SPREAD = {
     "legs": [
@@ -47,6 +55,11 @@ def test_send_posts_when_configured(monkeypatch) -> None:
     assert notify._post("hello") is True
     assert sent["url"].endswith("/bottok/sendMessage")
     assert sent["json"]["chat_id"] == "42" and sent["json"]["text"] == "hello"
+
+    # the same text again inside the window is dropped, not re-sent
+    sent.clear()
+    assert notify._post("hello") is False
+    assert sent == {}
 
 
 def test_send_logs_a_failed_telegram_response(monkeypatch, caplog) -> None:

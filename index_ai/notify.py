@@ -12,14 +12,53 @@ bot, and sends a test message if the id is already configured.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import threading
+import time
 from typing import Any
 
 from index_ai.premium_trail import premium_trail_cfg, premium_trail_enabled
 
 logger = logging.getLogger(__name__)
+
+# Persistent send-dedup: the same message text inside this window is dropped.
+# Survives restarts, so the boot-time re-send storm (a lane re-notifying the
+# last exit on every server restart) sends once, not once per restart.
+_DEDUP_WINDOW_S = 600.0
+
+
+def _dedup_path() -> str:
+    from index_ai.config import MEMORY_DIR
+
+    return str(MEMORY_DIR / ".notify_dedup.json")
+
+
+def _dedup_seen(text: str) -> bool:
+    """True if this exact text was already sent inside the window. Records it."""
+    now = time.time()
+    path = _dedup_path()
+    h = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    try:
+        with open(path, encoding="utf-8") as fh:
+            stamps = json.loads(fh.read())
+    except (OSError, ValueError):
+        stamps = {}
+    if now - float(stamps.get(h, 0) or 0) < _DEDUP_WINDOW_S:
+        return True
+    stamps[h] = now
+    stamps = {k: v for k, v in stamps.items() if now - float(v or 0) < 86_400}
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(stamps))
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return False
 
 
 def _config() -> tuple[str, str] | None:
@@ -35,6 +74,9 @@ def enabled() -> bool:
 def _post(text: str) -> bool:
     cfg = _config()
     if not cfg:
+        return False
+    if _dedup_seen(text):
+        logger.info("Telegram send skipped (duplicate within %.0fs): %.80s", _DEDUP_WINDOW_S, text)
         return False
     tok, chat = cfg
     try:
