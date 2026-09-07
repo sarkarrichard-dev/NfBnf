@@ -44,6 +44,11 @@ def _i(name: str, default: int) -> int:
         return default
 
 
+def _mode(name: str) -> str:
+    m = os.getenv(name, "PAPER").strip().upper()
+    return m if m in {"PAPER", "LIVE"} else "PAPER"
+
+
 @dataclass(frozen=True)
 class CryptoSettings:
     api_key: str
@@ -67,10 +72,24 @@ class CryptoSettings:
     # optional hard stops, percent of entry (0 = off)
     nbreak_sl_pct: float
     ichimoku_sl_pct: float
+    # live execution (Phase 4) — two independent locks, see crypto/live.py
+    trading_mode: str          # PAPER (default) | LIVE
+    live_armed: bool           # CRYPTO_ALLOW_LIVE
+    max_daily_loss_usd: float
+    max_consec_losses: int
 
     @property
     def credentials_ready(self) -> bool:
         return bool(self.api_key and self.api_secret)
+
+    @property
+    def live_orders_enabled(self) -> bool:
+        """The only gate the executor trusts. All three must hold."""
+        return (
+            self.trading_mode.upper() == "LIVE"
+            and self.live_armed
+            and self.credentials_ready
+        )
 
 
 def crypto_settings() -> CryptoSettings:
@@ -94,6 +113,10 @@ def crypto_settings() -> CryptoSettings:
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
         nbreak_sl_pct=max(0.0, _f("CRYPTO_NBREAK_SL_PCT", 0.0)),
         ichimoku_sl_pct=max(0.0, _f("CRYPTO_ICHIMOKU_SL_PCT", 0.0)),
+        trading_mode=_mode("CRYPTO_TRADING_MODE"),
+        live_armed=_b("CRYPTO_ALLOW_LIVE", False),
+        max_daily_loss_usd=abs(_f("CRYPTO_MAX_DAILY_LOSS_USD", 50.0)),
+        max_consec_losses=max(1, _i("CRYPTO_MAX_CONSEC_LOSSES", 3)),
     )
 
 
@@ -114,6 +137,10 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_ICHIMOKU_TF",
     "CRYPTO_NBREAK_SL_PCT",
     "CRYPTO_ICHIMOKU_SL_PCT",
+    "CRYPTO_TRADING_MODE",
+    "CRYPTO_ALLOW_LIVE",
+    "CRYPTO_MAX_DAILY_LOSS_USD",
+    "CRYPTO_MAX_CONSEC_LOSSES",
 )
 
 
@@ -123,4 +150,6 @@ if __name__ == "__main__":  # self-check
     assert s.leverage >= 1.0
     assert s.base_url.startswith("https://")
     assert not s.base_url.endswith("/")
-    print("crypto.config self-check ok —", s.base_url, "deploy", s.deploy_usd, "lev", s.leverage)
+    assert s.trading_mode in {"PAPER", "LIVE"}
+    assert not s.live_orders_enabled or (s.trading_mode == "LIVE" and s.live_armed)
+    print("crypto.config self-check ok —", s.base_url, "mode", s.trading_mode, "lev", s.leverage)
