@@ -39,9 +39,12 @@ def test_journal_and_day(tmp_path, monkeypatch):
 
 
 def test_positions_no_creds(monkeypatch):
+    monkeypatch.delenv("DELTA_API_KEY", raising=False)
+    monkeypatch.delenv("DELTA_API_SECRET", raising=False)
     monkeypatch.setattr(journal, "load_state", lambda: {"ny_n_break:BTCUSD": {"position": None}})
     r = client.get("/api/crypto/positions").json()
     assert r["paper"] == [] and r["live"] == []
+    assert r["open_unrealized_usd"] == 0.0
 
 
 def test_config_validates_and_clamps(monkeypatch):

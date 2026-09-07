@@ -12,11 +12,14 @@ bot, and sends a test message if the id is already configured.
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from typing import Any
 
 from index_ai.premium_trail import premium_trail_cfg, premium_trail_enabled
+
+logger = logging.getLogger(__name__)
 
 
 def _config() -> tuple[str, str] | None:
@@ -47,9 +50,19 @@ def _post(text: str) -> bool:
             },
             timeout=10,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            # Telegram returns {"ok": false, "description": "..."} — surface it
+            # (HTML parse errors, chat-not-found, bot removed) instead of a
+            # silent drop. The token is only ever in the URL, never logged here.
+            try:
+                why = resp.json().get("description") or resp.text[:200]
+            except Exception:
+                why = f"HTTP {resp.status_code}"
+            logger.warning("Telegram send failed: %s | text=%.120s", why, text)
+            return False
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning("Telegram send error: %s", exc)
         return False
 
 

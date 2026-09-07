@@ -12,10 +12,16 @@ import os
 
 from fastapi import APIRouter, Body, HTTPException
 
-from crypto import charges, journal
+from crypto import charges, executor, journal
 from crypto.config import PERP_SYMBOLS, crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient, DeltaError
+from crypto.live import (
+    CRYPTO_ARM_PHRASE,
+    arm_crypto_live,
+    disarm_crypto_live,
+    set_crypto_mode,
+)
 from crypto.session import crypto_day, ny_session_date
 
 logger = logging.getLogger(__name__)
@@ -57,6 +63,35 @@ def crypto_status() -> dict:
             }
             for sym in PERP_SYMBOLS
         },
+        # --- live execution (Phase 4) ---
+        "trading_mode": s.trading_mode,
+        "live_armed": s.live_armed,
+        "live_orders_enabled": s.live_orders_enabled,
+        "arm_phrase": CRYPTO_ARM_PHRASE,
+        "egress_ip": _egress_ip(),
+        "kill_switch": _kill_switch_state(s),
+    }
+
+
+def _egress_ip() -> str | None:
+    try:
+        from index_ai.dhan_network import fetch_public_ip
+
+        return fetch_public_ip()
+    except Exception:
+        return None
+
+
+def _kill_switch_state(s) -> dict:
+    tripped, why = executor.kill_switch(s)
+    rows = executor._today_live_rows()
+    return {
+        "tripped": tripped,
+        "reason": why,
+        "today_live_net_usd": round(sum(float(r.get("pnl_usd") or 0.0) for r in rows), 2),
+        "today_live_trades": len(rows),
+        "max_daily_loss_usd": s.max_daily_loss_usd,
+        "max_consec_losses": s.max_consec_losses,
     }
 
 
@@ -130,32 +165,81 @@ def crypto_contracts() -> dict:
     }
 
 
+def _usd_inr(client: DeltaClient, s) -> float:
+    if s.credentials_ready:
+        try:
+            bal = client.wallet() or []
+            usd = sum(_num(w.get("balance")) or 0.0 for w in bal if isinstance(w, dict))
+            inr = sum(_num(w.get("balance_inr")) or 0.0 for w in bal if isinstance(w, dict))
+            if usd > 0 and inr > 0:
+                return inr / usd
+        except DeltaError:
+            pass
+    return _num(os.getenv("CRYPTO_USDINR", "88")) or 88.0
+
+
 @router.get("/positions", include_in_schema=False)
 def crypto_positions() -> dict:
     st = journal.load_state()
-    open_pos = [
-        {"key": k, **(v["position"])}
-        for k, v in st.items()
-        if ":" in k and isinstance(v, dict) and v.get("position")
-    ]
-    live: list = []
     s = crypto_settings()
+    client = DeltaClient(s)
+    fx = _usd_inr(client, s)
+    marks: dict[str, float] = {}
+    open_pos: list[dict] = []
+    open_pnl_usd = 0.0
+
+    for k, v in st.items():
+        if ":" not in k or not isinstance(v, dict) or not v.get("position"):
+            continue
+        p = dict(v["position"])
+        sym = p.get("asset", "")
+        if sym and sym not in marks:
+            try:
+                marks[sym] = _num(market_data.ticker(sym, client=client).get("mark_price")) or 0.0
+            except Exception:
+                marks[sym] = 0.0
+        mark = marks.get(sym, 0.0)
+        direction = 1 if p.get("side") == "long" else -1
+        coins = float(p.get("size") or 0) * float(p.get("contract_value") or 0)
+        if mark > 0 and coins > 0:
+            upnl = (mark - float(p.get("entry_price") or 0)) * direction * coins
+            notional = float(p.get("notional_usd") or 0)
+            p["mark"] = round(mark, 2)
+            p["unrealized_usd"] = round(upnl, 2)
+            p["unrealized_inr"] = round(upnl * fx, 0)
+            p["unrealized_pct"] = round(upnl / notional * 100.0, 2) if notional else None
+            open_pnl_usd += upnl
+        else:  # no live mark — show the position but not a fake $0 P&L
+            p["mark"] = None
+            p["unrealized_usd"] = None
+            p["unrealized_inr"] = None
+            p["unrealized_pct"] = None
+        open_pos.append({"key": k, **p})
+
+    live: list = []
     if s.credentials_ready:
         try:
-            for p in DeltaClient(s).positions():
-                sz = _num(p.get("size")) or 0.0
+            for lp in client.positions():
+                sz = _num(lp.get("size")) or 0.0
                 if sz:
                     live.append(
                         {
-                            "symbol": p.get("product_symbol"),
+                            "symbol": lp.get("product_symbol"),
                             "size": sz,
-                            "entry_price": _num(p.get("entry_price")),
-                            "unrealized_pnl": _num(p.get("unrealized_pnl")),
+                            "entry_price": _num(lp.get("entry_price")),
+                            "unrealized_pnl": _num(lp.get("unrealized_pnl")),
                         }
                     )
         except DeltaError as exc:
             live = [{"error": str(exc)}]
-    return {"paper": open_pos, "live": live}
+
+    return {
+        "paper": open_pos,
+        "live": live,
+        "open_unrealized_usd": round(open_pnl_usd, 2),
+        "open_unrealized_inr": round(open_pnl_usd * fx, 0),
+        "fx_usdinr": round(fx, 4),
+    }
 
 
 @router.get("/journal", include_in_schema=False)
@@ -218,6 +302,57 @@ def set_config(
     for k, v in values.items():
         os.environ[k] = v
     return {"saved": list(values.keys()), "status": crypto_status()}
+
+
+@router.post("/mode", include_in_schema=False)
+def crypto_mode(mode: str = Body(..., embed=True)) -> dict:
+    """PAPER | LIVE. LIVE alone places no orders — arming is a separate step.
+    Switching to PAPER always disarms."""
+    try:
+        m = set_crypto_mode(mode)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    os.environ["CRYPTO_TRADING_MODE"] = m
+    if m == "PAPER":
+        os.environ["CRYPTO_ALLOW_LIVE"] = "false"
+    _reset_reconcile_stamp()
+    return {"trading_mode": m, "status": crypto_status()}
+
+
+def _reset_reconcile_stamp() -> None:
+    """Force a fresh position reconcile on the next live scan after any
+    mode/arm change."""
+    try:
+        st = journal.load_state()
+        if st.pop("_live_reconciled", None) is not None:
+            journal.save_state(st)
+    except OSError:
+        pass
+
+
+@router.post("/arm-live", include_in_schema=False)
+def crypto_arm_live(
+    confirm: str = Body("", embed=True),
+    disarm: bool = Body(False, embed=True),
+) -> dict:
+    """Arm real Delta orders (needs the exact phrase) or disarm (one click)."""
+    if disarm:
+        disarm_crypto_live()
+        os.environ["CRYPTO_ALLOW_LIVE"] = "false"
+    else:
+        try:
+            arm_crypto_live(confirm)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        os.environ["CRYPTO_ALLOW_LIVE"] = "true"
+    _reset_reconcile_stamp()
+    s = crypto_settings()
+    return {
+        "live_orders_enabled": s.live_orders_enabled,
+        "live_armed": s.live_armed,
+        "confirm_phrase": CRYPTO_ARM_PHRASE,
+        "status": crypto_status(),
+    }
 
 
 @router.post("/credentials", include_in_schema=False)
