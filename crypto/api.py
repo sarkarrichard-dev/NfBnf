@@ -12,9 +12,12 @@ import os
 
 from fastapi import APIRouter, Body, HTTPException
 
-from crypto import charges, executor, journal
-from crypto.config import PERP_SYMBOLS, crypto_settings
+from crypto import charges, executor, journal, sizing
+from crypto.ml import gate as ml_gate
+from crypto.ml import model as ml_model
+from crypto.config import crypto_settings
 from crypto.delta import market_data, products
+from crypto.delta import client as delta_client
 from crypto.delta.client import DeltaClient, DeltaError
 from crypto.live import (
     CRYPTO_ARM_PHRASE,
@@ -46,7 +49,8 @@ def crypto_status() -> dict:
         "paper_enabled": s.paper_enabled,
         "lanes": {"ny_n_break": s.ny_nbreak_enabled, "ichimoku": s.ichimoku_enabled},
         "sizing": {
-            "deploy_usd": s.deploy_usd,
+            "lots": s.lots,
+            "deploy_cap_usd": s.deploy_usd,
             "leverage": s.leverage,
             "max_concurrent": s.max_concurrent,
             "paper_bankroll_usd": s.paper_bankroll_usd,
@@ -54,32 +58,51 @@ def crypto_status() -> dict:
         },
         "session_ist": {"start": s.ny_start, "end": s.ny_end},
         "ichimoku_tf": s.ichimoku_tf,
-        "hard_stops_pct": {"ny_n_break": s.nbreak_sl_pct, "ichimoku": s.ichimoku_sl_pct},
-        "symbols": list(PERP_SYMBOLS),
+        "trailing": {
+            "stop_pnl_pct": s.stop_pnl_pct,
+            "ratchet_step_pnl_pct": s.ratchet_step_pnl_pct,
+            "tp_trigger_pnl_pct": s.tp_trigger_pnl_pct,
+            "peak_trail_pnl_pct": s.peak_trail_pnl_pct,
+        },
+        "symbols": list(s.symbols),
+        "available_symbols": products.available_symbols(),
         "half_spread_bps": {
             sym: {
                 "measured": charges.measured_half_spread_bps(sym),
-                "fallback": charges._HALF_SPREAD_BPS.get(sym),
+                "fallback": charges._HALF_SPREAD_BPS.get(sym, 2.0),
             }
-            for sym in PERP_SYMBOLS
+            for sym in s.symbols
         },
         # --- live execution (Phase 4) ---
         "trading_mode": s.trading_mode,
         "live_armed": s.live_armed,
         "live_orders_enabled": s.live_orders_enabled,
         "arm_phrase": CRYPTO_ARM_PHRASE,
-        "egress_ip": _egress_ip(),
+        "egress": _egress(s),
         "kill_switch": _kill_switch_state(s),
+        "ml": ml_gate.status(),
     }
 
 
-def _egress_ip() -> str | None:
+def _egress(s) -> dict:
+    """IPv4 + IPv6 this machine presents, plus the address Delta last rejected.
+    Delta traffic is pinned to IPv4 (``CRYPTO_FORCE_IPV4``), so whitelist the
+    IPv4 on the Delta key."""
+    ips: dict = {"ipv4": None, "ipv6": None}
     try:
-        from index_ai.dhan_network import fetch_public_ip
+        from index_ai.dhan_network import fetch_public_ips
 
-        return fetch_public_ip()
+        ips = fetch_public_ips()
     except Exception:
-        return None
+        pass
+    blocked = dict(delta_client.LAST_IP_BLOCK)
+    return {
+        "ipv4": ips.get("ipv4"),
+        "ipv6": ips.get("ipv6"),
+        "forcing_ipv4": s.force_ipv4,
+        "delta_sees_ip": blocked.get("ip") or None,
+        "whitelist_ok": not blocked.get("ip"),
+    }
 
 
 def _kill_switch_state(s) -> dict:
@@ -108,7 +131,7 @@ def _health_blocking() -> dict:
     }
     client = DeltaClient(s)
 
-    for sym in PERP_SYMBOLS:
+    for sym in s.symbols:
         try:
             tk = market_data.ticker(sym, client=client)
             q = tk.get("quotes") or {}
@@ -144,6 +167,47 @@ def _num(v) -> float | None:
 @router.get("/health", include_in_schema=False)
 def crypto_health() -> dict:
     return _health_blocking()
+
+
+@router.get("/lots", include_in_schema=False)
+def crypto_lots() -> dict:
+    """Per selected symbol: what one lot (= one contract) costs — coin size,
+    notional, and margin in $ and ₹. Uses Delta's own margin_required when keys
+    are set, else the local estimate. Best-effort; a symbol with no mark yields
+    null fields, never a fake 0."""
+    s = crypto_settings()
+    client = DeltaClient(s)
+    fx = _usd_inr(client, s)
+    try:
+        contracts = products.all_contracts(client)
+    except DeltaError:
+        contracts = {}
+    rows: list[dict] = []
+    for sym in s.symbols:
+        c = contracts.get(sym)
+        if c is None:
+            rows.append({"symbol": sym, "coin_per_lot": None, "notional_per_lot_usd": None,
+                         "margin_per_lot_usd": None, "margin_per_lot_inr": None,
+                         "note": "not a live Delta perp"})
+            continue
+        try:
+            mark = _num(market_data.ticker(sym, client=client).get("mark_price")) or 0.0
+        except Exception:
+            mark = 0.0
+        econ = sizing.lot_economics(c, mark, leverage=s.leverage, fx_usdinr=fx)
+        if s.credentials_ready and mark > 0:
+            try:
+                mr = client.margin_required(c.product_id, max(1, s.lots), "buy")
+                per_lot = _num(mr.get("initial_margin")) or _num(mr.get("required_margin"))
+                if per_lot and s.lots:
+                    econ["margin_per_lot_usd"] = round(per_lot / s.lots, 2)
+                    econ["margin_per_lot_inr"] = round(per_lot / s.lots * fx, 0) if fx else None
+                    econ["source"] = "delta"
+            except DeltaError:
+                pass
+        rows.append({"symbol": sym, **econ})
+    return {"lots": s.lots, "leverage": s.leverage, "deploy_cap_usd": s.deploy_usd,
+            "fx_usdinr": round(fx, 4), "table": rows}
 
 
 @router.get("/contracts", include_in_schema=False)
@@ -247,6 +311,12 @@ def crypto_journal(limit: int = 100) -> dict:
     return {"trades": journal.recent(max(1, min(500, limit)))}
 
 
+@router.post("/ml/train", include_in_schema=False)
+def crypto_ml_train(force: bool = Body(False, embed=True)) -> dict:
+    """Retrain the crypto model from the journal. Plain def — threadpooled."""
+    return ml_model.train(force=bool(force))
+
+
 @router.get("/day", include_in_schema=False)
 def crypto_today() -> dict:
     s = crypto_settings()
@@ -272,22 +342,34 @@ def crypto_today() -> dict:
 
 @router.post("/config", include_in_schema=False)
 def set_config(
-    deploy_usd: float | None = Body(None, embed=True),
-    leverage: float | None = Body(None, embed=True),
+    lots: int | None = Body(None, embed=True),
+    deploy_cap_usd: float | None = Body(None, embed=True),
+    deploy_usd: float | None = Body(None, embed=True),  # legacy alias for deploy_cap_usd
     max_concurrent: int | None = Body(None, embed=True),
     paper_enabled: bool | None = Body(None, embed=True),
     ny_n_break_enabled: bool | None = Body(None, embed=True),
     ichimoku_enabled: bool | None = Body(None, embed=True),
+    symbols: list[str] | None = Body(None, embed=True),
 ) -> dict:
     """Non-financial-in-paper knobs — plain write, no confirm (Delta keys are
     the only crypto setting that needs the money-path treatment)."""
     from index_ai.config import update_env_values
 
     values: dict[str, str] = {}
-    if deploy_usd is not None:
-        values["CRYPTO_DEPLOY_USD"] = str(max(100.0, float(deploy_usd)))
-    if leverage is not None:
-        values["CRYPTO_LEVERAGE"] = str(min(100.0, max(1.0, float(leverage))))
+    if symbols is not None:
+        want = [str(x).strip().upper() for x in symbols if str(x).strip()]
+        listed = set(products.available_symbols())
+        if not listed:
+            raise HTTPException(502, "Delta contract master unavailable — try again shortly.")
+        keep = [x for i, x in enumerate(want) if x not in want[:i] and x in listed]
+        if not keep:
+            raise HTTPException(400, "None of those symbols are live Delta perpetuals.")
+        values["CRYPTO_SYMBOLS"] = ",".join(keep)
+    if lots is not None:
+        values["CRYPTO_LOTS"] = str(max(1, int(lots)))
+    cap = deploy_cap_usd if deploy_cap_usd is not None else deploy_usd
+    if cap is not None:
+        values["CRYPTO_DEPLOY_USD"] = str(max(0.0, float(cap)))
     if max_concurrent is not None:
         values["CRYPTO_MAX_CONCURRENT"] = str(min(10, max(1, int(max_concurrent))))
     if paper_enabled is not None:

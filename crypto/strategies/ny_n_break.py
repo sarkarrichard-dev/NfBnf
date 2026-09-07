@@ -7,7 +7,7 @@ per session. Pure: ``step`` reads the candles + a state dict and returns
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
@@ -20,6 +20,7 @@ from crypto.strategies.indicators import (
     pivot_high,
     pivot_low,
 )
+from crypto.strategies.trailing import TrailConfig, update_and_check
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class NBreakConfig:
     exit_swing_left: int = 5
     exit_swing_right: int = 2
     max_trades_per_session: int = 3
-    sl_pct: float = 0.0  # hard stop, % of entry (0 = off)
+    trail: TrailConfig = field(default_factory=TrailConfig)
 
 
 def _blank_state() -> dict[str, Any]:
@@ -120,15 +121,11 @@ def step(
     # ---- manage an open position ----
     if pos:
         side = pos["side"]
-        entry = float(pos["entry_price"])
         reason = None
         if not in_session:
             reason = "session end"
-        elif cfg.sl_pct > 0 and (
-            (side == "long" and price <= entry * (1 - cfg.sl_pct / 100))
-            or (side == "short" and price >= entry * (1 + cfg.sl_pct / 100))
-        ):
-            reason = f"hard stop {cfg.sl_pct:g}%"
+        elif (trail_reason := update_and_check(pos, price, cfg.trail)):
+            reason = trail_reason
         else:
             sh15 = _last_confirmed(pivot_high(c15["close"].astype(float), cfg.exit_swing_left, cfg.exit_swing_right)) if len(c15) else None
             sl15 = _last_confirmed(pivot_low(c15["close"].astype(float), cfg.exit_swing_left, cfg.exit_swing_right)) if len(c15) else None

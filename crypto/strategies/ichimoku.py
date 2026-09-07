@@ -8,11 +8,12 @@ side of the Kumo, and the cloud coloured with the trade. Exit reuses
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
 
+from crypto.strategies.trailing import TrailConfig, update_and_check
 from index_ai.strategies.ichimoku import (
     cloud_reentry_exit,
     compute_ichimoku,
@@ -25,7 +26,7 @@ class IchimokuConfig:
     base: int = 26
     span_b: int = 52
     displacement: int = 26
-    sl_pct: float = 0.0
+    trail: TrailConfig = field(default_factory=TrailConfig)
 
 
 def _blank_state() -> dict[str, Any]:
@@ -76,15 +77,9 @@ def step(
 
     if pos:
         side = pos["side"]
-        entry = float(pos["entry_price"])
         direction = 1 if side == "long" else -1
-        reason = None
-        if cfg.sl_pct > 0 and (
-            (side == "long" and price <= entry * (1 - cfg.sl_pct / 100))
-            or (side == "short" and price >= entry * (1 + cfg.sl_pct / 100))
-        ):
-            reason = f"hard stop {cfg.sl_pct:g}%"
-        else:
+        reason = update_and_check(pos, price, cfg.trail)
+        if not reason:
             should_exit, why = cloud_reentry_exit(
                 direction, candles, conversion=cfg.conversion, base=cfg.base,
                 span_b=cfg.span_b, displacement=cfg.displacement,

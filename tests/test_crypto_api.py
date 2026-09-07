@@ -5,18 +5,25 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from crypto import journal
+from crypto.delta import market_data, products
+from crypto.delta.products import Contract
 from index_ai.server import app
 
 client = TestClient(app)
 
+_FAKE_LISTED = ["BTCUSD", "ETHUSD", "SOLUSD", "PAXGUSD", "XRPUSD"]
 
-def test_status_ok():
+
+def test_status_ok(monkeypatch):
+    monkeypatch.setattr(products, "available_symbols", lambda *a, **k: list(_FAKE_LISTED))
     r = client.get("/api/crypto/status")
     assert r.status_code == 200
     body = r.json()
-    assert body["symbols"] == ["BTCUSD", "ETHUSD"]
-    assert "deploy_usd" in body["sizing"]
+    assert "BTCUSD" in body["symbols"] and "ETHUSD" in body["symbols"]
+    assert body["available_symbols"] == _FAKE_LISTED
+    assert body["sizing"]["lots"] >= 1 and "deploy_cap_usd" in body["sizing"]
     assert body["session_ist"]["start"] and body["session_ist"]["end"]
+    assert "ipv4" in body["egress"] and "delta_sees_ip" in body["egress"]
 
 
 def test_journal_and_day(tmp_path, monkeypatch):
@@ -52,15 +59,58 @@ def test_config_validates_and_clamps(monkeypatch):
     monkeypatch.setattr("index_ai.config.update_env_values", lambda v: saved.update(v))
     r = client.post(
         "/api/crypto/config",
-        json={"deploy_usd": 20, "leverage": 999, "max_concurrent": 50},
+        json={"lots": 0, "deploy_cap_usd": -5, "leverage": 999, "max_concurrent": 50},
     )
     assert r.status_code == 200
-    assert saved["CRYPTO_DEPLOY_USD"] == "100.0"  # floored
-    assert saved["CRYPTO_LEVERAGE"] == "100.0"  # clamped to product max
+    assert saved["CRYPTO_LOTS"] == "1"  # min 1
+    assert saved["CRYPTO_DEPLOY_USD"] == "0.0"  # cap floored at 0
+    assert "CRYPTO_LEVERAGE" not in saved  # leverage is fixed at 100x — ignored
     assert saved["CRYPTO_MAX_CONCURRENT"] == "10"
+
+    # legacy alias still accepted
+    r2 = client.post("/api/crypto/config", json={"deploy_usd": 250})
+    assert r2.status_code == 200 and saved["CRYPTO_DEPLOY_USD"] == "250.0"
 
     empty = client.post("/api/crypto/config", json={})
     assert empty.status_code == 400
+
+
+def test_config_symbols_validated_against_contract_master(monkeypatch):
+    saved = {}
+    monkeypatch.setattr("index_ai.config.update_env_values", lambda v: saved.update(v))
+    monkeypatch.setattr(products, "available_symbols", lambda *a, **k: list(_FAKE_LISTED))
+
+    # unknown symbol dropped, order + dedup preserved
+    r = client.post(
+        "/api/crypto/config",
+        json={"symbols": ["solusd", "BTCUSD", "SOLUSD", "DOGEUSD"]},
+    )
+    assert r.status_code == 200
+    assert saved["CRYPTO_SYMBOLS"] == "SOLUSD,BTCUSD"
+
+    # nothing Delta lists → 400
+    bad = client.post("/api/crypto/config", json={"symbols": ["DOGEUSD"]})
+    assert bad.status_code == 400
+
+
+def test_lots_table(monkeypatch):
+    monkeypatch.delenv("DELTA_API_KEY", raising=False)
+    monkeypatch.delenv("DELTA_API_SECRET", raising=False)
+    monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,DOGEUSD")  # DOGE not in the fake master
+    monkeypatch.setenv("CRYPTO_LOTS", "3")
+    monkeypatch.setattr(
+        products,
+        "all_contracts",
+        lambda client=None: {"BTCUSD": Contract("BTCUSD", 27, 0.001, 0.5, 1, 100)},
+    )
+    monkeypatch.setattr(market_data, "ticker", lambda sym, client=None: {"mark_price": 60_000.0})
+
+    body = client.get("/api/crypto/lots").json()
+    assert body["lots"] == 3
+    rows = {r["symbol"]: r for r in body["table"]}
+    assert rows["BTCUSD"]["coin_per_lot"] == 0.001
+    assert rows["BTCUSD"]["margin_per_lot_usd"] > 0
+    assert rows["DOGEUSD"]["margin_per_lot_usd"] is None  # not a live perp — no fake 0
 
 
 def test_credentials_requires_confirm():

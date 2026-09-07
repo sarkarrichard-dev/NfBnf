@@ -18,9 +18,10 @@ CRYPTO_MEMORY = MEMORY_DIR
 
 DELTA_PROD_URL = "https://api.india.delta.exchange"
 
-# Perpetual contracts the crypto lane trades. Delta symbols; the numeric
-# product_id is resolved at runtime from the contract master.
-PERP_SYMBOLS: tuple[str, ...] = ("BTCUSD", "ETHUSD")
+# Default perpetual contracts. Override at runtime with CRYPTO_SYMBOLS (a
+# comma-separated list) — see crypto_settings().symbols. A symbol Delta does not
+# list live is dropped by crypto/delta/products.py, never fabricated.
+PERP_SYMBOLS: tuple[str, ...] = ("BTCUSD", "ETHUSD", "SOLUSD", "PAXGUSD")
 
 
 def _b(name: str, default: bool) -> bool:
@@ -49,14 +50,28 @@ def _mode(name: str) -> str:
     return m if m in {"PAPER", "LIVE"} else "PAPER"
 
 
+def _symbols() -> tuple[str, ...]:
+    raw = os.getenv("CRYPTO_SYMBOLS", "")
+    picked = [x.strip().upper() for x in raw.split(",") if x.strip()]
+    out: list[str] = []
+    for s in picked or PERP_SYMBOLS:
+        if s not in out:
+            out.append(s)
+    return tuple(out)
+
+
 @dataclass(frozen=True)
 class CryptoSettings:
     api_key: str
     api_secret: str
     base_url: str
-    # sizing (capital-first — see crypto/sizing.py in Phase 2)
-    deploy_usd: float          # per-trade capital; hard floor 100
-    leverage: float            # target leverage; clamped per-product at runtime
+    force_ipv4: bool           # pin Delta traffic to IPv4 (CRYPTO_FORCE_IPV4)
+    symbols: tuple[str, ...]   # perps to trade — CRYPTO_SYMBOLS
+    # sizing (lot-based — see crypto/sizing.py). One universal lot count; 1 lot =
+    # 1 Delta contract, so every symbol trades `lots` contracts.
+    lots: int                  # universal lot count, min 1
+    deploy_usd: float          # optional per-trade margin cap in USD; 0 = no cap
+    leverage: float            # fixed 100x for crypto; clamped per-product at runtime
     max_concurrent: int
     paper_bankroll_usd: float
     allow_min_one: bool        # take 1 contract even if 1-contract margin > deploy_usd
@@ -69,9 +84,11 @@ class CryptoSettings:
     ny_end: str
     # ichimoku
     ichimoku_tf: str
-    # optional hard stops, percent of entry (0 = off)
-    nbreak_sl_pct: float
-    ichimoku_sl_pct: float
+    # P&L trailing stop / target — percent of P&L on margin (see crypto/strategies/trailing.py)
+    stop_pnl_pct: float
+    ratchet_step_pnl_pct: float
+    tp_trigger_pnl_pct: float
+    peak_trail_pnl_pct: float
     # live execution (Phase 4) — two independent locks, see crypto/live.py
     trading_mode: str          # PAPER (default) | LIVE
     live_armed: bool           # CRYPTO_ALLOW_LIVE
@@ -100,19 +117,24 @@ def crypto_settings() -> CryptoSettings:
         api_key=os.getenv("DELTA_API_KEY", "").strip(),
         api_secret=os.getenv("DELTA_API_SECRET", "").strip(),
         base_url=os.getenv("DELTA_BASE_URL", DELTA_PROD_URL).rstrip("/"),
-        deploy_usd=max(100.0, _f("CRYPTO_DEPLOY_USD", 100.0)),
-        leverage=max(1.0, _f("CRYPTO_LEVERAGE", 3.0)),
+        force_ipv4=_b("CRYPTO_FORCE_IPV4", True),
+        symbols=_symbols(),
+        lots=max(1, _i("CRYPTO_LOTS", 1)),
+        deploy_usd=max(0.0, _f("CRYPTO_DEPLOY_USD", 0.0)),
+        leverage=max(1.0, _f("CRYPTO_LEVERAGE", 100.0)),
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
         paper_bankroll_usd=max(100.0, _f("CRYPTO_PAPER_BANKROLL", 2000.0)),
         allow_min_one=_b("CRYPTO_ALLOW_MIN_ONE", False),
-        paper_enabled=_b("ENABLE_CRYPTO_PAPER", False),
+        paper_enabled=_b("ENABLE_CRYPTO_PAPER", True),
         ny_nbreak_enabled=_b("CRYPTO_NY_NBREAK_ENABLED", True),
         ichimoku_enabled=_b("CRYPTO_ICHIMOKU_ENABLED", True),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
-        nbreak_sl_pct=max(0.0, _f("CRYPTO_NBREAK_SL_PCT", 0.0)),
-        ichimoku_sl_pct=max(0.0, _f("CRYPTO_ICHIMOKU_SL_PCT", 0.0)),
+        stop_pnl_pct=max(0.0, _f("CRYPTO_STOP_PNL_PCT", 10.0)),
+        ratchet_step_pnl_pct=max(0.5, _f("CRYPTO_RATCHET_STEP_PNL_PCT", 5.0)),
+        tp_trigger_pnl_pct=max(1.0, _f("CRYPTO_TP_TRIGGER_PNL_PCT", 25.0)),
+        peak_trail_pnl_pct=max(0.5, _f("CRYPTO_PEAK_TRAIL_PNL_PCT", 2.0)),
         trading_mode=_mode("CRYPTO_TRADING_MODE"),
         live_armed=_b("CRYPTO_ALLOW_LIVE", False),
         max_daily_loss_usd=abs(_f("CRYPTO_MAX_DAILY_LOSS_USD", 50.0)),
@@ -124,6 +146,9 @@ CRYPTO_ENV_KEYS = (
     "DELTA_API_KEY",
     "DELTA_API_SECRET",
     "DELTA_BASE_URL",
+    "CRYPTO_FORCE_IPV4",
+    "CRYPTO_SYMBOLS",
+    "CRYPTO_LOTS",
     "ENABLE_CRYPTO_PAPER",
     "CRYPTO_NY_NBREAK_ENABLED",
     "CRYPTO_ICHIMOKU_ENABLED",
@@ -135,8 +160,10 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_NY_START",
     "CRYPTO_NY_END",
     "CRYPTO_ICHIMOKU_TF",
-    "CRYPTO_NBREAK_SL_PCT",
-    "CRYPTO_ICHIMOKU_SL_PCT",
+    "CRYPTO_STOP_PNL_PCT",
+    "CRYPTO_RATCHET_STEP_PNL_PCT",
+    "CRYPTO_TP_TRIGGER_PNL_PCT",
+    "CRYPTO_PEAK_TRAIL_PNL_PCT",
     "CRYPTO_TRADING_MODE",
     "CRYPTO_ALLOW_LIVE",
     "CRYPTO_MAX_DAILY_LOSS_USD",
@@ -146,10 +173,18 @@ CRYPTO_ENV_KEYS = (
 
 if __name__ == "__main__":  # self-check
     s = crypto_settings()
-    assert s.deploy_usd >= 100.0
+    assert s.lots >= 1
+    assert s.deploy_usd >= 0.0
     assert s.leverage >= 1.0
+    assert s.stop_pnl_pct > 0 and s.tp_trigger_pnl_pct > 0
     assert s.base_url.startswith("https://")
     assert not s.base_url.endswith("/")
     assert s.trading_mode in {"PAPER", "LIVE"}
     assert not s.live_orders_enabled or (s.trading_mode == "LIVE" and s.live_armed)
-    print("crypto.config self-check ok —", s.base_url, "mode", s.trading_mode, "lev", s.leverage)
+    assert s.symbols and all(x == x.upper() for x in s.symbols)
+    assert len(set(s.symbols)) == len(s.symbols)  # deduped
+    import os as _o
+    _o.environ["CRYPTO_SYMBOLS"] = "btcusd, ethusd ,BTCUSD"
+    assert _symbols() == ("BTCUSD", "ETHUSD")
+    _o.environ.pop("CRYPTO_SYMBOLS")
+    print("crypto.config self-check ok —", s.base_url, "symbols", s.symbols)

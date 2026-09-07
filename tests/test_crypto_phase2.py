@@ -32,21 +32,35 @@ def test_ny_window_and_day():
 # ---------------------------------------------------------------------------
 # sizing
 # ---------------------------------------------------------------------------
-def test_sizing_hundred_dollars_three_x():
+def test_sizing_lot_based():
     btc = Contract("BTCUSD", 27, 0.001, 0.5, 1, 100)
-    r = size_position(btc, 60_000, deploy_usd=100, leverage=3, wallet_usd=2000)
-    assert r.ok and r.size == 4
+    r = size_position(btc, 60_000, lots=2, leverage=3, wallet_usd=2000)
+    assert r.ok and r.size == 2
     assert r.leverage == 3.0
     # a small bankroll blocks the trade rather than over-sizing it
-    r2 = size_position(btc, 60_000, deploy_usd=100, leverage=3, wallet_usd=15)
-    assert not r2.ok
+    assert not size_position(btc, 60_000, lots=2, leverage=3, wallet_usd=15).ok
+    # deploy_usd is an optional cap
+    assert not size_position(btc, 60_000, lots=3, leverage=3, wallet_usd=5000, deploy_usd=40).ok
+
+
+def test_trailing_stop_exits_a_position():
+    from crypto.strategies.trailing import TrailConfig, update_and_check
+
+    cfg = TrailConfig(leverage=100.0)  # 1% price move = 100% P&L
+    pos = {"entry_price": 100.0, "side": "long"}
+    # run to +15% P&L (price +0.15%) — stop ratchets to +5%
+    assert update_and_check(pos, 100.15, cfg) is None
+    assert pos["trail_stop_pnl_pct"] == 5.0
+    # give back to +4% P&L — below the +5% stop → exit
+    reason = update_and_check(pos, 100.04, cfg)
+    assert reason and "trailing" in reason
 
 
 def test_sizing_rejects_an_insane_mark():
     btc = Contract("BTCUSD", 27, 0.001, 0.5, 1, 100)
     # a 10x-off / corrupted feed price is refused, not silently sized off
-    assert not size_position(btc, 6.0, deploy_usd=100, leverage=3, wallet_usd=2000).ok
-    assert not size_position(btc, 60_000_000, deploy_usd=100, leverage=3, wallet_usd=1e9).ok
+    assert not size_position(btc, 6.0, lots=1, leverage=3, wallet_usd=2000).ok
+    assert not size_position(btc, 60_000_000, lots=1, leverage=3, wallet_usd=1e9).ok
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +162,13 @@ def paper_env(tmp_path, monkeypatch):
     monkeypatch.setenv("ENABLE_CRYPTO_PAPER", "true")
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,ETHUSD")
     monkeypatch.setenv("CRYPTO_USDINR", "88")
     monkeypatch.setenv("CRYPTO_PAPER_BANKROLL", "5000")
+    # paper lane: no Delta creds → _fx_rate uses the CRYPTO_USDINR fallback,
+    # never a real wallet call (the repo .env may carry real keys)
+    monkeypatch.delenv("DELTA_API_KEY", raising=False)
+    monkeypatch.delenv("DELTA_API_SECRET", raising=False)
     monkeypatch.setattr(journal, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(journal, "JOURNAL_PATH", tmp_path / "journal.jsonl")
 

@@ -10,11 +10,13 @@ from crypto.delta import market_data, products
 from crypto.delta.client import _query_string, _sign
 
 
-def test_config_deploy_floor(monkeypatch):
-    monkeypatch.setenv("CRYPTO_DEPLOY_USD", "40")
+def test_config_sizing_knobs(monkeypatch):
+    monkeypatch.setenv("CRYPTO_LOTS", "0")
+    monkeypatch.setenv("CRYPTO_DEPLOY_USD", "-5")
     monkeypatch.setenv("CRYPTO_LEVERAGE", "0.2")
     s = crypto_settings()
-    assert s.deploy_usd == 100.0  # hard floor
+    assert s.lots == 1  # min 1
+    assert s.deploy_usd == 0.0  # cap floored at 0 (0 = no cap)
     assert s.leverage == 1.0  # min
     assert s.base_url.startswith("https://") and not s.base_url.endswith("/")
 
@@ -47,6 +49,7 @@ def test_resample_ohlcv():
 
 def test_products_parse_from_blob(monkeypatch):
     fake = {
+        "schema": products._SCHEMA,
         "fetched_at": 9e18,  # far future so it never refreshes
         "contracts": {
             "BTCUSD": {

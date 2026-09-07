@@ -27,6 +27,15 @@ from crypto.session import in_ny_window, ny_session_date
 from crypto.sizing import size_position
 from crypto.strategies import ichimoku as ichi
 from crypto.strategies import ny_n_break as nb
+from crypto.strategies.trailing import TrailConfig
+
+
+def _trail(s) -> TrailConfig:
+    return TrailConfig(
+        leverage=s.leverage, stop_pnl_pct=s.stop_pnl_pct,
+        ratchet_step_pnl_pct=s.ratchet_step_pnl_pct,
+        tp_trigger_pnl_pct=s.tp_trigger_pnl_pct, peak_trail_pnl_pct=s.peak_trail_pnl_pct,
+    )
 
 # Delta perpetual contract values (units of coin per contract). Used only when
 # the live contract master is unreachable; the real values come from the API.
@@ -100,7 +109,7 @@ def _summarise(trades: list[Trade]) -> dict[str, Any]:
 
 def _record_exit(trades, strat, sym, pos, exit_px, exit_ts, reason, s, contract):
     sr = size_position(
-        contract, pos["entry"], deploy_usd=s.deploy_usd, leverage=s.leverage,
+        contract, pos["entry"], lots=s.lots, deploy_usd=s.deploy_usd, leverage=s.leverage,
         wallet_usd=s.paper_bankroll_usd, allow_min_one=s.allow_min_one,
     )
     size = sr.size if sr.ok else 1
@@ -131,7 +140,7 @@ def backtest_ny_n_break(sym: str, days: float, s) -> list[Trade]:
         now = pd.Timestamp(win5["datetime"].iloc[-1]).to_pydatetime()
         win15 = c15_all[c15_all["datetime"] <= win5["datetime"].iloc[-1]].tail(200).reset_index(drop=True)
         state, ev = nb.step(
-            sym, win5, win15, state=state, cfg=nb.NBreakConfig(sl_pct=s.nbreak_sl_pct),
+            sym, win5, win15, state=state, cfg=nb.NBreakConfig(trail=_trail(s)),
             in_session=in_ny_window(ny_start, ny_end, now),
             session_date=ny_session_date(ny_start, ny_end, now),
         )
@@ -155,7 +164,7 @@ def backtest_ichimoku(sym: str, days: float, s) -> list[Trade]:
     trades: list[Trade] = []
     for i in range(_WINDOW, len(ch)):
         win = ch.iloc[i - _WINDOW : i + 1].reset_index(drop=True)
-        state, ev = ichi.step(sym, win, state=state, cfg=ichi.IchimokuConfig(sl_pct=s.ichimoku_sl_pct))
+        state, ev = ichi.step(sym, win, state=state, cfg=ichi.IchimokuConfig(trail=_trail(s)))
         px = float(win["close"].iloc[-1])
         ts = win["datetime"].iloc[-1]
         if ev["event"] == "enter":

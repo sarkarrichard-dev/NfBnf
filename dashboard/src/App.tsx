@@ -232,7 +232,7 @@ function App() {
       ) : null}
 
       {tab === 'crypto' ? (
-        <CollapsibleSection title="Crypto — Delta Exchange (paper)" defaultOpen>
+        <CollapsibleSection title="Crypto — Delta Exchange" defaultOpen>
           <Suspense fallback={<PanelFallback />}>
             <CryptoPanel />
           </Suspense>

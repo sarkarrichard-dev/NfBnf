@@ -33,8 +33,22 @@ _MAX_429_WAIT = 8.0
 _USER_AGENT = "algo-bnf-crypto/1"
 
 
+# Last "IP not whitelisted" rejection Delta sent, so the dashboard can show the
+# exact address without making its own probe call. {"ip": str, "at": epoch}.
+LAST_IP_BLOCK: dict[str, Any] = {}
+
+
 class DeltaError(RuntimeError):
-    """A Delta API call failed — HTTP error, auth failure, or ``success: false``."""
+    """A Delta API call failed — HTTP error, auth failure, or ``success: false``.
+
+    ``code`` / ``context`` carry Delta's structured error when it sent one, so
+    callers (e.g. the IP-whitelist hint) don't have to scrape the message.
+    """
+
+    def __init__(self, message: str, *, code: str | None = None, context: Any = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.context = context if isinstance(context, dict) else {}
 
 
 def _sign(secret: str, prehash: str) -> str:
@@ -67,6 +81,13 @@ class DeltaClient:
         self._base = s.base_url
         self._key = s.api_key
         self._secret = s.api_secret
+        # Residential IPv6 is a rotating privacy address no static whitelist can
+        # hold; pin Delta traffic to IPv4 so the operator whitelists one address.
+        self._force_ipv4 = getattr(s, "force_ipv4", True)
+
+    def _client(self, timeout: float) -> httpx.Client:
+        transport = httpx.HTTPTransport(local_address="0.0.0.0") if self._force_ipv4 else None
+        return httpx.Client(timeout=timeout, transport=transport)
 
     @property
     def has_credentials(self) -> bool:
@@ -137,7 +158,7 @@ class DeltaClient:
                     }
                 )
             try:
-                with httpx.Client(timeout=_TIMEOUT if signed else _PUBLIC_TIMEOUT) as client:
+                with self._client(_TIMEOUT if signed else _PUBLIC_TIMEOUT) as client:
                     resp = client.request(m, url, headers=headers, content=payload or None)
             except httpx.HTTPError as exc:
                 last_exc = exc
@@ -165,7 +186,13 @@ class DeltaClient:
 
             if resp.status_code >= 400 or (isinstance(data, dict) and data.get("success") is False):
                 err = data.get("error") if isinstance(data, dict) else data
-                raise DeltaError(f"{m} {path}: HTTP {resp.status_code} — {err}")
+                code = err.get("code") if isinstance(err, dict) else None
+                ctx = err.get("context") if isinstance(err, dict) else None
+                if code == "ip_not_whitelisted_for_api_key" and isinstance(ctx, dict):
+                    LAST_IP_BLOCK.update(ip=str(ctx.get("client_ip") or ""), at=time.time())
+                raise DeltaError(
+                    f"{m} {path}: HTTP {resp.status_code} — {err}", code=code, context=ctx
+                )
 
             return data.get("result", data) if isinstance(data, dict) else data
 
@@ -178,4 +205,15 @@ if __name__ == "__main__":  # self-check — no network
     # signature is deterministic for a fixed timestamp
     sig = _sign("secret", "GET" + "1700000000" + "/v2/wallet/balances" + "" + "")
     assert len(sig) == 64 and all(c in "0123456789abcdef" for c in sig)
-    print("crypto.delta.client self-check ok — signing + query string")
+    # structured error carries code + context
+    e = DeltaError("boom", code="ip_not_whitelisted_for_api_key", context={"client_ip": "1.2.3.4"})
+    assert e.code == "ip_not_whitelisted_for_api_key" and e.context["client_ip"] == "1.2.3.4"
+    # IPv4 pin builds a bound transport; opt-out builds none
+    import dataclasses as _dc
+    _s = crypto_settings()
+    c4 = DeltaClient(_s)._client(1.0)
+    assert isinstance(c4._transport, httpx.HTTPTransport)
+    c4.close()
+    c6 = DeltaClient(_dc.replace(_s, force_ipv4=False))._client(1.0)
+    c6.close()
+    print("crypto.delta.client self-check ok — signing, query string, error context, IPv4 pin")

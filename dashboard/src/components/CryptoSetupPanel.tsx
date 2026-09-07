@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
+import { fx } from '../lib/theme'
 import { Button } from './ui/Button'
 
 type Quote = { mark: number | null; bid: number | null; ask: number | null }
@@ -24,8 +25,8 @@ type Status = {
 }
 
 const inputCls =
-  'w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 font-mono text-xs ' +
-  'text-slate-100 outline-none focus:border-slate-500'
+  'w-full rounded-lg border border-[var(--hair)] bg-black/30 px-3 py-2 font-mono text-xs ' +
+  'text-slate-100 outline-none focus:border-[var(--acc)]'
 
 function px(v: number | null | undefined) {
   return v == null ? '—' : v.toLocaleString(undefined, { maximumFractionDigits: 2 })
@@ -78,21 +79,21 @@ export function CryptoSetupPanel() {
     <div className="space-y-4">
       <p className="text-xs text-slate-500">
         Crypto trades on Delta Exchange India, separate from the index lanes. Perpetual futures
-        only for now, paper mode. Keys are written to .env by the app.
+        only for now. Keys are written to .env by the app.
       </p>
 
       {/* connection + wallet */}
-      <div className="rounded-lg border border-slate-800 p-3">
+      <div className={fx.card}>
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-xs font-semibold text-slate-300">Connection</span>
+          <span className="text-xs font-semibold text-cyan-50/90">Connection</span>
           <span
             className={cn(
               'rounded-full px-2 py-0.5 text-[10px] font-semibold',
               h?.connected
-                ? 'bg-emerald-500/15 text-emerald-300'
+                ? 'bg-[var(--up)]/15 text-[var(--up)]'
                 : s?.credentials_ready
-                  ? 'bg-amber-500/15 text-amber-300'
-                  : 'bg-slate-700/50 text-slate-400',
+                  ? 'bg-[var(--warn)]/15 text-[var(--warn)]'
+                  : 'bg-white/10 text-slate-400',
             )}
           >
             {h?.connected ? 'connected' : s?.credentials_ready ? 'key set · not connected' : 'no key'}
@@ -111,8 +112,8 @@ export function CryptoSetupPanel() {
       </div>
 
       {/* live quotes */}
-      <div className="rounded-lg border border-slate-800 p-3">
-        <span className="mb-2 block text-xs font-semibold text-slate-300">Live quotes</span>
+      <div className={fx.card}>
+        <span className="mb-2 block text-xs font-semibold text-cyan-50/90">Live quotes</span>
         <div className="space-y-1">
           {Object.entries(h?.quotes ?? {}).map(([sym, q]) => (
             <div key={sym} className="flex items-center justify-between font-mono text-xs">
@@ -130,7 +131,7 @@ export function CryptoSetupPanel() {
 
       {/* errors */}
       {h?.errors?.length ? (
-        <ul className="space-y-1 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3 text-xs text-amber-200">
+        <ul className="space-y-1 rounded-lg border border-[var(--warn)]/30 bg-[var(--warn)]/10 p-3 text-xs text-[var(--warn)]">
           {h.errors.map((e) => (
             <li key={e}>{e}</li>
           ))}
@@ -138,8 +139,8 @@ export function CryptoSetupPanel() {
       ) : null}
 
       {/* credential form */}
-      <div className="space-y-2 rounded-lg border border-slate-800 p-3">
-        <span className="block text-xs font-semibold text-slate-300">Set / replace keys</span>
+      <div className={cn(fx.card, 'space-y-2')}>
+        <span className="block text-xs font-semibold text-cyan-50/90">Set / replace keys</span>
         <input
           className={inputCls}
           placeholder="DELTA_API_KEY"
