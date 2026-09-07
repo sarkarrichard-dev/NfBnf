@@ -30,8 +30,11 @@ symmetric bell the D-shape rule needs, so it produces no signal.
 ## Auto-tune (`crypto/ml/optimize.py`)
 
 Random search over the per-parameter grid, scored on rolling out-of-sample folds
-with a neighbour-stability gate. **No strategy produced a stable positive combo**
-— the losses are structural (5m scalp friction), not a parameter-tuning problem.
+with a neighbour-stability gate. **Every combo it tried was ineligible** (net
+negative or too few trades) — `eligible: 0` for all three. Best combos:
+`ema_jaguar` fast=21/slow=89 → still net −; `bb_reversal` bb_len=14/dev=2.5 →
+net − (near-breakeven on a 20-day slice, −$1,128 over 45 days). The losses are
+structural (5m scalp friction), not a parameter-tuning problem.
 `tuned_params()` therefore returns `{}` and the strategies use their defaults.
 
 ## Verdict
