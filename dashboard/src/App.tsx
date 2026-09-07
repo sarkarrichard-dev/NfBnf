@@ -43,6 +43,9 @@ const LanesPanel = lazy(() =>
 const DayReviewPanel = lazy(() =>
   import('./components/DayReviewPanel').then((m) => ({ default: m.DayReviewPanel })),
 )
+const CryptoPanel = lazy(() =>
+  import('./components/CryptoPanel').then((m) => ({ default: m.CryptoPanel })),
+)
 
 type StatusResponse = {
   trading_mode: string
@@ -138,6 +141,7 @@ function App() {
           { id: 'trade', label: 'Trade', badge: openCount || null },
           { id: 'strategies', label: 'Strategies' },
           { id: 'research', label: 'Research' },
+          { id: 'crypto', label: 'Crypto' },
           { id: 'setup', label: 'Setup' },
         ]}
         value={tab}
@@ -225,6 +229,14 @@ function App() {
             </Suspense>
           </CollapsibleSection>
         </div>
+      ) : null}
+
+      {tab === 'crypto' ? (
+        <CollapsibleSection title="Crypto — Delta Exchange (paper)" defaultOpen>
+          <Suspense fallback={<PanelFallback />}>
+            <CryptoPanel />
+          </Suspense>
+        </CollapsibleSection>
       ) : null}
 
       {tab === 'setup' ? (

@@ -175,6 +175,31 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     tick_stop = asyncio.Event()
     tick_task = asyncio.create_task(_tick_feed_loop())
 
+    async def _crypto_paper_loop() -> None:
+        """Crypto (Delta Exchange) paper lane — its own cadence, decoupled from
+        the Dhan scanner because crypto trades 24/7. Opt-in, never fatal."""
+        try:
+            from crypto.lanes import enabled as crypto_enabled, scan_crypto_paper
+        except Exception:
+            return
+        _clog = logging.getLogger("crypto.lanes")
+        while True:
+            try:
+                if crypto_enabled():
+                    events = await asyncio.to_thread(scan_crypto_paper)
+                    for e in events:
+                        kind = e.get("event", "?")
+                        if kind not in ("none", "hold", "wait"):
+                            _clog.info(
+                                "crypto_paper | %s",
+                                " · ".join(f"{k}={v}" for k, v in e.items()),
+                            )
+            except Exception:
+                _clog.warning("crypto paper loop error", exc_info=True)
+            await asyncio.sleep(60)
+
+    crypto_task = asyncio.create_task(_crypto_paper_loop())
+
     async def _warm() -> None:
         """Spin up the thread pool and touch the modules the first UI action needs.
 
@@ -213,7 +238,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     cache_task.cancel()
     tick_task.cancel()
     warm_task.cancel()
-    for task in (renew_task, boot_scanner_task, cache_task, tick_task, warm_task):
+    crypto_task.cancel()
+    for task in (renew_task, boot_scanner_task, cache_task, tick_task, warm_task, crypto_task):
         try:
             await task
         except asyncio.CancelledError:
@@ -222,6 +248,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Index Options AI", version="0.2.0", lifespan=lifespan)
+
+# Crypto section (Delta Exchange) — separate lane, its own /api/crypto surface.
+try:
+    from crypto.api import router as crypto_router
+
+    app.include_router(crypto_router)
+except Exception as _crypto_exc:  # never let the crypto module stop the index server
+    logging.getLogger(__name__).warning("crypto router not mounted: %s", _crypto_exc)
 
 # Exposed on /api/status so the dashboard can detect a stale server process.
 API_CAPABILITIES: dict[str, Any] = {

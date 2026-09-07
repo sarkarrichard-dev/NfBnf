@@ -1,0 +1,255 @@
+"""Crypto section HTTP surface — mounted at /api/crypto by index_ai.server.
+
+All handlers are plain ``def`` so Starlette runs them in a threadpool: they do
+blocking I/O (httpx to Delta, an ``.env`` write) which must never touch the
+event loop (CLAUDE.md).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+
+from fastapi import APIRouter, Body, HTTPException
+
+from crypto import charges, journal
+from crypto.config import PERP_SYMBOLS, crypto_settings
+from crypto.delta import market_data, products
+from crypto.delta.client import DeltaClient, DeltaError
+from crypto.session import crypto_day, ny_session_date
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/crypto", tags=["crypto"])
+
+
+def _mask(secret: str) -> str:
+    s = secret or ""
+    if len(s) <= 8:
+        return "set" if s else ""
+    return f"{s[:4]}…{s[-2:]}"
+
+
+@router.get("/status", include_in_schema=False)
+def crypto_status() -> dict:
+    s = crypto_settings()
+    return {
+        "credentials_ready": s.credentials_ready,
+        "api_key_preview": _mask(s.api_key),
+        "base_url": s.base_url,
+        "paper_enabled": s.paper_enabled,
+        "lanes": {"ny_n_break": s.ny_nbreak_enabled, "ichimoku": s.ichimoku_enabled},
+        "sizing": {
+            "deploy_usd": s.deploy_usd,
+            "leverage": s.leverage,
+            "max_concurrent": s.max_concurrent,
+            "paper_bankroll_usd": s.paper_bankroll_usd,
+            "allow_min_one": s.allow_min_one,
+        },
+        "session_ist": {"start": s.ny_start, "end": s.ny_end},
+        "ichimoku_tf": s.ichimoku_tf,
+        "hard_stops_pct": {"ny_n_break": s.nbreak_sl_pct, "ichimoku": s.ichimoku_sl_pct},
+        "symbols": list(PERP_SYMBOLS),
+        "half_spread_bps": {
+            sym: {
+                "measured": charges.measured_half_spread_bps(sym),
+                "fallback": charges._HALF_SPREAD_BPS.get(sym),
+            }
+            for sym in PERP_SYMBOLS
+        },
+    }
+
+
+def _health_blocking() -> dict:
+    s = crypto_settings()
+    out: dict = {
+        "connected": False,
+        "credentials_ready": s.credentials_ready,
+        "base_url": s.base_url,
+        "wallet_usd": None,
+        "wallet_inr": None,
+        "quotes": {},
+        "errors": [],
+    }
+    client = DeltaClient(s)
+
+    for sym in PERP_SYMBOLS:
+        try:
+            tk = market_data.ticker(sym, client=client)
+            q = tk.get("quotes") or {}
+            out["quotes"][sym] = {
+                "mark": _num(tk.get("mark_price")),
+                "bid": _num(q.get("best_bid")),
+                "ask": _num(q.get("best_ask")),
+            }
+        except DeltaError as exc:
+            out["errors"].append(f"{sym} quote: {exc}")
+
+    if not s.credentials_ready:
+        out["errors"].append("Delta API key/secret not set — add them in the Crypto Setup panel.")
+        return out
+
+    try:
+        bal = client.wallet()
+        out["wallet_usd"] = round(sum(_num(w.get("balance")) or 0.0 for w in bal), 2)
+        out["wallet_inr"] = round(sum(_num(w.get("balance_inr")) or 0.0 for w in bal), 2)
+        out["connected"] = True
+    except DeltaError as exc:
+        out["errors"].append(f"wallet: {exc}")
+    return out
+
+
+def _num(v) -> float | None:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/health", include_in_schema=False)
+def crypto_health() -> dict:
+    return _health_blocking()
+
+
+@router.get("/contracts", include_in_schema=False)
+def crypto_contracts() -> dict:
+    try:
+        cs = products.all_contracts()
+    except DeltaError as exc:
+        raise HTTPException(502, f"Delta products fetch failed: {exc}") from exc
+    return {
+        sym: {
+            "product_id": c.product_id,
+            "contract_value": c.contract_value,
+            "tick_size": c.tick_size,
+            "min_size": c.min_size,
+            "max_leverage": c.max_leverage,
+            "usable": c.usable,
+        }
+        for sym, c in cs.items()
+    }
+
+
+@router.get("/positions", include_in_schema=False)
+def crypto_positions() -> dict:
+    st = journal.load_state()
+    open_pos = [
+        {"key": k, **(v["position"])}
+        for k, v in st.items()
+        if ":" in k and isinstance(v, dict) and v.get("position")
+    ]
+    live: list = []
+    s = crypto_settings()
+    if s.credentials_ready:
+        try:
+            for p in DeltaClient(s).positions():
+                sz = _num(p.get("size")) or 0.0
+                if sz:
+                    live.append(
+                        {
+                            "symbol": p.get("product_symbol"),
+                            "size": sz,
+                            "entry_price": _num(p.get("entry_price")),
+                            "unrealized_pnl": _num(p.get("unrealized_pnl")),
+                        }
+                    )
+        except DeltaError as exc:
+            live = [{"error": str(exc)}]
+    return {"paper": open_pos, "live": live}
+
+
+@router.get("/journal", include_in_schema=False)
+def crypto_journal(limit: int = 100) -> dict:
+    return {"trades": journal.recent(max(1, min(500, limit)))}
+
+
+@router.get("/day", include_in_schema=False)
+def crypto_today() -> dict:
+    s = crypto_settings()
+    ny = ny_session_date(s.ny_start, s.ny_end)
+    utc = crypto_day()
+
+    def _sum(rows: list) -> dict:
+        return {
+            "trades": len(rows),
+            "wins": sum(1 for r in rows if float(r.get("pnl_usd") or 0) > 0),
+            "losses": sum(1 for r in rows if float(r.get("pnl_usd") or 0) < 0),
+            "net_usd": round(sum(float(r.get("pnl_usd") or 0) for r in rows), 2),
+            "net_inr": round(sum(float(r.get("pnl_inr") or 0) for r in rows), 0),
+        }
+
+    return {
+        "ny_session_date": ny,
+        "utc_date": utc,
+        "ny_n_break": _sum(journal.day_rows(ny, strategy="ny_n_break")),
+        "ichimoku": _sum(journal.day_rows(utc, strategy="ichimoku")),
+    }
+
+
+@router.post("/config", include_in_schema=False)
+def set_config(
+    deploy_usd: float | None = Body(None, embed=True),
+    leverage: float | None = Body(None, embed=True),
+    max_concurrent: int | None = Body(None, embed=True),
+    paper_enabled: bool | None = Body(None, embed=True),
+    ny_n_break_enabled: bool | None = Body(None, embed=True),
+    ichimoku_enabled: bool | None = Body(None, embed=True),
+) -> dict:
+    """Non-financial-in-paper knobs — plain write, no confirm (Delta keys are
+    the only crypto setting that needs the money-path treatment)."""
+    from index_ai.config import update_env_values
+
+    values: dict[str, str] = {}
+    if deploy_usd is not None:
+        values["CRYPTO_DEPLOY_USD"] = str(max(100.0, float(deploy_usd)))
+    if leverage is not None:
+        values["CRYPTO_LEVERAGE"] = str(min(100.0, max(1.0, float(leverage))))
+    if max_concurrent is not None:
+        values["CRYPTO_MAX_CONCURRENT"] = str(min(10, max(1, int(max_concurrent))))
+    if paper_enabled is not None:
+        values["ENABLE_CRYPTO_PAPER"] = "true" if paper_enabled else "false"
+    if ny_n_break_enabled is not None:
+        values["CRYPTO_NY_NBREAK_ENABLED"] = "true" if ny_n_break_enabled else "false"
+    if ichimoku_enabled is not None:
+        values["CRYPTO_ICHIMOKU_ENABLED"] = "true" if ichimoku_enabled else "false"
+    if not values:
+        raise HTTPException(400, "No settings provided.")
+    update_env_values(values)
+    for k, v in values.items():
+        os.environ[k] = v
+    return {"saved": list(values.keys()), "status": crypto_status()}
+
+
+@router.post("/credentials", include_in_schema=False)
+def set_credentials(
+    api_key: str = Body(..., embed=True),
+    api_secret: str = Body(..., embed=True),
+    confirm: bool = Body(False, embed=True),
+) -> dict:
+    """Save Delta API credentials to .env. Money-path — requires confirm=true.
+
+    These keys can place real orders once live execution ships, so they do NOT
+    go through the generic feature-toggle endpoint — same treatment as the Dhan
+    login.
+    """
+    if not confirm:
+        raise HTTPException(400, "Set confirm=true to save Delta credentials.")
+    key, sec = api_key.strip(), api_secret.strip()
+    if not key or not sec:
+        raise HTTPException(400, "Both api_key and api_secret are required.")
+
+    from index_ai.config import update_env_values
+
+    update_env_values({"DELTA_API_KEY": key, "DELTA_API_SECRET": sec})
+    os.environ["DELTA_API_KEY"] = key
+    os.environ["DELTA_API_SECRET"] = sec
+
+    check = _health_blocking()
+    return {
+        "saved": True,
+        "api_key_preview": _mask(key),
+        "connected": check["connected"],
+        "wallet_usd": check["wallet_usd"],
+        "wallet_inr": check["wallet_inr"],
+        "errors": check["errors"],
+    }
