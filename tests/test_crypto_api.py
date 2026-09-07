@@ -64,7 +64,7 @@ def test_config_validates_and_clamps(monkeypatch):
     assert r.status_code == 200
     assert saved["CRYPTO_LOTS"] == "1"  # min 1
     assert saved["CRYPTO_DEPLOY_USD"] == "0.0"  # cap floored at 0
-    assert saved["CRYPTO_LEVERAGE"] == "100.0"  # clamped to product max
+    assert "CRYPTO_LEVERAGE" not in saved  # leverage is fixed at 100x — ignored
     assert saved["CRYPTO_MAX_CONCURRENT"] == "10"
 
     # legacy alias still accepted

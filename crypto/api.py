@@ -58,7 +58,12 @@ def crypto_status() -> dict:
         },
         "session_ist": {"start": s.ny_start, "end": s.ny_end},
         "ichimoku_tf": s.ichimoku_tf,
-        "hard_stops_pct": {"ny_n_break": s.nbreak_sl_pct, "ichimoku": s.ichimoku_sl_pct},
+        "trailing": {
+            "stop_pnl_pct": s.stop_pnl_pct,
+            "ratchet_step_pnl_pct": s.ratchet_step_pnl_pct,
+            "tp_trigger_pnl_pct": s.tp_trigger_pnl_pct,
+            "peak_trail_pnl_pct": s.peak_trail_pnl_pct,
+        },
         "symbols": list(s.symbols),
         "available_symbols": products.available_symbols(),
         "half_spread_bps": {
@@ -340,7 +345,6 @@ def set_config(
     lots: int | None = Body(None, embed=True),
     deploy_cap_usd: float | None = Body(None, embed=True),
     deploy_usd: float | None = Body(None, embed=True),  # legacy alias for deploy_cap_usd
-    leverage: float | None = Body(None, embed=True),
     max_concurrent: int | None = Body(None, embed=True),
     paper_enabled: bool | None = Body(None, embed=True),
     ny_n_break_enabled: bool | None = Body(None, embed=True),
@@ -366,8 +370,6 @@ def set_config(
     cap = deploy_cap_usd if deploy_cap_usd is not None else deploy_usd
     if cap is not None:
         values["CRYPTO_DEPLOY_USD"] = str(max(0.0, float(cap)))
-    if leverage is not None:
-        values["CRYPTO_LEVERAGE"] = str(min(100.0, max(1.0, float(leverage))))
     if max_concurrent is not None:
         values["CRYPTO_MAX_CONCURRENT"] = str(min(10, max(1, int(max_concurrent))))
     if paper_enabled is not None:

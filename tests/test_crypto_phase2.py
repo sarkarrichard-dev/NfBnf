@@ -43,6 +43,19 @@ def test_sizing_lot_based():
     assert not size_position(btc, 60_000, lots=3, leverage=3, wallet_usd=5000, deploy_usd=40).ok
 
 
+def test_trailing_stop_exits_a_position():
+    from crypto.strategies.trailing import TrailConfig, update_and_check
+
+    cfg = TrailConfig(leverage=100.0)  # 1% price move = 100% P&L
+    pos = {"entry_price": 100.0, "side": "long"}
+    # run to +15% P&L (price +0.15%) — stop ratchets to +5%
+    assert update_and_check(pos, 100.15, cfg) is None
+    assert pos["trail_stop_pnl_pct"] == 5.0
+    # give back to +4% P&L — below the +5% stop → exit
+    reason = update_and_check(pos, 100.04, cfg)
+    assert reason and "trailing" in reason
+
+
 def test_sizing_rejects_an_insane_mark():
     btc = Contract("BTCUSD", 27, 0.001, 0.5, 1, 100)
     # a 10x-off / corrupted feed price is refused, not silently sized off
@@ -152,6 +165,10 @@ def paper_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,ETHUSD")
     monkeypatch.setenv("CRYPTO_USDINR", "88")
     monkeypatch.setenv("CRYPTO_PAPER_BANKROLL", "5000")
+    # paper lane: no Delta creds → _fx_rate uses the CRYPTO_USDINR fallback,
+    # never a real wallet call (the repo .env may carry real keys)
+    monkeypatch.delenv("DELTA_API_KEY", raising=False)
+    monkeypatch.delenv("DELTA_API_SECRET", raising=False)
     monkeypatch.setattr(journal, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(journal, "JOURNAL_PATH", tmp_path / "journal.jsonl")
 

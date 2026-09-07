@@ -25,26 +25,20 @@ from crypto.session import crypto_day, in_ny_window, ny_session_date
 from crypto.sizing import size_position
 from crypto.strategies import ichimoku as ichi
 from crypto.strategies import ny_n_break as nb
+from crypto.strategies.trailing import TrailConfig, bracket_stop_price
 
 logger = logging.getLogger(__name__)
 
 _ICHI_DAYS = {"15m": 4, "30m": 8, "1h": 15, "2h": 25, "4h": 45, "6h": 60, "1d": 260}
 
-_last_alert: dict[str, float] = {}
-
-
 def _alert(text: str, *, key: str | None = None, min_gap_s: float = 600.0) -> None:
-    """Fire-and-forget Telegram, rate-limited per key so a stuck-state loop
-    can't send an alert every 60 s."""
-    import time as _t
-
-    if key is not None:
-        now = _t.monotonic()
-        if now - _last_alert.get(key, 0.0) < min_gap_s:
-            return
-        _last_alert[key] = now
+    """Fire-and-forget Telegram, deduped per key (on disk, survives restarts) so
+    a stuck-state loop can't send an alert every 60 s."""
     try:
-        notify.send(text)
+        if key is None:
+            notify.send(text)
+        else:
+            notify.alert(text, key=key, gap_s=min_gap_s)
     except Exception:
         pass
 
@@ -61,25 +55,25 @@ def _closed(df: pd.DataFrame) -> pd.DataFrame:
     return df.iloc[:-1].reset_index(drop=True) if len(df) > 1 else df
 
 
+def _trail_cfg(s) -> TrailConfig:
+    return TrailConfig(
+        leverage=s.leverage,
+        stop_pnl_pct=s.stop_pnl_pct,
+        ratchet_step_pnl_pct=s.ratchet_step_pnl_pct,
+        tp_trigger_pnl_pct=s.tp_trigger_pnl_pct,
+        peak_trail_pnl_pct=s.peak_trail_pnl_pct,
+    )
+
+
 def _nb_cfg(s) -> nb.NBreakConfig:
     return nb.NBreakConfig(
         max_trades_per_session=int(os.getenv("CRYPTO_NBREAK_MAX_TRADES", "3") or 3),
-        sl_pct=s.nbreak_sl_pct,
+        trail=_trail_cfg(s),
     )
 
 
 def _ichi_cfg(s) -> ichi.IchimokuConfig:
-    return ichi.IchimokuConfig(sl_pct=s.ichimoku_sl_pct)
-
-
-def _sl_pct(strategy: str, s) -> float:
-    return s.nbreak_sl_pct if strategy == "ny_n_break" else s.ichimoku_sl_pct
-
-
-def _stop_price(side: str, entry: float, sl_pct: float) -> float | None:
-    if sl_pct <= 0:
-        return None
-    return entry * (1 - sl_pct / 100) if side == "long" else entry * (1 + sl_pct / 100)
+    return ichi.IchimokuConfig(trail=_trail_cfg(s))
 
 
 def _fx_rate(client: DeltaClient, s) -> float:
@@ -363,7 +357,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
         try:
             resp = executor.place_entry(
                 client, contract, side, sr.size, leverage=sr.leverage,
-                sl_price=_stop_price(side, entry_px, _sl_pct(strat, s)),
+                sl_price=bracket_stop_price(entry_px, side, _trail_cfg(s)),
                 client_order_id=f"{strat}-{sym}-{ev.get('ts')}",
             )
         except Exception as exc:
@@ -392,7 +386,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
         "size": fill_size, "contract_value": contract.contract_value,
         "leverage": sr.leverage, "margin_total_usd": sr.margin_total_usd,
         "notional_usd": round(fill_size * contract.contract_value * entry_px, 2),
-        "stop_price": _stop_price(side, entry_px, _sl_pct(strat, s)),
+        "stop_price": bracket_stop_price(entry_px, side, _trail_cfg(s)),
         "opened_at": now_utc.isoformat(),
         "order_id": order_id,
         "features": snapshot,
@@ -433,6 +427,8 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
         "pnl_usd": round(pnl_usd, 4), "pnl_inr": round(pnl_usd * fx, 2), "fx_usdinr": round(fx, 4),
         "pnl_pct": round(gross / float(pos["notional_usd"]) * 100.0, 4) if pos.get("notional_usd") else 0.0,
         "exit_reason": ev.get("reason"),
+        "peak_pnl_pct": pos.get("peak_pnl_pct"),
+        "trail_stop_pnl_pct": pos.get("trail_stop_pnl_pct"),
         "features": pos.get("features") or {},
     }
 

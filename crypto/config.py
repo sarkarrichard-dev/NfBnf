@@ -71,7 +71,7 @@ class CryptoSettings:
     # 1 Delta contract, so every symbol trades `lots` contracts.
     lots: int                  # universal lot count, min 1
     deploy_usd: float          # optional per-trade margin cap in USD; 0 = no cap
-    leverage: float            # target leverage; clamped per-product at runtime
+    leverage: float            # fixed 100x for crypto; clamped per-product at runtime
     max_concurrent: int
     paper_bankroll_usd: float
     allow_min_one: bool        # take 1 contract even if 1-contract margin > deploy_usd
@@ -84,9 +84,11 @@ class CryptoSettings:
     ny_end: str
     # ichimoku
     ichimoku_tf: str
-    # optional hard stops, percent of entry (0 = off)
-    nbreak_sl_pct: float
-    ichimoku_sl_pct: float
+    # P&L trailing stop / target — percent of P&L on margin (see crypto/strategies/trailing.py)
+    stop_pnl_pct: float
+    ratchet_step_pnl_pct: float
+    tp_trigger_pnl_pct: float
+    peak_trail_pnl_pct: float
     # live execution (Phase 4) — two independent locks, see crypto/live.py
     trading_mode: str          # PAPER (default) | LIVE
     live_armed: bool           # CRYPTO_ALLOW_LIVE
@@ -119,7 +121,7 @@ def crypto_settings() -> CryptoSettings:
         symbols=_symbols(),
         lots=max(1, _i("CRYPTO_LOTS", 1)),
         deploy_usd=max(0.0, _f("CRYPTO_DEPLOY_USD", 0.0)),
-        leverage=max(1.0, _f("CRYPTO_LEVERAGE", 3.0)),
+        leverage=max(1.0, _f("CRYPTO_LEVERAGE", 100.0)),
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
         paper_bankroll_usd=max(100.0, _f("CRYPTO_PAPER_BANKROLL", 2000.0)),
         allow_min_one=_b("CRYPTO_ALLOW_MIN_ONE", False),
@@ -129,8 +131,10 @@ def crypto_settings() -> CryptoSettings:
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
-        nbreak_sl_pct=max(0.0, _f("CRYPTO_NBREAK_SL_PCT", 0.0)),
-        ichimoku_sl_pct=max(0.0, _f("CRYPTO_ICHIMOKU_SL_PCT", 0.0)),
+        stop_pnl_pct=max(0.0, _f("CRYPTO_STOP_PNL_PCT", 10.0)),
+        ratchet_step_pnl_pct=max(0.5, _f("CRYPTO_RATCHET_STEP_PNL_PCT", 5.0)),
+        tp_trigger_pnl_pct=max(1.0, _f("CRYPTO_TP_TRIGGER_PNL_PCT", 25.0)),
+        peak_trail_pnl_pct=max(0.5, _f("CRYPTO_PEAK_TRAIL_PNL_PCT", 2.0)),
         trading_mode=_mode("CRYPTO_TRADING_MODE"),
         live_armed=_b("CRYPTO_ALLOW_LIVE", False),
         max_daily_loss_usd=abs(_f("CRYPTO_MAX_DAILY_LOSS_USD", 50.0)),
@@ -156,8 +160,10 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_NY_START",
     "CRYPTO_NY_END",
     "CRYPTO_ICHIMOKU_TF",
-    "CRYPTO_NBREAK_SL_PCT",
-    "CRYPTO_ICHIMOKU_SL_PCT",
+    "CRYPTO_STOP_PNL_PCT",
+    "CRYPTO_RATCHET_STEP_PNL_PCT",
+    "CRYPTO_TP_TRIGGER_PNL_PCT",
+    "CRYPTO_PEAK_TRAIL_PNL_PCT",
     "CRYPTO_TRADING_MODE",
     "CRYPTO_ALLOW_LIVE",
     "CRYPTO_MAX_DAILY_LOSS_USD",
@@ -170,6 +176,7 @@ if __name__ == "__main__":  # self-check
     assert s.lots >= 1
     assert s.deploy_usd >= 0.0
     assert s.leverage >= 1.0
+    assert s.stop_pnl_pct > 0 and s.tp_trigger_pnl_pct > 0
     assert s.base_url.startswith("https://")
     assert not s.base_url.endswith("/")
     assert s.trading_mode in {"PAPER", "LIVE"}
