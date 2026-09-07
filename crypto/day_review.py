@@ -84,6 +84,7 @@ _EXIT_BUCKETS = (
     ("trailing stop", "trailing stop"),
     ("session end", "session end"),
     ("cloud re-entry", "cloud re-entry"),
+    ("supertrend", "trend flip"),
     ("15m", "structural signal"),
     ("N-break", "structural signal"),
     ("inverted-N", "structural signal"),

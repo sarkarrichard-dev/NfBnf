@@ -25,7 +25,14 @@ from crypto.delta import market_data, products
 from crypto.delta.products import Contract
 from crypto.session import in_ny_window, ny_session_date
 from crypto.sizing import size_position
-from crypto.strategies import bb_reversal, ema_jaguar, ichimoku as ichi, ny_n_break as nb, vp_edge
+from crypto.strategies import (
+    bb_reversal,
+    candle_renko,
+    ema_jaguar,
+    ichimoku as ichi,
+    ny_n_break as nb,
+    vp_edge,
+)
 from crypto.strategies.trailing import TrailConfig
 
 # name -> (module, timeframe, cfg factory taking (settings, **overrides))
@@ -36,6 +43,8 @@ _SIMPLE = {
                    lambda s, **kw: ema_jaguar.EmaJaguarConfig(trail=_trail(s), **kw)),
     "vp_edge": (vp_edge, "15m",
                 lambda s, **kw: vp_edge.VpEdgeConfig(trail=_trail(s), **kw)),
+    "candle_renko": (candle_renko, "5m",
+                     lambda s, **kw: candle_renko.CandleRenkoConfig(trail=_trail(s), **kw)),
 }
 ALL_STRATEGIES = ["ny_n_break", "ichimoku", *_SIMPLE]
 

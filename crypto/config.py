@@ -93,6 +93,7 @@ class CryptoSettings:
     bb_reversal_enabled: bool
     ema_jaguar_enabled: bool
     vp_edge_enabled: bool
+    candle_renko_enabled: bool
     # 6 PM (NY N-Break) session window, IST, 24h "HH:MM"
     ny_start: str
     ny_end: str
@@ -144,6 +145,7 @@ def crypto_settings() -> CryptoSettings:
         bb_reversal_enabled=_b("CRYPTO_BB_REVERSAL_ENABLED", False),
         ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
         vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
+        candle_renko_enabled=_b("CRYPTO_CANDLE_RENKO_ENABLED", False),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
@@ -170,6 +172,7 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_BB_REVERSAL_ENABLED",
     "CRYPTO_EMA_JAGUAR_ENABLED",
     "CRYPTO_VP_EDGE_ENABLED",
+    "CRYPTO_CANDLE_RENKO_ENABLED",
     "CRYPTO_DEPLOY_USD",
     "CRYPTO_LEVERAGE",
     "CRYPTO_MAX_CONCURRENT",
