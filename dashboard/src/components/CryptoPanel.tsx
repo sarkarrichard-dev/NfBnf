@@ -22,6 +22,7 @@ import { PeriodBar } from './PeriodBar'
 import { Sparkline } from './Sparkline'
 import { CryptoSetupPanel } from './CryptoSetupPanel'
 import { CryptoExecutionPanel } from './CryptoExecutionPanel'
+import { CryptoDayReviewPanel } from './CryptoDayReviewPanel'
 
 type Status = {
   lanes: { ny_n_break: boolean; ichimoku: boolean }
@@ -46,6 +47,10 @@ type Status = {
     model_present: boolean
     min_rows: number
     min_live_rows: number
+    tuning?: Record<
+      string,
+      { params?: Record<string, number>; net_usd?: number | null; stable?: boolean; tuned_at?: string }
+    >
   }
 }
 type LotRow = {
@@ -381,6 +386,10 @@ export function CryptoPanel() {
 
       {s?.ml ? <LearningRow ml={s.ml} /> : null}
 
+      <CollapsibleSection title="Day review" summary="AI summary · why each trade" defaultOpen>
+        <CryptoDayReviewPanel />
+      </CollapsibleSection>
+
       <CollapsibleSection title="Delta connection" summary="keys · wallet · live quotes">
         <CryptoSetupPanel />
       </CollapsibleSection>
@@ -498,6 +507,27 @@ function LearningRow({ ml }: { ml: NonNullable<Status['ml']> }) {
         {ml.enabled ? '' : ' · gate off'}
       </span>
       <span className="text-slate-600">separate from the index model</span>
+      {ml.tuning && Object.keys(ml.tuning).length ? (
+        <div className="w-full text-[11px] text-slate-500">
+          Auto-tune:{' '}
+          {Object.entries(ml.tuning).map(([k, v], i) => (
+            <span key={k}>
+              {i > 0 ? ' · ' : ''}
+              {k}{' '}
+              {v.stable && (v.net_usd ?? 0) > 0 ? (
+                <span className="text-[var(--up)]">
+                  {Object.entries(v.params ?? {})
+                    .map(([p, val]) => `${p}=${val}`)
+                    .join('/')}{' '}
+                  (OOS {usd(v.net_usd ?? 0)})
+                </span>
+              ) : (
+                <span className="text-slate-600">no stable positive combo</span>
+              )}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -206,6 +206,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                             _clog.info("crypto strategy auto-tune done")
                         except Exception:
                             _clog.warning("crypto strategy auto-tune failed", exc_info=True)
+                        try:
+                            from crypto.day_review import build_crypto_review
+
+                            await asyncio.to_thread(build_crypto_review, refresh=True)
+                        except Exception:
+                            _clog.warning("crypto day review failed", exc_info=True)
                     for e in events:
                         kind = e.get("event", "?")
                         if kind not in ("none", "hold", "wait"):

@@ -450,6 +450,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
         "stop_price": bracket_stop_price(entry_px, side, _trail_cfg(s)),
         "opened_at": now_utc.isoformat(),
         "order_id": order_id,
+        "entry_reason": ev.get("reason"),
         "features": snapshot,
     }
     slot["position"] = pos
@@ -487,6 +488,7 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
         "gross_usd": round(gross, 4), "fees_usd": round(cost, 4),
         "pnl_usd": round(pnl_usd, 4), "pnl_inr": round(pnl_usd * fx, 2), "fx_usdinr": round(fx, 4),
         "pnl_pct": round(gross / float(pos["notional_usd"]) * 100.0, 4) if pos.get("notional_usd") else 0.0,
+        "entry_reason": pos.get("entry_reason"),
         "exit_reason": ev.get("reason"),
         "peak_pnl_pct": pos.get("peak_pnl_pct"),
         "trail_stop_pnl_pct": pos.get("trail_stop_pnl_pct"),

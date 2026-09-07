@@ -325,6 +325,14 @@ def crypto_ml_train(force: bool = Body(False, embed=True)) -> dict:
     return ml_model.train(force=bool(force))
 
 
+@router.get("/day-review", include_in_schema=False)
+def crypto_day_review(refresh: bool = False) -> dict:
+    """Today's crypto summary + advisory AI review. Plain def — threadpooled."""
+    from crypto.day_review import build_crypto_review
+
+    return build_crypto_review(refresh=bool(refresh))
+
+
 @router.post("/ml/optimize", include_in_schema=False)
 def crypto_ml_optimize() -> dict:
     """Walk-forward re-tune the video strategies' parameters. Slow — plain def,
