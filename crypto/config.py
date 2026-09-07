@@ -65,6 +65,7 @@ class CryptoSettings:
     api_key: str
     api_secret: str
     base_url: str
+    force_ipv4: bool           # pin Delta traffic to IPv4 (CRYPTO_FORCE_IPV4)
     symbols: tuple[str, ...]   # perps to trade — CRYPTO_SYMBOLS
     # sizing (lot-based — see crypto/sizing.py). One universal lot count; 1 lot =
     # 1 Delta contract, so every symbol trades `lots` contracts.
@@ -114,6 +115,7 @@ def crypto_settings() -> CryptoSettings:
         api_key=os.getenv("DELTA_API_KEY", "").strip(),
         api_secret=os.getenv("DELTA_API_SECRET", "").strip(),
         base_url=os.getenv("DELTA_BASE_URL", DELTA_PROD_URL).rstrip("/"),
+        force_ipv4=_b("CRYPTO_FORCE_IPV4", True),
         symbols=_symbols(),
         lots=max(1, _i("CRYPTO_LOTS", 1)),
         deploy_usd=max(0.0, _f("CRYPTO_DEPLOY_USD", 0.0)),
@@ -140,6 +142,7 @@ CRYPTO_ENV_KEYS = (
     "DELTA_API_KEY",
     "DELTA_API_SECRET",
     "DELTA_BASE_URL",
+    "CRYPTO_FORCE_IPV4",
     "CRYPTO_SYMBOLS",
     "CRYPTO_LOTS",
     "ENABLE_CRYPTO_PAPER",

@@ -23,6 +23,7 @@ def test_status_ok(monkeypatch):
     assert body["available_symbols"] == _FAKE_LISTED
     assert body["sizing"]["lots"] >= 1 and "deploy_cap_usd" in body["sizing"]
     assert body["session_ist"]["start"] and body["session_ist"]["end"]
+    assert "ipv4" in body["egress"] and "delta_sees_ip" in body["egress"]
 
 
 def test_journal_and_day(tmp_path, monkeypatch):

@@ -268,7 +268,16 @@ def test_mode_and_arm_endpoints(monkeypatch):
 
     writes: dict[str, str] = {}
     monkeypatch.setattr("crypto.live.update_env_values", lambda v: writes.update(v))
-    monkeypatch.setattr("crypto.api._egress_ip", lambda: "1.2.3.4")
+    monkeypatch.setattr(
+        "crypto.api._egress",
+        lambda s: {
+            "ipv4": "1.2.3.4",
+            "ipv6": None,
+            "forcing_ipv4": True,
+            "delta_sees_ip": None,
+            "whitelist_ok": True,
+        },
+    )
     c = TestClient(app)
 
     assert c.post("/api/crypto/mode", json={"mode": "LIVE"}).json()["trading_mode"] == "LIVE"
@@ -281,7 +290,8 @@ def test_mode_and_arm_endpoints(monkeypatch):
     c.post("/api/crypto/mode", json={"mode": "PAPER"})
     assert writes["CRYPTO_ALLOW_LIVE"] == "false"
     body = c.get("/api/crypto/status").json()
-    assert "kill_switch" in body and "egress_ip" in body and body["arm_phrase"] == "ARM CRYPTO LIVE"
+    assert "kill_switch" in body and body["egress"]["ipv4"] == "1.2.3.4"
+    assert body["arm_phrase"] == "ARM CRYPTO LIVE"
 
 
 def test_live_exit_failure_keeps_position_open(live_lane):

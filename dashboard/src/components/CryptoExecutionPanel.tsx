@@ -14,13 +14,20 @@ type KillSwitch = {
   max_daily_loss_usd: number
   max_consec_losses: number
 }
+type Egress = {
+  ipv4: string | null
+  ipv6: string | null
+  forcing_ipv4: boolean
+  delta_sees_ip: string | null
+  whitelist_ok: boolean
+}
 type Status = {
   credentials_ready: boolean
   trading_mode: string
   live_armed: boolean
   live_orders_enabled: boolean
   arm_phrase: string
-  egress_ip: string | null
+  egress: Egress
   kill_switch: KillSwitch
 }
 
@@ -71,6 +78,7 @@ export function CryptoExecutionPanel() {
   })
 
   const ks = s?.kill_switch
+  const eg = s?.egress
   const busy = setMode.isPending || armLive.isPending
 
   return (
@@ -153,8 +161,24 @@ export function CryptoExecutionPanel() {
           )}
 
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-            <dt className="text-slate-500">Server IP (whitelist on your Delta key)</dt>
-            <dd className="font-mono text-slate-300">{s?.egress_ip ?? '—'}</dd>
+            <dt className="text-slate-500">Whitelist on your Delta key</dt>
+            <dd className="font-mono text-slate-300">
+              IPv4 {eg?.ipv4 ?? '—'}
+              {eg?.ipv6 ? <span className="text-slate-600"> · IPv6 {eg.ipv6}</span> : null}
+            </dd>
+            <dt className="text-slate-500">Delta sees</dt>
+            <dd
+              className={cn(
+                'font-mono',
+                eg?.delta_sees_ip ? 'text-[var(--down)]' : 'text-[var(--up)]',
+              )}
+            >
+              {eg?.delta_sees_ip
+                ? `${eg.delta_sees_ip} — not whitelisted; add this`
+                : eg?.forcing_ipv4
+                  ? 'IPv4 pinned — whitelist the IPv4 above'
+                  : 'ok'}
+            </dd>
             <dt className="text-slate-500">Kill switch</dt>
             <dd className={cn('font-mono', ks?.tripped ? 'text-[var(--down)]' : 'text-slate-300')}>
               {ks?.tripped

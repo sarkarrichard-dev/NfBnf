@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, HTTPException
 from crypto import charges, executor, journal, sizing
 from crypto.config import crypto_settings
 from crypto.delta import market_data, products
+from crypto.delta import client as delta_client
 from crypto.delta.client import DeltaClient, DeltaError
 from crypto.live import (
     CRYPTO_ARM_PHRASE,
@@ -70,18 +71,30 @@ def crypto_status() -> dict:
         "live_armed": s.live_armed,
         "live_orders_enabled": s.live_orders_enabled,
         "arm_phrase": CRYPTO_ARM_PHRASE,
-        "egress_ip": _egress_ip(),
+        "egress": _egress(s),
         "kill_switch": _kill_switch_state(s),
     }
 
 
-def _egress_ip() -> str | None:
+def _egress(s) -> dict:
+    """IPv4 + IPv6 this machine presents, plus the address Delta last rejected.
+    Delta traffic is pinned to IPv4 (``CRYPTO_FORCE_IPV4``), so whitelist the
+    IPv4 on the Delta key."""
+    ips: dict = {"ipv4": None, "ipv6": None}
     try:
-        from index_ai.dhan_network import fetch_public_ip
+        from index_ai.dhan_network import fetch_public_ips
 
-        return fetch_public_ip()
+        ips = fetch_public_ips()
     except Exception:
-        return None
+        pass
+    blocked = dict(delta_client.LAST_IP_BLOCK)
+    return {
+        "ipv4": ips.get("ipv4"),
+        "ipv6": ips.get("ipv6"),
+        "forcing_ipv4": s.force_ipv4,
+        "delta_sees_ip": blocked.get("ip") or None,
+        "whitelist_ok": not blocked.get("ip"),
+    }
 
 
 def _kill_switch_state(s) -> dict:
