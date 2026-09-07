@@ -12,7 +12,7 @@ import os
 
 from fastapi import APIRouter, Body, HTTPException
 
-from crypto import journal
+from crypto import charges, journal
 from crypto.config import PERP_SYMBOLS, crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient, DeltaError
@@ -50,6 +50,13 @@ def crypto_status() -> dict:
         "ichimoku_tf": s.ichimoku_tf,
         "hard_stops_pct": {"ny_n_break": s.nbreak_sl_pct, "ichimoku": s.ichimoku_sl_pct},
         "symbols": list(PERP_SYMBOLS),
+        "half_spread_bps": {
+            sym: {
+                "measured": charges.measured_half_spread_bps(sym),
+                "fallback": charges._HALF_SPREAD_BPS.get(sym),
+            }
+            for sym in PERP_SYMBOLS
+        },
     }
 
 

@@ -26,7 +26,8 @@ from crypto.config import CryptoSettings, crypto_settings
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 20.0
+_TIMEOUT = 15.0        # signed calls (orders, wallet, margin)
+_PUBLIC_TIMEOUT = 8.0  # public market data — kept short so telemetry can't stall the scan loop
 _MAX_RETRIES = 3
 _MAX_429_WAIT = 8.0
 _USER_AGENT = "algo-bnf-crypto/1"
@@ -136,7 +137,7 @@ class DeltaClient:
                     }
                 )
             try:
-                with httpx.Client(timeout=_TIMEOUT) as client:
+                with httpx.Client(timeout=_TIMEOUT if signed else _PUBLIC_TIMEOUT) as client:
                     resp = client.request(m, url, headers=headers, content=payload or None)
             except httpx.HTTPError as exc:
                 last_exc = exc

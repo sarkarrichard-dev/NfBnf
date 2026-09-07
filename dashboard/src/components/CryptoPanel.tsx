@@ -12,6 +12,7 @@ type Status = {
   sizing: { deploy_usd: number; leverage: number; max_concurrent: number }
   session_ist: { start: string; end: string }
   ichimoku_tf: string
+  half_spread_bps: Record<string, { measured: number | null; fallback: number | null }>
 }
 type DaySum = { trades: number; wins: number; losses: number; net_usd: number; net_inr: number }
 type Day = { ny_session_date: string; utc_date: string; ny_n_break: DaySum; ichimoku: DaySum }
@@ -167,6 +168,15 @@ export function CryptoPanel() {
             window {s?.session_ist.start}–{s?.session_ist.end} IST · Ichimoku {s?.ichimoku_tf}
           </span>
         </div>
+        <p className="text-[11px] text-slate-600">
+          spread cost:{' '}
+          {Object.entries(s?.half_spread_bps ?? {}).map(([sym, v], i) => (
+            <span key={sym}>
+              {i > 0 ? ' · ' : ''}
+              {sym} {v.measured != null ? `${v.measured.toFixed(2)} bps (measured)` : `${v.fallback ?? '?'} bps (est.)`}
+            </span>
+          ))}
+        </p>
       </div>
 
       {/* open positions */}

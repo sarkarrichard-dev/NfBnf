@@ -3,7 +3,6 @@ closing-basis swing pivots, and crossover tests. Pure pandas."""
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 
@@ -21,31 +20,26 @@ def anchored_vwap(df: pd.DataFrame, *, anchor: str = "1D") -> pd.Series:
     pv = (hlc3 * vol).groupby(grp).cumsum()
     vv = vol.groupby(grp).cumsum()
     out = pv / vv.replace(0.0, pd.NA)
-    return out.fillna(hlc3.groupby(grp).expanding().mean().reset_index(level=0, drop=True))
+    return out.fillna(hlc3) if out.isna().any() else out  # no volume → price is its own VWAP
 
 
 def pivot_high(series: pd.Series, left: int, right: int) -> pd.Series:
     """Confirmed swing high on a closing basis. Non-NA at bar ``i`` carries the
-    pivot value that formed ``right`` bars earlier (matches Pine ``ta.pivothigh``)."""
+    pivot value that formed ``right`` bars earlier (matches Pine ``ta.pivothigh``).
+
+    Vectorised — no strict-uniqueness check, so an exact plateau flags every bar
+    of the plateau; harmless for arming a level."""
     s = series.astype(float)
-    n = len(s)
-    out = pd.Series(np.nan, index=s.index, dtype="float64")
-    for i in range(left, n - right):
-        window = s.iloc[i - left : i + right + 1]
-        if s.iloc[i] == window.max() and (window == s.iloc[i]).sum() == 1:
-            out.iloc[i + right] = s.iloc[i]
-    return out
+    w = left + right + 1
+    win_max = s.rolling(w, min_periods=w).max().shift(-right)
+    return s.where(s >= win_max).shift(right)
 
 
 def pivot_low(series: pd.Series, left: int, right: int) -> pd.Series:
     s = series.astype(float)
-    n = len(s)
-    out = pd.Series(np.nan, index=s.index, dtype="float64")
-    for i in range(left, n - right):
-        window = s.iloc[i - left : i + right + 1]
-        if s.iloc[i] == window.min() and (window == s.iloc[i]).sum() == 1:
-            out.iloc[i + right] = s.iloc[i]
-    return out
+    w = left + right + 1
+    win_min = s.rolling(w, min_periods=w).min().shift(-right)
+    return s.where(s <= win_min).shift(right)
 
 
 def crossed_over(series: pd.Series, level: float) -> bool:

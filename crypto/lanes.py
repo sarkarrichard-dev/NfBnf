@@ -14,7 +14,7 @@ from typing import Any
 
 import pandas as pd
 
-from crypto import journal, notify
+from crypto import charges, journal, notify
 from crypto.charges import round_trip_cost_usd
 from crypto.config import PERP_SYMBOLS, crypto_settings
 from crypto.delta import market_data, products
@@ -97,6 +97,13 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
     except Exception as exc:
         return [{"event": "error", "where": "products", "error": str(exc)}]
 
+    # measure the real top-of-book spread while we are here (Phase 3 cost path)
+    for sym in PERP_SYMBOLS:
+        try:
+            charges.sample_spread(sym, market_data.depth(sym, client=client))
+        except Exception:
+            pass
+
     st = journal.load_state()
     fx = _fx_rate(client, s)
     open_slots = _open_count(st)
@@ -128,18 +135,19 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         sym, c5, c15, state=slot.get("strategy"), cfg=_nb_cfg(s),
                         in_session=in_ny, session_date=ny_date,
                     )
-                    day = ny_date
+                    day, frame = ny_date, c5
                 else:
                     days = _ICHI_DAYS.get(s.ichimoku_tf, 15)
                     ch = _closed(market_data.candles(sym, s.ichimoku_tf, days=days, client=client))
                     new_state, ev = ichi.step(sym, ch, state=slot.get("strategy"), cfg=_ichi_cfg(s))
-                    day = crypto_day(now_utc)
+                    day, frame = crypto_day(now_utc), ch
 
                 slot["strategy"] = new_state
                 action = ev.get("event")
 
                 if action == "enter":
-                    _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, open_slots)
+                    _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
+                                 open_slots, frame)
                     if slot.get("position"):
                         open_slots += 1
                 elif action == "exit":
@@ -176,7 +184,43 @@ def _already_journalled(exit_id: str) -> bool:
     return any(r.get("exit_id") == exit_id for r in journal.recent(200))
 
 
-def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, open_slots):
+def _entry_features(strat: str, sym: str, frame, side: str) -> dict[str, Any]:
+    """A small snapshot captured at entry for a future crypto model. Capture
+    only — the modelling is a separate follow-up."""
+    import pandas as pd
+
+    feats: dict[str, Any] = {
+        "venue": "delta",
+        "is_btc": 1.0 if sym == "BTCUSD" else 0.0,
+        "strategy_ny_n_break": 1.0 if strat == "ny_n_break" else 0.0,
+        "side_long": 1.0 if side == "long" else 0.0,
+    }
+    try:
+        c = frame["close"].astype(float)
+        price = float(c.iloc[-1])
+        hi, lo = frame["high"].astype(float), frame["low"].astype(float)
+        tr = (hi - lo).rolling(14).mean().iloc[-1]
+        feats["atr_pct"] = round(float(tr) / price * 100.0, 4) if price else 0.0
+        feats["ret_20_pct"] = round((price / float(c.iloc[-21]) - 1) * 100.0, 4) if len(c) > 21 else 0.0
+        feats["entry_hour_utc"] = int(pd.Timestamp(frame["datetime"].iloc[-1]).hour)
+        if strat == "ny_n_break":
+            from crypto.strategies.indicators import anchored_vwap, ema
+
+            feats["dist_ema25_pct"] = round((price / float(ema(c, 25).iloc[-1]) - 1) * 100.0, 4)
+            feats["dist_vwap_pct"] = round((price / float(anchored_vwap(frame).iloc[-1]) - 1) * 100.0, 4)
+        else:
+            from index_ai.strategies.ichimoku import compute_ichimoku
+
+            row = compute_ichimoku(frame).iloc[-1]
+            if not pd.isna(row["cloud_top"]):
+                feats["dist_cloud_top_pct"] = round((price / float(row["cloud_top"]) - 1) * 100.0, 4)
+                feats["dist_kijun_pct"] = round((price / float(row["kijun"]) - 1) * 100.0, 4)
+    except Exception:
+        pass
+    return feats
+
+
+def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, open_slots, frame=None):
     if slot.get("position"):  # defensive — the engine already guards, but never double-open
         ev.update(event="hold", reason="position already open")
         return
@@ -202,6 +246,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
         "notional_usd": sr.notional_usd,
         "stop_price": _stop_price(side, entry_px, _sl_pct(strat, s)),
         "opened_at": now_utc.isoformat(),
+        "features": _entry_features(strat, sym, frame, side) if frame is not None else {},
     }
     slot["position"] = pos
     ev.update(size=sr.size, margin_usd=sr.margin_total_usd, notional_usd=sr.notional_usd)
@@ -233,8 +278,9 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
         "margin_usd": pos["margin_total_usd"], "notional_usd": pos["notional_usd"],
         "gross_usd": round(gross, 4), "fees_usd": round(cost, 4),
         "pnl_usd": round(pnl_usd, 4), "pnl_inr": round(pnl_usd * fx, 2), "fx_usdinr": round(fx, 4),
+        "pnl_pct": round(gross / float(pos["notional_usd"]) * 100.0, 4) if pos.get("notional_usd") else 0.0,
         "exit_reason": ev.get("reason"),
-        "features": {},  # populated in Phase 3
+        "features": pos.get("features") or {},
     }
 
 

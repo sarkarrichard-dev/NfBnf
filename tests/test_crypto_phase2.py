@@ -164,6 +164,8 @@ def paper_env(tmp_path, monkeypatch):
     monkeypatch.setattr(notify, "opened", lambda p: opened.append(p))
     monkeypatch.setattr(notify, "closed", lambda r: closed.append(r))
     monkeypatch.setattr(notify, "day_summary", lambda *a, **k: None)
+    monkeypatch.setattr(lanes.charges, "sample_spread", lambda *a, **k: None)
+    monkeypatch.setattr(lanes.market_data, "depth", lambda *a, **k: {})
     # a 5m frame whose last *closed* bar (after the forming bar is dropped) is a
     # fresh re-break above the swing high — scaled to a realistic BTC price so the
     # sizer's sanity band accepts the mark
