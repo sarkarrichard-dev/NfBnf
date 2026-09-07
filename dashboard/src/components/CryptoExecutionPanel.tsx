@@ -58,6 +58,7 @@ export function CryptoExecutionPanel() {
   const lots = s?.sizing.lots ?? 1
   const [phrase, setPhrase] = useState('')
   const [arming, setArming] = useState(false)
+  const [lotsDraft, setLotsDraft] = useState('')  // '' = show the live `lots`
 
   const setMode = useMutation({
     mutationFn: (mode: string) =>
@@ -100,6 +101,14 @@ export function CryptoExecutionPanel() {
   const bumpLots = (d: number) => {
     const next = Math.min(50, Math.max(1, lots + d))
     if (next !== lots && !adjustLots.isPending) adjustLots.mutate(next)
+  }
+  const commitLots = () => {
+    const n = Math.round(Number(lotsDraft))
+    setLotsDraft('')
+    if (Number.isFinite(n) && n >= 1) {
+      const next = Math.min(50, n)
+      if (next !== lots) adjustLots.mutate(next)
+    }
   }
 
   // total margin for the current lot count, summed over the symbols Delta prices
@@ -196,15 +205,24 @@ export function CryptoExecutionPanel() {
             >
               −
             </Button>
-            <strong
-              aria-live="polite"
+            <input
+              type="number"
+              min={1}
+              max={50}
+              inputMode="numeric"
+              aria-label="Lots per trade"
+              value={lotsDraft === '' ? lots : lotsDraft}
+              onChange={(e) => setLotsDraft(e.target.value)}
+              onFocus={() => setLotsDraft(String(lots))}
+              onBlur={commitLots}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur()
+              }}
               className={cn(
-                'min-w-[2rem] text-center text-lg tabular-nums text-slate-50',
+                'w-14 rounded-md border border-[var(--hair)] bg-black/30 px-1 py-0.5 text-center text-lg font-semibold tabular-nums text-slate-50 outline-none focus:border-[var(--acc)]',
                 adjustLots.isPending && 'animate-pulse text-[var(--acc)]',
               )}
-            >
-              {lots}
-            </strong>
+            />
             <Button
               aria-label="Increase lots"
               disabled={lots >= 50 || adjustLots.isPending}

@@ -4,15 +4,26 @@ import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
-import { inr, inr0, num, ok, pnlCls, usd, usd0 } from '../lib/cryptoFmt'
+import {
+  cryptoRowsForPeriod,
+  cryptoStats,
+  inr,
+  inr0,
+  num,
+  ok,
+  pnlCls,
+  usd,
+  usd0,
+} from '../lib/cryptoFmt'
+import type { DateRange, PeriodKey } from '../types/analytics'
 import { Button } from './ui/Button'
 import { CollapsibleSection } from './CollapsibleSection'
+import { PeriodBar } from './PeriodBar'
 import { Sparkline } from './Sparkline'
 import { CryptoSetupPanel } from './CryptoSetupPanel'
 import { CryptoExecutionPanel } from './CryptoExecutionPanel'
 
 type Status = {
-  paper_enabled: boolean
   lanes: { ny_n_break: boolean; ichimoku: boolean }
   sizing: { lots: number; deploy_cap_usd: number; leverage: number; max_concurrent: number }
   trailing: {
@@ -25,7 +36,6 @@ type Status = {
   ichimoku_tf: string
   symbols: string[]
   available_symbols: string[]
-  half_spread_bps: Record<string, { measured: number | null; fallback: number | null }>
   ml: {
     enabled: boolean
     rows: number
@@ -47,9 +57,7 @@ type LotRow = {
   source?: string
   note?: string
 }
-type Lots = { lots: number; leverage: number; deploy_cap_usd: number; table: LotRow[] }
-type DaySum = { trades: number; wins: number; losses: number; net_usd: number; net_inr: number }
-type Day = { ny_session_date: string; utc_date: string; ny_n_break: DaySum; ichimoku: DaySum }
+type Lots = { lots: number; table: LotRow[] }
 type PaperPos = {
   key: string
   asset: string
@@ -72,6 +80,8 @@ type Positions = {
 }
 type Trade = {
   day: string
+  closed_at?: string
+  exit_time?: string
   strategy: string
   asset: string
   side: string
@@ -83,12 +93,11 @@ type Trade = {
   exit_reason?: string
 }
 
-const blank: DaySum = { trades: 0, wins: 0, losses: 0, net_usd: 0, net_inr: 0 }
-
-/** Cumulative realised USD P&L, oldest → newest, for the equity sparkline. */
-function equityCurve(trades: Trade[]): number[] {
-  let running = 0
-  return trades.map((t) => (running += Number(t.pnl_usd) || 0))
+/** Cumulative realised USD P&L, in row order, for the equity sparkline. */
+function equityCurve(rows: { pnl_usd: number }[]): number[] {
+  const out: number[] = []
+  for (const r of rows) out.push((out[out.length - 1] ?? 0) + (Number(r.pnl_usd) || 0))
+  return out
 }
 
 function StatTile({
@@ -107,10 +116,10 @@ function StatTile({
   return (
     <article className={fx.card}>
       <p className={fx.cardLabel}>{label}</p>
-      <p className={cn(fx.cardValue, valueCls)}>{value}</p>
+      <p className={cn(fx.cardValue, valueCls || 'text-slate-100')}>{value}</p>
       {sub ? <p className="mt-0.5 text-[11px] text-slate-500 tabular-nums">{sub}</p> : null}
       {points && points.length > 1 ? (
-        <Sparkline points={points} className="mt-1 w-full" height={16} />
+        <Sparkline points={points} className="mt-1 w-full" height={14} />
       ) : null}
     </article>
   )
@@ -118,11 +127,12 @@ function StatTile({
 
 export function CryptoPanel() {
   const qc = useQueryClient()
-  const status = useQuery({ queryKey: ['crypto', 'status'], queryFn: () => api<Status>('/api/crypto/status') })
-  const day = useQuery({
-    queryKey: ['crypto', 'day'],
-    queryFn: () => api<Day>('/api/crypto/day'),
-    refetchInterval: 60_000,
+  const [period, setPeriod] = useState<PeriodKey>('today')
+  const [range, setRange] = useState<DateRange>({ from: '', to: '' })
+
+  const status = useQuery({
+    queryKey: ['crypto', 'status'],
+    queryFn: () => api<Status>('/api/crypto/status'),
   })
   const positions = useQuery({
     queryKey: ['crypto', 'positions'],
@@ -131,7 +141,7 @@ export function CryptoPanel() {
   })
   const journal = useQuery({
     queryKey: ['crypto', 'journal'],
-    queryFn: () => api<{ trades: Trade[] }>('/api/crypto/journal?limit=50'),
+    queryFn: () => api<{ trades: Trade[] }>('/api/crypto/journal?limit=500'),
     refetchInterval: 60_000,
   })
   const lotsQ = useQuery({
@@ -141,27 +151,25 @@ export function CryptoPanel() {
   })
 
   const s = status.data
-  const [cap, setCap] = useState('')
 
   const cfg = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       api('/api/crypto/config', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       toast.success('Saved — restart the server to apply')
-      setCap('')
       void qc.invalidateQueries({ queryKey: ['crypto'] })
     },
     onError: (e: Error) => toast.error(e.message),
   })
 
-  const trades = journal.data?.trades ?? []
-  const equity = equityCurve(trades)
-  // union: every perp Delta lists, plus any already-picked symbol whose
-  // contract cache hasn't refreshed yet
+  const allTrades = journal.data?.trades ?? []
+  const rows = cryptoRowsForPeriod(allTrades, period, range)
+  const st = cryptoStats(rows)
+  const equity = equityCurve(rows)
+  const openMtmUsd = positions.data?.open_unrealized_usd ?? 0
+  const openMtmInr = positions.data?.open_unrealized_inr ?? 0
+
   const allSymbols = [...new Set([...(s?.available_symbols ?? []), ...(s?.symbols ?? [])])].sort()
-  const inputCls =
-    'w-24 rounded-lg border border-[var(--hair)] bg-black/30 px-2 py-1 font-mono text-xs ' +
-    'text-slate-100 outline-none focus:border-[var(--acc)]'
 
   return (
     <div className="space-y-4">
@@ -172,45 +180,47 @@ export function CryptoPanel() {
 
       <CryptoExecutionPanel />
 
-      {/* P&L summary */}
-      <div className="grid gap-2 sm:grid-cols-3">
-        <StatTile
-          label="Open (unrealised)"
-          value={usd(positions.data?.open_unrealized_usd ?? 0)}
-          valueCls={pnlCls(positions.data?.open_unrealized_usd ?? 0)}
-          sub={`${inr(positions.data?.open_unrealized_inr ?? 0)} · ${positions.data?.paper?.length ?? 0} position${
-            (positions.data?.paper?.length ?? 0) === 1 ? '' : 's'
-          }`}
-        />
-        <StatTile
-          label={`6 PM · ${day.data?.ny_session_date ?? ''}`}
-          value={usd((day.data?.ny_n_break ?? blank).net_usd)}
-          valueCls={pnlCls((day.data?.ny_n_break ?? blank).net_usd)}
-          sub={`${inr((day.data?.ny_n_break ?? blank).net_inr)} · ${(day.data?.ny_n_break ?? blank).trades} trades · ${
-            (day.data?.ny_n_break ?? blank).wins
-          }W/${(day.data?.ny_n_break ?? blank).losses}L`}
-        />
-        <StatTile
-          label={`Ichimoku · ${day.data?.utc_date ?? ''}`}
-          value={usd((day.data?.ichimoku ?? blank).net_usd)}
-          valueCls={pnlCls((day.data?.ichimoku ?? blank).net_usd)}
-          sub={`${inr((day.data?.ichimoku ?? blank).net_inr)} · ${(day.data?.ichimoku ?? blank).trades} trades · ${
-            (day.data?.ichimoku ?? blank).wins
-          }W/${(day.data?.ichimoku ?? blank).losses}L`}
-          points={equity}
-        />
-      </div>
+      {/* stats rail — same shape as the index tab */}
+      <section className={cn(fx.panel, 'px-3 py-2.5')}>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <PeriodBar
+            period={period}
+            onPeriodChange={setPeriod}
+            range={range}
+            onRangeChange={setRange}
+          />
+          {equity.length > 1 ? (
+            <div className="flex items-center gap-2" title="Cumulative realised P&L, this period">
+              <span className="text-[11px] text-slate-500">Equity</span>
+              <Sparkline points={equity} width={120} height={26} />
+              <span className={cn('text-xs font-semibold tabular-nums', pnlCls(equity[equity.length - 1]))}>
+                {usd(equity[equity.length - 1])}
+              </span>
+            </div>
+          ) : null}
+        </div>
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+          <StatTile label="Trades" value={String(st.trades)} />
+          <StatTile label="Wins / Losses" value={`${st.wins} / ${st.losses}`} />
+          <StatTile
+            label="Win rate"
+            value={st.win_rate == null ? '—' : `${(st.win_rate * 100).toFixed(1)}%`}
+          />
+          <StatTile label="Realized ($)" value={usd(st.net_usd)} valueCls={pnlCls(st.net_usd)} />
+          <StatTile label="Realized (₹)" value={inr(st.net_inr)} valueCls={pnlCls(st.net_inr)} />
+          <StatTile
+            label="Open MTM"
+            value={usd(openMtmUsd)}
+            valueCls={pnlCls(openMtmUsd)}
+            sub={`${inr(openMtmInr)} · ${positions.data?.paper?.length ?? 0} pos`}
+          />
+        </div>
+      </section>
 
       {/* controls */}
       <div className={cn(fx.panel, 'space-y-3 p-4')}>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-cyan-50/90">Paper lane</span>
-          <Button
-            variant={s?.paper_enabled ? 'secondary' : 'primary'}
-            onClick={() => cfg.mutate({ paper_enabled: !s?.paper_enabled })}
-          >
-            {s?.paper_enabled ? 'On — turn off' : 'Off — turn on'}
-          </Button>
+          <span className="text-xs font-semibold text-cyan-50/90">Strategies</span>
           <Chip
             label="6 PM (NY N-Break)"
             on={!!s?.lanes.ny_n_break}
@@ -221,6 +231,7 @@ export function CryptoPanel() {
             on={!!s?.lanes.ichimoku}
             onClick={() => cfg.mutate({ ichimoku_enabled: !s?.lanes.ichimoku })}
           />
+          <span className="text-[11px] text-slate-600">both off = paused</span>
         </div>
 
         {/* symbol picker */}
@@ -245,10 +256,10 @@ export function CryptoPanel() {
         {/* exit rule — read-only */}
         {s?.trailing ? (
           <p className="text-[11px] text-slate-500">
-            Exit: stop −{s.trailing.stop_pnl_pct}% P&L, ratchets +
-            {s.trailing.ratchet_step_pnl_pct}% for every +{s.trailing.ratchet_step_pnl_pct}% gained ·
-            trailing profit from +{s.trailing.tp_trigger_pnl_pct}%, then floor tracks peak −
-            {s.trailing.peak_trail_pnl_pct}% · window {s?.session_ist.start}–{s?.session_ist.end} IST
+            Exit: stop −{s.trailing.stop_pnl_pct}% P&L, ratchets +{s.trailing.ratchet_step_pnl_pct}%
+            for every +{s.trailing.ratchet_step_pnl_pct}% gained · trailing profit from +
+            {s.trailing.tp_trigger_pnl_pct}%, then floor tracks peak −{s.trailing.peak_trail_pnl_pct}%
+            · window {s?.session_ist.start}–{s?.session_ist.end} IST
           </p>
         ) : null}
 
@@ -260,40 +271,6 @@ export function CryptoPanel() {
           </span>
           <LotTable rows={lotsQ.data?.table ?? []} lots={lotsQ.data?.lots ?? s?.sizing.lots ?? 1} />
         </div>
-
-        {/* optional margin cap */}
-        <label className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-          Margin cap $ / trade (blank = off, currently{' '}
-          {s?.sizing.deploy_cap_usd ? `$${num(s.sizing.deploy_cap_usd, 0)}` : 'off'})
-          <input
-            className={inputCls}
-            inputMode="decimal"
-            placeholder="none"
-            value={cap}
-            onChange={(e) => setCap(e.target.value)}
-          />
-          <Button
-            variant="secondary"
-            pending={cfg.isPending}
-            disabled={!cap}
-            onClick={() => cfg.mutate({ deploy_cap_usd: Number(cap) })}
-          >
-            Set
-          </Button>
-        </label>
-
-        <p className="text-[11px] text-slate-600">
-          spread cost:{' '}
-          {Object.entries(s?.half_spread_bps ?? {}).map(([sym, v], i) => (
-            <span key={sym}>
-              {i > 0 ? ' · ' : ''}
-              {sym}{' '}
-              {v.measured != null
-                ? `${v.measured.toFixed(2)} bps (measured)`
-                : `${v.fallback ?? '?'} bps (est.)`}
-            </span>
-          ))}
-        </p>
       </div>
 
       {/* open positions */}
@@ -352,10 +329,12 @@ export function CryptoPanel() {
         )}
       </section>
 
-      {/* journal */}
+      {/* trade history — the selected period / range */}
       <section className={cn(fx.panel, 'p-4')}>
-        <h3 className="mb-3 text-sm font-semibold text-cyan-50/95">Closed trades</h3>
-        {trades.length ? (
+        <h3 className="mb-3 text-sm font-semibold text-cyan-50/95">
+          Trade history <span className="text-cyan-200/45">({rows.length})</span>
+        </h3>
+        {rows.length ? (
           <div className="max-h-[28rem] overflow-auto rounded-lg border border-[var(--hair)] bg-black/25">
             <table className="min-w-full text-xs">
               <thead className="sticky top-0 z-10 bg-slate-950/95 text-cyan-200/50">
@@ -370,7 +349,7 @@ export function CryptoPanel() {
                 </tr>
               </thead>
               <tbody className="font-mono">
-                {[...trades].reverse().map((t, i) => (
+                {[...rows].reverse().map((t, i) => (
                   <tr
                     key={i}
                     className="border-b border-slate-800/60 text-slate-200 [&>td]:px-3 [&>td]:py-2"
@@ -394,7 +373,9 @@ export function CryptoPanel() {
             </table>
           </div>
         ) : (
-          <p className="text-sm text-cyan-200/45">No closed trades yet.</p>
+          <p className="text-sm text-cyan-200/45">
+            {allTrades.length ? 'No trades in this period.' : 'No closed trades yet.'}
+          </p>
         )}
       </section>
 
@@ -438,7 +419,6 @@ function SymbolSelect({
 }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<string[]>(picked)
-  // resync the draft whenever the popover opens or the saved set changes
   const key = picked.join(',')
   const [seen, setSeen] = useState(key)
   if (seen !== key) {
@@ -525,7 +505,9 @@ function LearningRow({ ml }: { ml: NonNullable<Status['ml']> }) {
 function LotTable({ rows, lots }: { rows: LotRow[]; lots: number }) {
   if (!rows.length) return null
   const usdInr = (() => {
-    const r = rows.find((x) => ok(x.margin_per_lot_usd) && ok(x.margin_per_lot_inr) && x.margin_per_lot_usd)
+    const r = rows.find(
+      (x) => ok(x.margin_per_lot_usd) && ok(x.margin_per_lot_inr) && x.margin_per_lot_usd,
+    )
     return r ? (r.margin_per_lot_inr as number) / (r.margin_per_lot_usd as number) : 0
   })()
   return (
@@ -536,7 +518,9 @@ function LotTable({ rows, lots }: { rows: LotRow[]; lots: number }) {
             <th>Symbol</th>
             <th>1 lot =</th>
             <th>Notional / lot</th>
-            <th>Min capital ({lots} lot{lots === 1 ? '' : 's'})</th>
+            <th>
+              Min capital ({lots} lot{lots === 1 ? '' : 's'})
+            </th>
           </tr>
         </thead>
         <tbody className="font-mono">
@@ -556,12 +540,8 @@ function LotTable({ rows, lots }: { rows: LotRow[]; lots: number }) {
                   {ok(minUsd) ? (
                     <>
                       {usd0(minUsd)}{' '}
-                      <span className="text-slate-600">
-                        {inr0(usdInr ? minUsd * usdInr : null)}
-                      </span>
-                      {r.source === 'delta' ? (
-                        <span className="text-slate-600"> · Delta</span>
-                      ) : null}
+                      <span className="text-slate-600">{inr0(usdInr ? minUsd * usdInr : null)}</span>
+                      {r.source === 'delta' ? <span className="text-slate-600"> · Delta</span> : null}
                     </>
                   ) : (
                     <span className="text-[var(--warn)]/80">— · {r.note || 'no mark'}</span>
