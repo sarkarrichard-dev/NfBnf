@@ -32,21 +32,22 @@ def test_ny_window_and_day():
 # ---------------------------------------------------------------------------
 # sizing
 # ---------------------------------------------------------------------------
-def test_sizing_hundred_dollars_three_x():
+def test_sizing_lot_based():
     btc = Contract("BTCUSD", 27, 0.001, 0.5, 1, 100)
-    r = size_position(btc, 60_000, deploy_usd=100, leverage=3, wallet_usd=2000)
-    assert r.ok and r.size == 4
+    r = size_position(btc, 60_000, lots=2, leverage=3, wallet_usd=2000)
+    assert r.ok and r.size == 2
     assert r.leverage == 3.0
     # a small bankroll blocks the trade rather than over-sizing it
-    r2 = size_position(btc, 60_000, deploy_usd=100, leverage=3, wallet_usd=15)
-    assert not r2.ok
+    assert not size_position(btc, 60_000, lots=2, leverage=3, wallet_usd=15).ok
+    # deploy_usd is an optional cap
+    assert not size_position(btc, 60_000, lots=3, leverage=3, wallet_usd=5000, deploy_usd=40).ok
 
 
 def test_sizing_rejects_an_insane_mark():
     btc = Contract("BTCUSD", 27, 0.001, 0.5, 1, 100)
     # a 10x-off / corrupted feed price is refused, not silently sized off
-    assert not size_position(btc, 6.0, deploy_usd=100, leverage=3, wallet_usd=2000).ok
-    assert not size_position(btc, 60_000_000, deploy_usd=100, leverage=3, wallet_usd=1e9).ok
+    assert not size_position(btc, 6.0, lots=1, leverage=3, wallet_usd=2000).ok
+    assert not size_position(btc, 60_000_000, lots=1, leverage=3, wallet_usd=1e9).ok
 
 
 # ---------------------------------------------------------------------------

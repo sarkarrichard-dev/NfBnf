@@ -5,10 +5,12 @@ its own `.env` keys (`DELTA_*` / `CRYPTO_*`), its own journals
 (`memory/crypto_*`). Shares only the Telegram helper and the `.env` writer with
 the index code.
 
-**Status: paper only.** Phases 1–3 are built and wired in behind
-`ENABLE_CRYPTO_PAPER` (default off). Live order placement (Phase 4,
-`crypto/executor.py`) is not built — it will have its own two-lock arming,
-separate from the index `arm_live_trading`.
+**Status: paper by default, live available.** All four phases are built. The
+paper lane runs behind `ENABLE_CRYPTO_PAPER` (**default on**). Live order
+placement (`crypto/executor.py`) has its own two-lock arming
+(`CRYPTO_TRADING_MODE=LIVE` + `CRYPTO_ALLOW_LIVE=true` + the phrase
+"ARM CRYPTO LIVE"), fully separate from the index `arm_live_trading`, and the
+operator switches Paper↔Live manually from the Crypto tab.
 
 - **Broker:** Delta Exchange India (FIU-registered, INR wallet — *not* Delta
   Exchange Global; different API host, different product ids).

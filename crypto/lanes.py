@@ -363,7 +363,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
     side = ev["side"]
     wallet = live_wallet if live else s.paper_bankroll_usd
     sr = size_position(
-        contract, entry_px, deploy_usd=s.deploy_usd, leverage=s.leverage,
+        contract, entry_px, lots=s.lots, deploy_usd=s.deploy_usd, leverage=s.leverage,
         wallet_usd=wallet, allow_min_one=s.allow_min_one,
     )
     if not sr.ok:

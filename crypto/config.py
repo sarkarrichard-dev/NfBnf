@@ -66,8 +66,10 @@ class CryptoSettings:
     api_secret: str
     base_url: str
     symbols: tuple[str, ...]   # perps to trade — CRYPTO_SYMBOLS
-    # sizing (capital-first — see crypto/sizing.py in Phase 2)
-    deploy_usd: float          # per-trade capital; hard floor 100
+    # sizing (lot-based — see crypto/sizing.py). One universal lot count; 1 lot =
+    # 1 Delta contract, so every symbol trades `lots` contracts.
+    lots: int                  # universal lot count, min 1
+    deploy_usd: float          # optional per-trade margin cap in USD; 0 = no cap
     leverage: float            # target leverage; clamped per-product at runtime
     max_concurrent: int
     paper_bankroll_usd: float
@@ -113,12 +115,13 @@ def crypto_settings() -> CryptoSettings:
         api_secret=os.getenv("DELTA_API_SECRET", "").strip(),
         base_url=os.getenv("DELTA_BASE_URL", DELTA_PROD_URL).rstrip("/"),
         symbols=_symbols(),
-        deploy_usd=max(100.0, _f("CRYPTO_DEPLOY_USD", 100.0)),
+        lots=max(1, _i("CRYPTO_LOTS", 1)),
+        deploy_usd=max(0.0, _f("CRYPTO_DEPLOY_USD", 0.0)),
         leverage=max(1.0, _f("CRYPTO_LEVERAGE", 3.0)),
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
         paper_bankroll_usd=max(100.0, _f("CRYPTO_PAPER_BANKROLL", 2000.0)),
         allow_min_one=_b("CRYPTO_ALLOW_MIN_ONE", False),
-        paper_enabled=_b("ENABLE_CRYPTO_PAPER", False),
+        paper_enabled=_b("ENABLE_CRYPTO_PAPER", True),
         ny_nbreak_enabled=_b("CRYPTO_NY_NBREAK_ENABLED", True),
         ichimoku_enabled=_b("CRYPTO_ICHIMOKU_ENABLED", True),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
@@ -138,6 +141,7 @@ CRYPTO_ENV_KEYS = (
     "DELTA_API_SECRET",
     "DELTA_BASE_URL",
     "CRYPTO_SYMBOLS",
+    "CRYPTO_LOTS",
     "ENABLE_CRYPTO_PAPER",
     "CRYPTO_NY_NBREAK_ENABLED",
     "CRYPTO_ICHIMOKU_ENABLED",
@@ -160,7 +164,8 @@ CRYPTO_ENV_KEYS = (
 
 if __name__ == "__main__":  # self-check
     s = crypto_settings()
-    assert s.deploy_usd >= 100.0
+    assert s.lots >= 1
+    assert s.deploy_usd >= 0.0
     assert s.leverage >= 1.0
     assert s.base_url.startswith("https://")
     assert not s.base_url.endswith("/")

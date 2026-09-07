@@ -12,7 +12,7 @@ import os
 
 from fastapi import APIRouter, Body, HTTPException
 
-from crypto import charges, executor, journal
+from crypto import charges, executor, journal, sizing
 from crypto.config import crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient, DeltaError
@@ -46,7 +46,8 @@ def crypto_status() -> dict:
         "paper_enabled": s.paper_enabled,
         "lanes": {"ny_n_break": s.ny_nbreak_enabled, "ichimoku": s.ichimoku_enabled},
         "sizing": {
-            "deploy_usd": s.deploy_usd,
+            "lots": s.lots,
+            "deploy_cap_usd": s.deploy_usd,
             "leverage": s.leverage,
             "max_concurrent": s.max_concurrent,
             "paper_bankroll_usd": s.paper_bankroll_usd,
@@ -145,6 +146,47 @@ def _num(v) -> float | None:
 @router.get("/health", include_in_schema=False)
 def crypto_health() -> dict:
     return _health_blocking()
+
+
+@router.get("/lots", include_in_schema=False)
+def crypto_lots() -> dict:
+    """Per selected symbol: what one lot (= one contract) costs — coin size,
+    notional, and margin in $ and ₹. Uses Delta's own margin_required when keys
+    are set, else the local estimate. Best-effort; a symbol with no mark yields
+    null fields, never a fake 0."""
+    s = crypto_settings()
+    client = DeltaClient(s)
+    fx = _usd_inr(client, s)
+    try:
+        contracts = products.all_contracts(client)
+    except DeltaError:
+        contracts = {}
+    rows: list[dict] = []
+    for sym in s.symbols:
+        c = contracts.get(sym)
+        if c is None:
+            rows.append({"symbol": sym, "coin_per_lot": None, "notional_per_lot_usd": None,
+                         "margin_per_lot_usd": None, "margin_per_lot_inr": None,
+                         "note": "not a live Delta perp"})
+            continue
+        try:
+            mark = _num(market_data.ticker(sym, client=client).get("mark_price")) or 0.0
+        except Exception:
+            mark = 0.0
+        econ = sizing.lot_economics(c, mark, leverage=s.leverage, fx_usdinr=fx)
+        if s.credentials_ready and mark > 0:
+            try:
+                mr = client.margin_required(c.product_id, max(1, s.lots), "buy")
+                per_lot = _num(mr.get("initial_margin")) or _num(mr.get("required_margin"))
+                if per_lot and s.lots:
+                    econ["margin_per_lot_usd"] = round(per_lot / s.lots, 2)
+                    econ["margin_per_lot_inr"] = round(per_lot / s.lots * fx, 0) if fx else None
+                    econ["source"] = "delta"
+            except DeltaError:
+                pass
+        rows.append({"symbol": sym, **econ})
+    return {"lots": s.lots, "leverage": s.leverage, "deploy_cap_usd": s.deploy_usd,
+            "fx_usdinr": round(fx, 4), "table": rows}
 
 
 @router.get("/contracts", include_in_schema=False)
@@ -273,7 +315,9 @@ def crypto_today() -> dict:
 
 @router.post("/config", include_in_schema=False)
 def set_config(
-    deploy_usd: float | None = Body(None, embed=True),
+    lots: int | None = Body(None, embed=True),
+    deploy_cap_usd: float | None = Body(None, embed=True),
+    deploy_usd: float | None = Body(None, embed=True),  # legacy alias for deploy_cap_usd
     leverage: float | None = Body(None, embed=True),
     max_concurrent: int | None = Body(None, embed=True),
     paper_enabled: bool | None = Body(None, embed=True),
@@ -295,8 +339,11 @@ def set_config(
         if not keep:
             raise HTTPException(400, "None of those symbols are live Delta perpetuals.")
         values["CRYPTO_SYMBOLS"] = ",".join(keep)
-    if deploy_usd is not None:
-        values["CRYPTO_DEPLOY_USD"] = str(max(100.0, float(deploy_usd)))
+    if lots is not None:
+        values["CRYPTO_LOTS"] = str(max(1, int(lots)))
+    cap = deploy_cap_usd if deploy_cap_usd is not None else deploy_usd
+    if cap is not None:
+        values["CRYPTO_DEPLOY_USD"] = str(max(0.0, float(cap)))
     if leverage is not None:
         values["CRYPTO_LEVERAGE"] = str(min(100.0, max(1.0, float(leverage))))
     if max_concurrent is not None:

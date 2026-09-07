@@ -100,7 +100,7 @@ def _summarise(trades: list[Trade]) -> dict[str, Any]:
 
 def _record_exit(trades, strat, sym, pos, exit_px, exit_ts, reason, s, contract):
     sr = size_position(
-        contract, pos["entry"], deploy_usd=s.deploy_usd, leverage=s.leverage,
+        contract, pos["entry"], lots=s.lots, deploy_usd=s.deploy_usd, leverage=s.leverage,
         wallet_usd=s.paper_bankroll_usd, allow_min_one=s.allow_min_one,
     )
     size = sr.size if sr.ok else 1
