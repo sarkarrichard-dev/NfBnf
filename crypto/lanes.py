@@ -44,10 +44,10 @@ def _alert(text: str, *, key: str | None = None, min_gap_s: float = 600.0) -> No
 
 
 def enabled() -> bool:
-    """The lane runs when paper is on, OR when live orders are fully armed
-    (LIVE mode is meaningless without the lane running)."""
+    """The section runs whenever a strategy is enabled. PAPER vs LIVE is the
+    execution mode; turning both strategy toggles off is the pause switch."""
     s = crypto_settings()
-    return s.paper_enabled or s.live_orders_enabled
+    return s.ny_nbreak_enabled or s.ichimoku_enabled
 
 
 def _closed(df: pd.DataFrame) -> pd.DataFrame:
@@ -98,7 +98,7 @@ def _open_count(state: dict[str, Any]) -> int:
 
 def scan_crypto_paper(client: DeltaClient | None = None) -> list[dict[str, Any]]:
     s = crypto_settings()
-    if not (s.paper_enabled or s.live_orders_enabled):
+    if not (s.ny_nbreak_enabled or s.ichimoku_enabled):
         return []
     try:
         return _scan(s, client)
@@ -452,8 +452,11 @@ def _maybe_day_summary(st: dict[str, Any], s, in_ny: bool, ny_date: str) -> None
 if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
     from dataclasses import replace
 
-    off = replace(crypto_settings(), paper_enabled=False, trading_mode="PAPER", live_armed=False)
+    off = replace(
+        crypto_settings(), ny_nbreak_enabled=False, ichimoku_enabled=False,
+        trading_mode="PAPER", live_armed=False,
+    )
     crypto_settings = lambda: off  # noqa: E731 — stub for the self-check
     assert scan_crypto_paper() == []
-    assert not off.live_orders_enabled
+    assert not enabled()
     print("crypto.lanes self-check ok (all lanes off -> no-op)")

@@ -103,6 +103,9 @@ export type LiveMtmResponse = {
   error?: string
 }
 
-export type PeriodKey = 'today' | 'week' | 'month' | 'all'
+export type PeriodKey = 'today' | 'week' | 'month' | 'all' | 'custom'
+
+/** IST calendar dates (YYYY-MM-DD) for the custom range. Empty = unset. */
+export type DateRange = { from: string; to: string }
 
 export type PositionsFilter = 'all' | 'profit' | 'loss'

@@ -8,7 +8,7 @@ import {
   pnlClass,
 } from '../lib/pnl'
 import { fx } from '../lib/theme'
-import type { LogRow, PeriodKey, PositionsFilter, TradeRow } from '../types/analytics'
+import type { DateRange, LogRow, PeriodKey, PositionsFilter, TradeRow } from '../types/analytics'
 import { PositionRow } from './PositionRow'
 import { TradeLogTable } from './TradeLogTable'
 import { Button } from './ui/Button'
@@ -19,6 +19,7 @@ type Props = {
   logRows: LogRow[]
   trades: TradeRow[]
   period: PeriodKey
+  range: DateRange
   mtmUpdatedAt?: string
 }
 
@@ -29,7 +30,7 @@ function passesFilter(row: LogRow, filter: PositionsFilter): boolean {
   return true
 }
 
-export function JournalPanel({ logRows, trades, period, mtmUpdatedAt }: Props) {
+export function JournalPanel({ logRows, trades, period, range, mtmUpdatedAt }: Props) {
   const [tab, setTab] = useState<Tab>('open')
   const [filter, setFilter] = useState<PositionsFilter>('all')
 
@@ -55,8 +56,8 @@ export function JournalPanel({ logRows, trades, period, mtmUpdatedAt }: Props) {
   }, [allOpen])
 
   const historyCount = useMemo(
-    () => logRowsForPeriod(logRows, trades, period).length,
-    [logRows, trades, period],
+    () => logRowsForPeriod(logRows, trades, period, range).length,
+    [logRows, trades, period, range],
   )
 
   const filters: { id: PositionsFilter; label: string }[] = [
@@ -180,6 +181,7 @@ export function JournalPanel({ logRows, trades, period, mtmUpdatedAt }: Props) {
           logRows={logRows}
           trades={trades}
           period={period}
+          range={range}
           mtmUpdatedAt={mtmUpdatedAt}
           hideTitle
         />

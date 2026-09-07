@@ -173,7 +173,7 @@ def live_lane(tmp_path, monkeypatch):
     monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,ETHUSD")
     monkeypatch.setenv("DELTA_API_KEY", "k")
     monkeypatch.setenv("DELTA_API_SECRET", "s")
-    monkeypatch.setenv("ENABLE_CRYPTO_PAPER", "false")
+    monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_USDINR", "88")
     monkeypatch.setattr(journal, "STATE_PATH", tmp_path / "state.json")

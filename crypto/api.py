@@ -46,7 +46,6 @@ def crypto_status() -> dict:
         "credentials_ready": s.credentials_ready,
         "api_key_preview": _mask(s.api_key),
         "base_url": s.base_url,
-        "paper_enabled": s.paper_enabled,
         "lanes": {"ny_n_break": s.ny_nbreak_enabled, "ichimoku": s.ichimoku_enabled},
         "sizing": {
             "lots": s.lots,
@@ -346,7 +345,6 @@ def set_config(
     deploy_cap_usd: float | None = Body(None, embed=True),
     deploy_usd: float | None = Body(None, embed=True),  # legacy alias for deploy_cap_usd
     max_concurrent: int | None = Body(None, embed=True),
-    paper_enabled: bool | None = Body(None, embed=True),
     ny_n_break_enabled: bool | None = Body(None, embed=True),
     ichimoku_enabled: bool | None = Body(None, embed=True),
     symbols: list[str] | None = Body(None, embed=True),
@@ -372,8 +370,6 @@ def set_config(
         values["CRYPTO_DEPLOY_USD"] = str(max(0.0, float(cap)))
     if max_concurrent is not None:
         values["CRYPTO_MAX_CONCURRENT"] = str(min(10, max(1, int(max_concurrent))))
-    if paper_enabled is not None:
-        values["ENABLE_CRYPTO_PAPER"] = "true" if paper_enabled else "false"
     if ny_n_break_enabled is not None:
         values["CRYPTO_NY_NBREAK_ENABLED"] = "true" if ny_n_break_enabled else "false"
     if ichimoku_enabled is not None:
