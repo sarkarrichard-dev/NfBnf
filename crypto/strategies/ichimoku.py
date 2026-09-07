@@ -1,176 +1,131 @@
-# ============================================================================
-# PARKED SNAPSHOT — not imported by anything yet.
-#
-# Copied from index_ai/strategies/ichimoku.py on 2026-09-03 so the crypto lane
-# has its Ichimoku component in one place. The CANONICAL, live copy is still
-# index_ai/strategies/ichimoku.py — index_ai/backtest.py imports it for the
-# EXIT_BUY_ON_CLOUD_REENTRY branch, so do not delete that one.
-#
-# When the crypto lane is actually built, decide deliberately: import the
-# shared module, or fork it here with crypto-tuned periods. Do not let both
-# drift silently.
-#
-# Settings note: the index side uses the classic 9/26/52 (strategy_params.
-# ichimoku_*). Crypto is 24/7 with no session gaps, so the period and
-# displacement choice is an open question to settle with a backtest before
-# this goes anywhere near an order.
-# ============================================================================
+"""Ichimoku strategy for the crypto lane — reuses the index Ichimoku math.
 
-"""
-Ichimoku Kinko Hyo — conversion/base lines and the forward-displaced Kumo (cloud).
-
-Used as an optional *exit* overlay for the long-premium (buy) lane: once price
-loses the cloud it has usually lost the trend that justified buying the option.
-Inspired by the Renko + Ichimoku swing method, adapted to time-based intraday
-spot candles.
-
-All series are non-repainting: the cloud shown at bar ``i`` is built from data
-at bar ``i - displacement`` (that is how Ichimoku projects Senkou A/B forward),
-so reading ``senkou_a`` / ``senkou_b`` on the latest closed bar never peeks
-ahead.
+Runs around the clock on a single timeframe (default 1h). Entry is the classic
+setup: Tenkan/Kijun cross in the trade's direction, price already on the right
+side of the Kumo, and the cloud coloured with the trade. Exit reuses
+``index_ai.strategies.ichimoku.cloud_reentry_exit`` (price back into the cloud).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any
 
 import pandas as pd
 
-CONVERSION_PERIOD = 9
-BASE_PERIOD = 26
-SPAN_B_PERIOD = 52
-DISPLACEMENT = 26
-
-_LongRef = Literal["cloud_top", "kijun"]
-_ShortRef = Literal["cloud_bottom", "kijun"]
-
-
-def _midpoint(high: pd.Series, low: pd.Series, window: int) -> pd.Series:
-    return (high.rolling(window).max() + low.rolling(window).min()) / 2.0
-
-
-def compute_ichimoku(
-    candles: pd.DataFrame,
-    *,
-    conversion: int = CONVERSION_PERIOD,
-    base: int = BASE_PERIOD,
-    span_b: int = SPAN_B_PERIOD,
-    displacement: int = DISPLACEMENT,
-) -> pd.DataFrame:
-    """Return a copy of ``candles`` with tenkan / kijun / senkou_a / senkou_b / cloud bounds.
-
-    ``senkou_a`` / ``senkou_b`` are already displaced forward by ``displacement``
-    bars, so row ``i`` carries the cloud that is in force at bar ``i``.
-    """
-    df = candles.copy()
-    high = df["high"].astype(float)
-    low = df["low"].astype(float)
-
-    tenkan = _midpoint(high, low, conversion)
-    kijun = _midpoint(high, low, base)
-    senkou_a_raw = (tenkan + kijun) / 2.0
-    senkou_b_raw = _midpoint(high, low, span_b)
-
-    df["tenkan"] = tenkan
-    df["kijun"] = kijun
-    df["senkou_a"] = senkou_a_raw.shift(displacement)
-    df["senkou_b"] = senkou_b_raw.shift(displacement)
-    df["cloud_top"] = df[["senkou_a", "senkou_b"]].max(axis=1)
-    df["cloud_bottom"] = df[["senkou_a", "senkou_b"]].min(axis=1)
-    return df
+from index_ai.strategies.ichimoku import (
+    cloud_reentry_exit,
+    compute_ichimoku,
+)
 
 
 @dataclass(frozen=True)
-class IchimokuSnapshot:
-    ready: bool
-    price: float
-    tenkan: float
-    kijun: float
-    cloud_top: float
-    cloud_bottom: float
-    position: Literal["above", "inside", "below", "unknown"]
+class IchimokuConfig:
+    conversion: int = 9
+    base: int = 26
+    span_b: int = 52
+    displacement: int = 26
+    sl_pct: float = 0.0
 
 
-def ichimoku_snapshot(
+def _blank_state() -> dict[str, Any]:
+    return {"position": None}
+
+
+def step(
+    symbol: str,
     candles: pd.DataFrame,
     *,
-    conversion: int = CONVERSION_PERIOD,
-    base: int = BASE_PERIOD,
-    span_b: int = SPAN_B_PERIOD,
-    displacement: int = DISPLACEMENT,
-) -> IchimokuSnapshot:
-    price = float(candles["close"].iloc[-1]) if len(candles) else 0.0
-    need = span_b + displacement + 1
+    state: dict[str, Any] | None,
+    cfg: IchimokuConfig,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    st = {**_blank_state(), **(state or {})}
+    ev: dict[str, Any] = {"strategy": "ichimoku", "asset": symbol, "event": "none"}
+
+    need = cfg.span_b + cfg.displacement + 2
     if len(candles) < need:
-        return IchimokuSnapshot(False, price, 0.0, 0.0, 0.0, 0.0, "unknown")
+        ev.update(event="wait", reason=f"need {need} bars, have {len(candles)}")
+        return st, ev
 
     frame = compute_ichimoku(
-        candles, conversion=conversion, base=base, span_b=span_b, displacement=displacement
+        candles, conversion=cfg.conversion, base=cfg.base,
+        span_b=cfg.span_b, displacement=cfg.displacement,
     )
-    row = frame.iloc[-1]
-    top = float(row["cloud_top"])
-    bottom = float(row["cloud_bottom"])
-    if pd.isna(top) or pd.isna(bottom):
-        return IchimokuSnapshot(False, price, 0.0, 0.0, 0.0, 0.0, "unknown")
+    row, prev = frame.iloc[-1], frame.iloc[-2]
+    if pd.isna(row["cloud_top"]) or pd.isna(row["senkou_b"]):
+        ev.update(event="wait", reason="cloud not ready")
+        return st, ev
 
-    if price > top:
-        position: Literal["above", "inside", "below"] = "above"
-    elif price < bottom:
-        position = "below"
+    price = float(row["close"])
+    ts = str(candles["datetime"].iloc[-1])
+    cross_up = prev["tenkan"] <= prev["kijun"] and row["tenkan"] > row["kijun"]
+    cross_dn = prev["tenkan"] >= prev["kijun"] and row["tenkan"] < row["kijun"]
+    above_cloud = price > float(row["cloud_top"])
+    below_cloud = price < float(row["cloud_bottom"])
+    # forward Kumo colour — built from current price action, not the 26-bar-lagged
+    # cloud in ``senkou_a``/``senkou_b`` (which lags a fresh trend badly).
+    mid52 = (
+        candles["high"].astype(float).rolling(cfg.span_b).max()
+        + candles["low"].astype(float).rolling(cfg.span_b).min()
+    ) / 2.0
+    fwd_a = (float(row["tenkan"]) + float(row["kijun"])) / 2.0
+    fwd_b = float(mid52.iloc[-1])
+    bull_cloud = fwd_a > fwd_b
+
+    pos = st["position"]
+
+    if pos:
+        side = pos["side"]
+        entry = float(pos["entry_price"])
+        direction = 1 if side == "long" else -1
+        reason = None
+        if cfg.sl_pct > 0 and (
+            (side == "long" and price <= entry * (1 - cfg.sl_pct / 100))
+            or (side == "short" and price >= entry * (1 + cfg.sl_pct / 100))
+        ):
+            reason = f"hard stop {cfg.sl_pct:g}%"
+        else:
+            should_exit, why = cloud_reentry_exit(
+                direction, candles, conversion=cfg.conversion, base=cfg.base,
+                span_b=cfg.span_b, displacement=cfg.displacement,
+            )
+            if should_exit:
+                reason = why or "cloud re-entry"
+        if reason:
+            st["position"] = None
+            ev.update(event="exit", side=side, price=price, reason=reason, ts=ts)
+        else:
+            ev.update(event="hold", side=side, price=price)
+        return st, ev
+
+    if cross_up and above_cloud and bull_cloud:
+        st["position"] = {"side": "long", "entry_price": price, "entry_time": ts}
+        ev.update(event="enter", side="long", price=price, reason="TK cross up above a bull Kumo", ts=ts)
+    elif cross_dn and below_cloud and not bull_cloud:
+        st["position"] = {"side": "short", "entry_price": price, "entry_time": ts}
+        ev.update(event="enter", side="short", price=price, reason="TK cross down below a bear Kumo", ts=ts)
     else:
-        position = "inside"
+        ev.update(event="wait", reason="no Ichimoku entry")
+    return st, ev
 
-    return IchimokuSnapshot(
-        ready=True,
-        price=price,
-        tenkan=float(row["tenkan"]),
-        kijun=float(row["kijun"]),
-        cloud_top=top,
-        cloud_bottom=bottom,
-        position=position,
+
+if __name__ == "__main__":  # self-check — a dip then a rally: TK crosses up above the (lagged) cloud
+    n = 160
+    closes = [120 - 0.15 * i for i in range(90)] + [106.5 + 1.2 * i for i in range(70)]
+    closes = closes[:n]
+    df = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-08-01", periods=n, freq="1h", tz="UTC"),
+            "open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
+            "close": closes, "volume": [5.0] * n,
+        }
     )
-
-
-def cloud_reentry_exit(
-    entry_direction: int,
-    candles: pd.DataFrame,
-    *,
-    long_ref: _LongRef = "cloud_top",
-    short_ref: _ShortRef = "kijun",
-    conversion: int = CONVERSION_PERIOD,
-    base: int = BASE_PERIOD,
-    span_b: int = SPAN_B_PERIOD,
-    displacement: int = DISPLACEMENT,
-) -> tuple[bool, str | None]:
-    """Trailing exit for a directional long-premium trade.
-
-    ``entry_direction``: +1 for a bullish position (BUY_CALL), -1 for bearish
-    (BUY_PUT).
-
-    Dual-system exit (asymmetric by default, matching the source method):
-      * long  → exit when the bar closes at/below the cloud top ("lost the cloud")
-      * short → exit when the bar closes at/above the Kijun (fast follow)
-
-    Returns ``(should_exit, reason)``. Never exits while the cloud is not ready.
-    """
-    if entry_direction == 0:
-        return False, None
-
-    snap = ichimoku_snapshot(
-        candles, conversion=conversion, base=base, span_b=span_b, displacement=displacement
-    )
-    if not snap.ready:
-        return False, None
-
-    if entry_direction > 0:
-        level = snap.cloud_top if long_ref == "cloud_top" else snap.kijun
-        if snap.price <= level:
-            return True, f"Close {snap.price:g} back into cloud (top {level:g})."
-        return False, None
-
-    level = snap.cloud_bottom if short_ref == "cloud_bottom" else snap.kijun
-    if snap.price >= level:
-        ref = "cloud bottom" if short_ref == "cloud_bottom" else "Kijun"
-        return True, f"Close {snap.price:g} back above {ref} {level:g}."
-    return False, None
+    cfg = IchimokuConfig()
+    state, saw_enter = None, False
+    for i in range(cfg.span_b + cfg.displacement + 3, n):
+        state, ev = step("BTCUSD", df.iloc[: i + 1], state=state, cfg=cfg)
+        if ev["event"] == "enter":
+            saw_enter = ev["side"] == "long"
+            break
+    assert saw_enter, "expected a long entry on the synthetic uptrend"
+    print("crypto.strategies.ichimoku self-check ok")
