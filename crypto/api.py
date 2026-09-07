@@ -130,32 +130,75 @@ def crypto_contracts() -> dict:
     }
 
 
+def _usd_inr(client: DeltaClient, s) -> float:
+    if s.credentials_ready:
+        try:
+            bal = client.wallet() or []
+            usd = sum(_num(w.get("balance")) or 0.0 for w in bal if isinstance(w, dict))
+            inr = sum(_num(w.get("balance_inr")) or 0.0 for w in bal if isinstance(w, dict))
+            if usd > 0 and inr > 0:
+                return inr / usd
+        except DeltaError:
+            pass
+    return _num(os.getenv("CRYPTO_USDINR", "88")) or 88.0
+
+
 @router.get("/positions", include_in_schema=False)
 def crypto_positions() -> dict:
     st = journal.load_state()
-    open_pos = [
-        {"key": k, **(v["position"])}
-        for k, v in st.items()
-        if ":" in k and isinstance(v, dict) and v.get("position")
-    ]
-    live: list = []
     s = crypto_settings()
+    client = DeltaClient(s)
+    fx = _usd_inr(client, s)
+    marks: dict[str, float] = {}
+    open_pos: list[dict] = []
+    open_pnl_usd = 0.0
+
+    for k, v in st.items():
+        if ":" not in k or not isinstance(v, dict) or not v.get("position"):
+            continue
+        p = dict(v["position"])
+        sym = p.get("asset", "")
+        if sym and sym not in marks:
+            try:
+                marks[sym] = _num(market_data.ticker(sym, client=client).get("mark_price")) or 0.0
+            except DeltaError:
+                marks[sym] = 0.0
+        mark = marks.get(sym, 0.0)
+        direction = 1 if p.get("side") == "long" else -1
+        coins = float(p.get("size") or 0) * float(p.get("contract_value") or 0)
+        upnl = (mark - float(p.get("entry_price") or 0)) * direction * coins if mark else 0.0
+        p["mark"] = mark
+        p["unrealized_usd"] = round(upnl, 2)
+        p["unrealized_inr"] = round(upnl * fx, 0)
+        notional = float(p.get("notional_usd") or 0)
+        p["unrealized_pct"] = round(upnl / notional * 100.0, 2) if notional else 0.0
+        open_pnl_usd += upnl
+        open_pos.append({"key": k, **p})
+
+    live: list = []
     if s.credentials_ready:
         try:
-            for p in DeltaClient(s).positions():
-                sz = _num(p.get("size")) or 0.0
+            for lp in client.positions():
+                sz = _num(lp.get("size")) or 0.0
                 if sz:
                     live.append(
                         {
-                            "symbol": p.get("product_symbol"),
+                            "symbol": lp.get("product_symbol"),
                             "size": sz,
-                            "entry_price": _num(p.get("entry_price")),
-                            "unrealized_pnl": _num(p.get("unrealized_pnl")),
+                            "entry_price": _num(lp.get("entry_price")),
+                            "unrealized_pnl": _num(lp.get("unrealized_pnl")),
                         }
                     )
         except DeltaError as exc:
             live = [{"error": str(exc)}]
-    return {"paper": open_pos, "live": live}
+
+    return {
+        "paper": open_pos,
+        "live": live,
+        "open_unrealized_usd": round(open_pnl_usd, 2),
+        "open_unrealized_inr": round(open_pnl_usd * fx, 0),
+        "fx_usdinr": round(fx, 4),
+    }
 
 
 @router.get("/journal", include_in_schema=False)

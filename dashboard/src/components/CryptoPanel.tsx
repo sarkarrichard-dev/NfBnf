@@ -25,6 +25,16 @@ type PaperPos = {
   entry_price: number
   leverage: number
   margin_total_usd: number
+  mark: number
+  unrealized_usd: number
+  unrealized_inr: number
+  unrealized_pct: number
+}
+type Positions = {
+  paper: PaperPos[]
+  live: unknown[]
+  open_unrealized_usd: number
+  open_unrealized_inr: number
 }
 type Trade = {
   day: string
@@ -67,8 +77,8 @@ export function CryptoPanel() {
   })
   const positions = useQuery({
     queryKey: ['crypto', 'positions'],
-    queryFn: () => api<{ paper: PaperPos[]; live: unknown[] }>('/api/crypto/positions'),
-    refetchInterval: 30_000,
+    queryFn: () => api<Positions>('/api/crypto/positions'),
+    refetchInterval: 20_000,
   })
   const journal = useQuery({
     queryKey: ['crypto', 'journal'],
@@ -103,10 +113,20 @@ export function CryptoPanel() {
         separate, not-yet-built phase.
       </p>
 
-      {/* day summary */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <DayCard title={`6 PM — ${day.data?.ny_session_date ?? ''}`} s={day.data?.ny_n_break ?? blank} />
-        <DayCard title={`Ichimoku — ${day.data?.utc_date ?? ''}`} s={day.data?.ichimoku ?? blank} />
+      {/* P&L summary */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-slate-800 p-3">
+          <p className="text-xs font-semibold text-slate-300">Open (unrealised)</p>
+          <p className={cn('mt-1 font-mono text-lg', pnlCls(positions.data?.open_unrealized_usd ?? 0))}>
+            {money(positions.data?.open_unrealized_usd ?? 0)}
+          </p>
+          <p className="text-xs text-slate-500">
+            {rupees(positions.data?.open_unrealized_inr ?? 0)} · {positions.data?.paper?.length ?? 0} position
+            {(positions.data?.paper?.length ?? 0) === 1 ? '' : 's'}
+          </p>
+        </div>
+        <DayCard title={`6 PM · ${day.data?.ny_session_date ?? ''}`} s={day.data?.ny_n_break ?? blank} />
+        <DayCard title={`Ichimoku · ${day.data?.utc_date ?? ''}`} s={day.data?.ichimoku ?? blank} />
       </div>
 
       {/* controls */}
@@ -191,7 +211,8 @@ export function CryptoPanel() {
                   <th>Strategy</th>
                   <th>Side</th>
                   <th>Size</th>
-                  <th>Entry</th>
+                  <th>Entry → Mark</th>
+                  <th>Unrealised P&L</th>
                   <th>Margin</th>
                 </tr>
               </thead>
@@ -204,8 +225,16 @@ export function CryptoPanel() {
                       {p.side}
                     </td>
                     <td>{p.size}</td>
-                    <td>${num(p.entry_price)}</td>
-                    <td>${num(p.margin_total_usd)} · {num(p.leverage, 0)}x</td>
+                    <td className="text-slate-400">
+                      ${num(p.entry_price)} → ${p.mark ? num(p.mark) : '—'}
+                    </td>
+                    <td className={pnlCls(p.unrealized_usd)}>
+                      {money(p.unrealized_usd)} <span className="text-slate-600">{rupees(p.unrealized_inr)}</span>
+                      {p.unrealized_pct ? <span className="text-slate-600"> ({p.unrealized_pct > 0 ? '+' : ''}{p.unrealized_pct}%)</span> : null}
+                    </td>
+                    <td className="text-slate-400">
+                      ${num(p.margin_total_usd)} · {num(p.leverage, 0)}x
+                    </td>
                   </tr>
                 ))}
               </tbody>
