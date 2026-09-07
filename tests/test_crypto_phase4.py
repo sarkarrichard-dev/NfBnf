@@ -225,6 +225,32 @@ def test_live_round_trip_journals_real_fill(live_lane):
     assert journal.load_state()["ny_n_break:BTCUSD"]["position"] is None
 
 
+# ---------------------------------------------------------------------------
+# /api/crypto/mode + /arm-live
+# ---------------------------------------------------------------------------
+def test_mode_and_arm_endpoints(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from index_ai.server import app
+
+    writes: dict[str, str] = {}
+    monkeypatch.setattr("crypto.live.update_env_values", lambda v: writes.update(v))
+    monkeypatch.setattr("crypto.api._egress_ip", lambda: "1.2.3.4")
+    c = TestClient(app)
+
+    assert c.post("/api/crypto/mode", json={"mode": "LIVE"}).json()["trading_mode"] == "LIVE"
+    assert writes["CRYPTO_TRADING_MODE"] == "LIVE"
+    # wrong phrase is refused
+    assert c.post("/api/crypto/arm-live", json={"confirm": "ARM LIVE ORDERS"}).status_code == 400
+    r = c.post("/api/crypto/arm-live", json={"confirm": "ARM CRYPTO LIVE"}).json()
+    assert writes["CRYPTO_ALLOW_LIVE"] == "true" and r["confirm_phrase"] == "ARM CRYPTO LIVE"
+    # PAPER disarms
+    c.post("/api/crypto/mode", json={"mode": "PAPER"})
+    assert writes["CRYPTO_ALLOW_LIVE"] == "false"
+    body = c.get("/api/crypto/status").json()
+    assert "kill_switch" in body and "egress_ip" in body and body["arm_phrase"] == "ARM CRYPTO LIVE"
+
+
 def test_live_exit_failure_keeps_position_open(live_lane):
     live_lane.setattr(lanes.executor, "place_entry", lambda *a, **k: {"order_id": "27:1"})
     live_lane.setattr(lanes.executor, "fill_price", lambda c, oid: 61234.0)

@@ -176,8 +176,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     tick_task = asyncio.create_task(_tick_feed_loop())
 
     async def _crypto_paper_loop() -> None:
-        """Crypto (Delta Exchange) paper lane — its own cadence, decoupled from
-        the Dhan scanner because crypto trades 24/7. Opt-in, never fatal."""
+        """Crypto (Delta Exchange) lane — its own cadence, decoupled from the
+        Dhan scanner because crypto trades 24/7. Paper by default; places real
+        orders only when CRYPTO live is armed. Opt-in, never fatal."""
         try:
             from crypto.lanes import enabled as crypto_enabled, scan_crypto_paper
         except Exception:

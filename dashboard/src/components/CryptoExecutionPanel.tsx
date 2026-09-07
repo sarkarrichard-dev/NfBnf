@@ -1,0 +1,164 @@
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { api } from '../lib/api'
+import { cn } from '../lib/cn'
+import { Button } from './ui/Button'
+
+type KillSwitch = {
+  tripped: boolean
+  reason: string
+  today_live_net_usd: number
+  today_live_trades: number
+  max_daily_loss_usd: number
+  max_consec_losses: number
+}
+type Status = {
+  credentials_ready: boolean
+  trading_mode: string
+  live_armed: boolean
+  live_orders_enabled: boolean
+  arm_phrase: string
+  egress_ip: string | null
+  kill_switch: KillSwitch
+}
+
+/**
+ * Crypto paper -> live switch. Its own two locks and its own phrase
+ * ("ARM CRYPTO LIVE"), completely separate from the index arm. Delta rejects
+ * orders from a non-whitelisted IP, so the egress IP is shown here.
+ */
+export function CryptoExecutionPanel() {
+  const qc = useQueryClient()
+  const status = useQuery({
+    queryKey: ['crypto', 'status'],
+    queryFn: () => api<Status>('/api/crypto/status'),
+    refetchInterval: 30_000,
+  })
+  const s = status.data
+  const isLive = (s?.trading_mode ?? 'PAPER').toUpperCase() === 'LIVE'
+  const armed = !!s?.live_armed
+  const [phrase, setPhrase] = useState('')
+  const [arming, setArming] = useState(false)
+
+  const setMode = useMutation({
+    mutationFn: (mode: string) =>
+      api('/api/crypto/mode', { method: 'POST', body: JSON.stringify({ mode }) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['crypto'] })
+      setArming(false)
+      setPhrase('')
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const armLive = useMutation({
+    mutationFn: (body: { confirm?: string; disarm?: boolean }) =>
+      api<{ live_orders_enabled: boolean }>('/api/crypto/arm-live', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (r) => {
+      toast[r.live_orders_enabled ? 'warning' : 'success'](
+        r.live_orders_enabled ? 'CRYPTO LIVE ORDERS ARMED' : 'Crypto live orders disarmed',
+      )
+      setArming(false)
+      setPhrase('')
+      void qc.invalidateQueries({ queryKey: ['crypto'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const ks = s?.kill_switch
+  const busy = setMode.isPending || armLive.isPending
+
+  return (
+    <div
+      className={cn(
+        'space-y-3 rounded-lg border p-3',
+        s?.live_orders_enabled
+          ? 'border-rose-500/60 bg-rose-950/20'
+          : isLive
+            ? 'border-amber-500/50 bg-amber-950/15'
+            : 'border-slate-800',
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-slate-300">Mode</span>
+        <div className="inline-flex overflow-hidden rounded-lg border border-slate-700 text-xs">
+          <button
+            type="button"
+            disabled={busy || !isLive}
+            onClick={() => setMode.mutate('PAPER')}
+            className={cn('px-3 py-1', !isLive ? 'bg-slate-700 text-slate-100' : 'text-slate-400')}
+          >
+            Paper
+          </button>
+          <button
+            type="button"
+            disabled={busy || isLive || !s?.credentials_ready}
+            onClick={() => setMode.mutate('LIVE')}
+            className={cn('px-3 py-1', isLive ? 'bg-rose-600 text-white' : 'text-slate-400')}
+          >
+            Live
+          </button>
+        </div>
+        {!s?.credentials_ready ? (
+          <span className="text-[11px] text-slate-500">add Delta keys first</span>
+        ) : null}
+      </div>
+
+      {isLive ? (
+        <>
+          <p className="text-xs text-slate-300">
+            {s?.live_orders_enabled
+              ? '⚠ ARMED — strategy entries place real orders on Delta with real money.'
+              : 'Live mode on, disarmed. No real orders until you arm.'}
+          </p>
+
+          {armed ? (
+            <Button variant="danger" pending={armLive.isPending} onClick={() => armLive.mutate({ disarm: true })}>
+              Disarm
+            </Button>
+          ) : arming ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                autoFocus
+                className="w-52 rounded-lg border border-slate-700 bg-slate-950/60 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-slate-500"
+                placeholder={s?.arm_phrase}
+                value={phrase}
+                onChange={(e) => setPhrase(e.target.value)}
+              />
+              <Button
+                variant="danger"
+                pending={armLive.isPending}
+                disabled={phrase.trim().toUpperCase() !== (s?.arm_phrase ?? '').toUpperCase()}
+                onClick={() => armLive.mutate({ confirm: phrase })}
+              >
+                Arm
+              </Button>
+              <Button variant="ghost" onClick={() => { setArming(false); setPhrase('') }}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button variant="primary" onClick={() => setArming(true)}>
+              Arm live orders
+            </Button>
+          )}
+
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+            <dt className="text-slate-500">Server IP (whitelist on your Delta key)</dt>
+            <dd className="font-mono text-slate-300">{s?.egress_ip ?? '—'}</dd>
+            <dt className="text-slate-500">Kill switch</dt>
+            <dd className={cn('font-mono', ks?.tripped ? 'text-rose-300' : 'text-slate-300')}>
+              {ks?.tripped
+                ? `TRIPPED — ${ks.reason}`
+                : `${ks?.today_live_trades ?? 0} live trades · net $${(ks?.today_live_net_usd ?? 0).toFixed(2)} · limit $${ks?.max_daily_loss_usd ?? 50} / ${ks?.max_consec_losses ?? 3} losses`}
+            </dd>
+          </dl>
+        </>
+      ) : null}
+    </div>
+  )
+}

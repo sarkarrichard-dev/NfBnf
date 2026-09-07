@@ -12,10 +12,16 @@ import os
 
 from fastapi import APIRouter, Body, HTTPException
 
-from crypto import charges, journal
+from crypto import charges, executor, journal
 from crypto.config import PERP_SYMBOLS, crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient, DeltaError
+from crypto.live import (
+    CRYPTO_ARM_PHRASE,
+    arm_crypto_live,
+    disarm_crypto_live,
+    set_crypto_mode,
+)
 from crypto.session import crypto_day, ny_session_date
 
 logger = logging.getLogger(__name__)
@@ -57,6 +63,35 @@ def crypto_status() -> dict:
             }
             for sym in PERP_SYMBOLS
         },
+        # --- live execution (Phase 4) ---
+        "trading_mode": s.trading_mode,
+        "live_armed": s.live_armed,
+        "live_orders_enabled": s.live_orders_enabled,
+        "arm_phrase": CRYPTO_ARM_PHRASE,
+        "egress_ip": _egress_ip(),
+        "kill_switch": _kill_switch_state(s),
+    }
+
+
+def _egress_ip() -> str | None:
+    try:
+        from index_ai.dhan_network import fetch_public_ip
+
+        return fetch_public_ip()
+    except Exception:
+        return None
+
+
+def _kill_switch_state(s) -> dict:
+    tripped, why = executor.kill_switch(s)
+    rows = executor._today_live_rows()
+    return {
+        "tripped": tripped,
+        "reason": why,
+        "today_live_net_usd": round(sum(float(r.get("pnl_usd") or 0.0) for r in rows), 2),
+        "today_live_trades": len(rows),
+        "max_daily_loss_usd": s.max_daily_loss_usd,
+        "max_consec_losses": s.max_consec_losses,
     }
 
 
@@ -267,6 +302,44 @@ def set_config(
     for k, v in values.items():
         os.environ[k] = v
     return {"saved": list(values.keys()), "status": crypto_status()}
+
+
+@router.post("/mode", include_in_schema=False)
+def crypto_mode(mode: str = Body(..., embed=True)) -> dict:
+    """PAPER | LIVE. LIVE alone places no orders — arming is a separate step.
+    Switching to PAPER always disarms."""
+    try:
+        m = set_crypto_mode(mode)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    os.environ["CRYPTO_TRADING_MODE"] = m
+    if m == "PAPER":
+        os.environ["CRYPTO_ALLOW_LIVE"] = "false"
+    return {"trading_mode": m, "status": crypto_status()}
+
+
+@router.post("/arm-live", include_in_schema=False)
+def crypto_arm_live(
+    confirm: str = Body("", embed=True),
+    disarm: bool = Body(False, embed=True),
+) -> dict:
+    """Arm real Delta orders (needs the exact phrase) or disarm (one click)."""
+    if disarm:
+        disarm_crypto_live()
+        os.environ["CRYPTO_ALLOW_LIVE"] = "false"
+    else:
+        try:
+            arm_crypto_live(confirm)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        os.environ["CRYPTO_ALLOW_LIVE"] = "true"
+    s = crypto_settings()
+    return {
+        "live_orders_enabled": s.live_orders_enabled,
+        "live_armed": s.live_armed,
+        "confirm_phrase": CRYPTO_ARM_PHRASE,
+        "status": crypto_status(),
+    }
 
 
 @router.post("/credentials", include_in_schema=False)

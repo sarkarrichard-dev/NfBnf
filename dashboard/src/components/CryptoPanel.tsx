@@ -5,6 +5,7 @@ import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { Button } from './ui/Button'
 import { CryptoSetupPanel } from './CryptoSetupPanel'
+import { CryptoExecutionPanel } from './CryptoExecutionPanel'
 
 type Status = {
   paper_enabled: boolean
@@ -113,9 +114,11 @@ export function CryptoPanel() {
   return (
     <div className="space-y-6">
       <p className="text-xs text-slate-500">
-        Delta Exchange · BTC / ETH perpetual futures · paper only. Live order placement is a
-        separate, not-yet-built phase.
+        Delta Exchange · BTC / ETH perpetual futures. Paper by default; the Mode switch below
+        arms real orders.
       </p>
+
+      <CryptoExecutionPanel />
 
       {/* P&L summary */}
       <div className="grid gap-3 sm:grid-cols-3">
