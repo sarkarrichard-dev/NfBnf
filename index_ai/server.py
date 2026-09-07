@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -184,10 +184,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         except Exception:
             return
         _clog = logging.getLogger("crypto.lanes")
+        _last_train_day = ""
         while True:
             try:
                 if crypto_enabled():
                     events = await asyncio.to_thread(scan_crypto_paper)
+                    today = datetime.now(timezone.utc).date().isoformat()
+                    if today != _last_train_day:
+                        _last_train_day = today
+                        try:
+                            from crypto.ml.model import train as _crypto_train
+
+                            r = await asyncio.to_thread(_crypto_train)
+                            _clog.info("crypto ML retrain: %s", r.get("reason") or "trained")
+                        except Exception:
+                            _clog.warning("crypto ML retrain failed", exc_info=True)
                     for e in events:
                         kind = e.get("event", "?")
                         if kind not in ("none", "hold", "wait"):

@@ -13,6 +13,8 @@ import os
 from fastapi import APIRouter, Body, HTTPException
 
 from crypto import charges, executor, journal, sizing
+from crypto.ml import gate as ml_gate
+from crypto.ml import model as ml_model
 from crypto.config import crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta import client as delta_client
@@ -73,6 +75,7 @@ def crypto_status() -> dict:
         "arm_phrase": CRYPTO_ARM_PHRASE,
         "egress": _egress(s),
         "kill_switch": _kill_switch_state(s),
+        "ml": ml_gate.status(),
     }
 
 
@@ -301,6 +304,12 @@ def crypto_positions() -> dict:
 @router.get("/journal", include_in_schema=False)
 def crypto_journal(limit: int = 100) -> dict:
     return {"trades": journal.recent(max(1, min(500, limit)))}
+
+
+@router.post("/ml/train", include_in_schema=False)
+def crypto_ml_train(force: bool = Body(False, embed=True)) -> dict:
+    """Retrain the crypto model from the journal. Plain def — threadpooled."""
+    return ml_model.train(force=bool(force))
 
 
 @router.get("/day", include_in_schema=False)

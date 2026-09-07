@@ -20,6 +20,17 @@ type Status = {
   symbols: string[]
   available_symbols: string[]
   half_spread_bps: Record<string, { measured: number | null; fallback: number | null }>
+  ml: {
+    enabled: boolean
+    rows: number
+    live_rows: number
+    gate_armed: boolean
+    min_win_prob_gate: number
+    oos_delta_usd: number | null
+    model_present: boolean
+    min_rows: number
+    min_live_rows: number
+  }
 }
 type LotRow = {
   symbol: string
@@ -398,6 +409,8 @@ export function CryptoPanel() {
         )}
       </section>
 
+      {s?.ml ? <LearningRow ml={s.ml} /> : null}
+
       <CollapsibleSection title="Delta connection" summary="keys · wallet · live quotes">
         <CryptoSetupPanel />
       </CollapsibleSection>
@@ -495,6 +508,28 @@ function SymbolSelect({
         </div>
       </div>
     </details>
+  )
+}
+
+function LearningRow({ ml }: { ml: NonNullable<Status['ml']> }) {
+  const state = ml.gate_armed
+    ? `gate armed @ ${(ml.min_win_prob_gate * 100).toFixed(0)}%`
+    : ml.model_present
+      ? 'model trained, gate not armed'
+      : `collecting data — ${ml.rows}/${ml.min_rows} trades (${ml.live_rows}/${ml.min_live_rows} live)`
+  return (
+    <div className={cn(fx.card, 'flex flex-wrap items-center gap-x-4 gap-y-1 text-xs')}>
+      <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+        Crypto learning
+      </span>
+      <span className="text-slate-300">{state}</span>
+      <span className="text-slate-600">
+        {ml.rows} trades · {ml.live_rows} live
+        {ok(ml.oos_delta_usd) ? ` · OOS Δ ${usd(ml.oos_delta_usd)}` : ''}
+        {ml.enabled ? '' : ' · gate off'}
+      </span>
+      <span className="text-slate-600">separate from the index model</span>
+    </div>
   )
 }
 

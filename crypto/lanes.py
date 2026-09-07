@@ -20,6 +20,7 @@ from crypto.charges import round_trip_cost_usd
 from crypto.config import crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient
+from crypto.ml import gate as ml_gate
 from crypto.session import crypto_day, in_ny_window, ny_session_date
 from crypto.sizing import size_position
 from crypto.strategies import ichimoku as ichi
@@ -239,39 +240,11 @@ def _already_journalled(exit_id: str) -> bool:
 
 
 def _entry_features(strat: str, sym: str, frame, side: str) -> dict[str, Any]:
-    """A small snapshot captured at entry for a future crypto model. Capture
-    only — the modelling is a separate follow-up."""
-    import pandas as pd
+    """Entry snapshot for the crypto model — defined in crypto.ml.features so
+    capture and training share one definition."""
+    from crypto.ml.features import entry_snapshot
 
-    feats: dict[str, Any] = {
-        "venue": "delta",
-        "asset": sym,  # one-hot at model time — do not bake per-symbol flags in
-        "strategy_ny_n_break": 1.0 if strat == "ny_n_break" else 0.0,
-        "side_long": 1.0 if side == "long" else 0.0,
-    }
-    try:
-        c = frame["close"].astype(float)
-        price = float(c.iloc[-1])
-        hi, lo = frame["high"].astype(float), frame["low"].astype(float)
-        tr = (hi - lo).rolling(14).mean().iloc[-1]
-        feats["atr_pct"] = round(float(tr) / price * 100.0, 4) if price else 0.0
-        feats["ret_20_pct"] = round((price / float(c.iloc[-21]) - 1) * 100.0, 4) if len(c) > 21 else 0.0
-        feats["entry_hour_utc"] = int(pd.Timestamp(frame["datetime"].iloc[-1]).hour)
-        if strat == "ny_n_break":
-            from crypto.strategies.indicators import anchored_vwap, ema
-
-            feats["dist_ema25_pct"] = round((price / float(ema(c, 25).iloc[-1]) - 1) * 100.0, 4)
-            feats["dist_vwap_pct"] = round((price / float(anchored_vwap(frame).iloc[-1]) - 1) * 100.0, 4)
-        else:
-            from index_ai.strategies.ichimoku import compute_ichimoku
-
-            row = compute_ichimoku(frame).iloc[-1]
-            if not pd.isna(row["cloud_top"]):
-                feats["dist_cloud_top_pct"] = round((price / float(row["cloud_top"]) - 1) * 100.0, 4)
-                feats["dist_kijun_pct"] = round((price / float(row["kijun"]) - 1) * 100.0, 4)
-    except Exception:
-        pass
-    return feats
+    return entry_snapshot(strat, sym, frame, side)
 
 
 def _live_wallet_usd(client: DeltaClient) -> float:
@@ -371,6 +344,13 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
         ev.update(event="wait", reason=f"sizing: {sr.reason}")
         return
 
+    snapshot = _entry_features(strat, sym, frame, side) if frame is not None else {}
+    g = ml_gate.check({"features": snapshot, "asset": sym})
+    if not g["allowed"]:
+        new_state["position"] = None
+        ev.update(event="wait", reason=f"ML gate: {g['reason']}")
+        return
+
     order_id = None
     entry_src = "signal"
     fill_size = sr.size
@@ -415,7 +395,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
         "stop_price": _stop_price(side, entry_px, _sl_pct(strat, s)),
         "opened_at": now_utc.isoformat(),
         "order_id": order_id,
-        "features": _entry_features(strat, sym, frame, side) if frame is not None else {},
+        "features": snapshot,
     }
     slot["position"] = pos
     ev.update(size=fill_size, margin_usd=pos["margin_total_usd"], notional_usd=pos["notional_usd"],
