@@ -199,6 +199,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                             _clog.info("crypto ML retrain: %s", r.get("reason") or "trained")
                         except Exception:
                             _clog.warning("crypto ML retrain failed", exc_info=True)
+                        try:
+                            from crypto.ml.optimize import retune_all
+
+                            await asyncio.to_thread(retune_all)
+                            _clog.info("crypto strategy auto-tune done")
+                        except Exception:
+                            _clog.warning("crypto strategy auto-tune failed", exc_info=True)
                     for e in events:
                         kind = e.get("event", "?")
                         if kind not in ("none", "hold", "wait"):

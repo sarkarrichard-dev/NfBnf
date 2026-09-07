@@ -32,7 +32,10 @@ class VpEdgeConfig:
 
 
 def _blank_state() -> dict[str, Any]:
-    return {"position": None}
+    return {"position": None, "_prof_n": 0, "_prof": None}
+
+
+_PROFILE_STRIDE = 3  # the profile barely moves bar-to-bar; recompute every N bars
 
 
 def step(
@@ -49,11 +52,18 @@ def step(
         ev.update(event="wait", reason=f"need {cfg.vp_lookback + 2} bars, have {len(candles)}")
         return st, ev
 
-    frame = candles.iloc[-cfg.vp_lookback:]
-    p = profile(frame, bins=cfg.vp_bins, va_pct=cfg.value_area_pct)
-    if p is None:
+    n = len(candles)
+    cached = st.get("_prof")
+    if not cached or n - int(st.get("_prof_n") or 0) >= _PROFILE_STRIDE:
+        pr = profile(candles.iloc[-cfg.vp_lookback:], bins=cfg.vp_bins, va_pct=cfg.value_area_pct)
+        cached = None if pr is None else {
+            "poc": pr.poc, "vah": pr.vah, "val": pr.val, "balanced": pr.balanced,
+        }
+        st["_prof"], st["_prof_n"] = cached, n
+    if not cached:
         ev.update(event="wait", reason="profile not ready")
         return st, ev
+    poc, vah, val, balanced = cached["poc"], cached["vah"], cached["val"], cached["balanced"]
 
     price = float(candles["close"].iloc[-1])
     ts = str(candles["datetime"].iloc[-1])
@@ -64,9 +74,9 @@ def step(
         side = pos["side"]
         reason = update_and_check(pos, price, cfg.trail)
         if not reason:
-            if side == "long" and price >= p.poc:
+            if side == "long" and price >= poc:
                 reason = "reached POC"
-            elif side == "short" and price <= p.poc:
+            elif side == "short" and price <= poc:
                 reason = "reached POC"
         if reason:
             st["position"] = None
@@ -75,20 +85,20 @@ def step(
             ev.update(event="hold", side=side, price=price)
         return st, ev
 
-    if not p.balanced:
+    if not balanced:
         ev.update(event="wait", reason="profile not balanced (D-shape only)")
         return st, ev
 
     # fade the edge back to POC — but only if price is at/just past it, not
     # running away (a breakout is not a mean-reversion setup)
-    if p.val * (1 - buf) <= price <= p.val:
+    if val * (1 - buf) <= price <= val:
         st["position"] = {"side": "long", "entry_price": price, "entry_time": ts}
         ev.update(event="enter", side="long", price=price,
-                  reason=f"long at value-area low {p.val:,.1f} (POC {p.poc:,.1f})", ts=ts)
-    elif p.vah <= price <= p.vah * (1 + buf):
+                  reason=f"long at value-area low {val:,.1f} (POC {poc:,.1f})", ts=ts)
+    elif vah <= price <= vah * (1 + buf):
         st["position"] = {"side": "short", "entry_price": price, "entry_time": ts}
         ev.update(event="enter", side="short", price=price,
-                  reason=f"short at value-area high {p.vah:,.1f} (POC {p.poc:,.1f})", ts=ts)
+                  reason=f"short at value-area high {vah:,.1f} (POC {poc:,.1f})", ts=ts)
     else:
         ev.update(event="wait", reason="price inside value area / too far past the edge")
     return st, ev
