@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
+import { fx } from '../lib/theme'
 import { Button } from './ui/Button'
 
 type KillSwitch = {
@@ -75,22 +76,23 @@ export function CryptoExecutionPanel() {
   return (
     <div
       className={cn(
-        'space-y-3 rounded-lg border p-3',
+        fx.panel,
+        'space-y-3 p-4',
         s?.live_orders_enabled
-          ? 'border-rose-500/60 bg-rose-950/20'
+          ? 'border-[var(--armed)]/70 bg-[var(--armed)]/10'
           : isLive
-            ? 'border-amber-500/50 bg-amber-950/15'
-            : 'border-slate-800',
+            ? 'border-[var(--warn)]/60 bg-[var(--warn)]/10'
+            : '',
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold text-slate-300">Mode</span>
-        <div className="inline-flex overflow-hidden rounded-lg border border-slate-700 text-xs">
+        <span className="text-xs font-semibold text-cyan-50/90">Mode</span>
+        <div className="inline-flex overflow-hidden rounded-lg border border-[var(--hair)] text-xs">
           <button
             type="button"
             disabled={busy || !isLive}
             onClick={() => setMode.mutate('PAPER')}
-            className={cn('px-3 py-1', !isLive ? 'bg-slate-700 text-slate-100' : 'text-slate-400')}
+            className={cn('px-3 py-1', !isLive ? 'bg-white/10 text-slate-100' : 'text-slate-400')}
           >
             Paper
           </button>
@@ -98,7 +100,10 @@ export function CryptoExecutionPanel() {
             type="button"
             disabled={busy || isLive || !s?.credentials_ready}
             onClick={() => setMode.mutate('LIVE')}
-            className={cn('px-3 py-1', isLive ? 'bg-rose-600 text-white' : 'text-slate-400')}
+            className={cn(
+              'px-3 py-1',
+              isLive ? 'bg-[var(--armed)] text-white' : 'text-slate-400',
+            )}
           >
             Live
           </button>
@@ -124,7 +129,7 @@ export function CryptoExecutionPanel() {
             <div className="flex flex-wrap items-center gap-2">
               <input
                 autoFocus
-                className="w-52 rounded-lg border border-slate-700 bg-slate-950/60 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-slate-500"
+                className="w-52 rounded-lg border border-[var(--hair)] bg-black/30 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-[var(--armed)]"
                 placeholder={s?.arm_phrase}
                 value={phrase}
                 onChange={(e) => setPhrase(e.target.value)}
@@ -151,7 +156,7 @@ export function CryptoExecutionPanel() {
             <dt className="text-slate-500">Server IP (whitelist on your Delta key)</dt>
             <dd className="font-mono text-slate-300">{s?.egress_ip ?? '—'}</dd>
             <dt className="text-slate-500">Kill switch</dt>
-            <dd className={cn('font-mono', ks?.tripped ? 'text-rose-300' : 'text-slate-300')}>
+            <dd className={cn('font-mono', ks?.tripped ? 'text-[var(--down)]' : 'text-slate-300')}>
               {ks?.tripped
                 ? `TRIPPED — ${ks.reason}`
                 : `${ks?.today_live_trades ?? 0} live trades · net $${(ks?.today_live_net_usd ?? 0).toFixed(2)} · limit $${ks?.max_daily_loss_usd ?? 50} / ${ks?.max_consec_losses ?? 3} losses`}

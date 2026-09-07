@@ -3,7 +3,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
+import { fx } from '../lib/theme'
+import { inr, num, ok, pnlCls, usd } from '../lib/cryptoFmt'
 import { Button } from './ui/Button'
+import { CollapsibleSection } from './CollapsibleSection'
+import { Sparkline } from './Sparkline'
 import { CryptoSetupPanel } from './CryptoSetupPanel'
 import { CryptoExecutionPanel } from './CryptoExecutionPanel'
 
@@ -13,6 +17,8 @@ type Status = {
   sizing: { deploy_usd: number; leverage: number; max_concurrent: number }
   session_ist: { start: string; end: string }
   ichimoku_tf: string
+  symbols: string[]
+  available_symbols: string[]
   half_spread_bps: Record<string, { measured: number | null; fallback: number | null }>
 }
 type DaySum = { trades: number; wins: number; losses: number; net_usd: number; net_inr: number }
@@ -50,25 +56,36 @@ type Trade = {
   exit_reason?: string
 }
 
-const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
-const num = (v: number | null | undefined, d = 2) =>
-  ok(v) ? v.toLocaleString(undefined, { maximumFractionDigits: d }) : '—'
-const money = (v: number | null | undefined) =>
-  ok(v) ? `${v >= 0 ? '+' : '−'}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '—'
-const rupees = (v: number | null | undefined) =>
-  ok(v) ? `${v >= 0 ? '+' : '−'}₹${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'
-const pnlCls = (v: number | null | undefined) =>
-  ok(v) && v > 0 ? 'text-emerald-300' : ok(v) && v < 0 ? 'text-rose-300' : 'text-slate-400'
+const blank: DaySum = { trades: 0, wins: 0, losses: 0, net_usd: 0, net_inr: 0 }
 
-function DayCard({ title, s }: { title: string; s: DaySum }) {
+/** Cumulative realised USD P&L, oldest → newest, for the equity sparkline. */
+function equityCurve(trades: Trade[]): number[] {
+  let running = 0
+  return trades.map((t) => (running += Number(t.pnl_usd) || 0))
+}
+
+function StatTile({
+  label,
+  value,
+  sub,
+  valueCls,
+  points,
+}: {
+  label: string
+  value: string
+  sub?: string
+  valueCls?: string
+  points?: number[]
+}) {
   return (
-    <div className="rounded-lg border border-slate-800 p-3">
-      <p className="text-xs font-semibold text-slate-300">{title}</p>
-      <p className={cn('mt-1 font-mono text-lg', pnlCls(s.net_usd))}>{money(s.net_usd)}</p>
-      <p className="text-xs text-slate-500">
-        {rupees(s.net_inr)} · {s.trades} trades · {s.wins}W/{s.losses}L
-      </p>
-    </div>
+    <article className={fx.card}>
+      <p className={fx.cardLabel}>{label}</p>
+      <p className={cn(fx.cardValue, valueCls)}>{value}</p>
+      {sub ? <p className="mt-0.5 text-[11px] text-slate-500 tabular-nums">{sub}</p> : null}
+      {points && points.length > 1 ? (
+        <Sparkline points={points} className="mt-1 w-full" height={16} />
+      ) : null}
+    </article>
   )
 }
 
@@ -108,55 +125,106 @@ export function CryptoPanel() {
   })
 
   const trades = journal.data?.trades ?? []
+  const equity = equityCurve(trades)
+  const picked = new Set(s?.symbols ?? [])
+  // union: every perp Delta lists, plus any already-picked symbol whose
+  // contract cache hasn't refreshed yet
+  const chipSymbols = [...new Set([...(s?.available_symbols ?? []), ...(s?.symbols ?? [])])].sort()
   const inputCls =
-    'w-24 rounded-lg border border-slate-700 bg-slate-950/60 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-slate-500'
+    'w-24 rounded-lg border border-[var(--hair)] bg-black/30 px-2 py-1 font-mono text-xs ' +
+    'text-slate-100 outline-none focus:border-[var(--acc)]'
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <p className="text-xs text-slate-500">
-        Delta Exchange · BTC / ETH perpetual futures. Paper by default; the Mode switch below
-        arms real orders.
+        Delta Exchange India · perpetual futures. Paper by default; the Mode switch below arms
+        real orders.
       </p>
 
       <CryptoExecutionPanel />
 
       {/* P&L summary */}
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-slate-800 p-3">
-          <p className="text-xs font-semibold text-slate-300">Open (unrealised)</p>
-          <p className={cn('mt-1 font-mono text-lg', pnlCls(positions.data?.open_unrealized_usd ?? 0))}>
-            {money(positions.data?.open_unrealized_usd ?? 0)}
-          </p>
-          <p className="text-xs text-slate-500">
-            {rupees(positions.data?.open_unrealized_inr ?? 0)} · {positions.data?.paper?.length ?? 0} position
-            {(positions.data?.paper?.length ?? 0) === 1 ? '' : 's'}
-          </p>
-        </div>
-        <DayCard title={`6 PM · ${day.data?.ny_session_date ?? ''}`} s={day.data?.ny_n_break ?? blank} />
-        <DayCard title={`Ichimoku · ${day.data?.utc_date ?? ''}`} s={day.data?.ichimoku ?? blank} />
+      <div className="grid gap-2 sm:grid-cols-3">
+        <StatTile
+          label="Open (unrealised)"
+          value={usd(positions.data?.open_unrealized_usd ?? 0)}
+          valueCls={pnlCls(positions.data?.open_unrealized_usd ?? 0)}
+          sub={`${inr(positions.data?.open_unrealized_inr ?? 0)} · ${positions.data?.paper?.length ?? 0} position${
+            (positions.data?.paper?.length ?? 0) === 1 ? '' : 's'
+          }`}
+        />
+        <StatTile
+          label={`6 PM · ${day.data?.ny_session_date ?? ''}`}
+          value={usd((day.data?.ny_n_break ?? blank).net_usd)}
+          valueCls={pnlCls((day.data?.ny_n_break ?? blank).net_usd)}
+          sub={`${inr((day.data?.ny_n_break ?? blank).net_inr)} · ${(day.data?.ny_n_break ?? blank).trades} trades · ${
+            (day.data?.ny_n_break ?? blank).wins
+          }W/${(day.data?.ny_n_break ?? blank).losses}L`}
+        />
+        <StatTile
+          label={`Ichimoku · ${day.data?.utc_date ?? ''}`}
+          value={usd((day.data?.ichimoku ?? blank).net_usd)}
+          valueCls={pnlCls((day.data?.ichimoku ?? blank).net_usd)}
+          sub={`${inr((day.data?.ichimoku ?? blank).net_inr)} · ${(day.data?.ichimoku ?? blank).trades} trades · ${
+            (day.data?.ichimoku ?? blank).wins
+          }W/${(day.data?.ichimoku ?? blank).losses}L`}
+          points={equity}
+        />
       </div>
 
       {/* controls */}
-      <div className="space-y-3 rounded-lg border border-slate-800 p-3">
+      <div className={cn(fx.panel, 'space-y-3 p-4')}>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-slate-300">Paper lane</span>
+          <span className="text-xs font-semibold text-cyan-50/90">Paper lane</span>
           <Button
             variant={s?.paper_enabled ? 'secondary' : 'primary'}
             onClick={() => cfg.mutate({ paper_enabled: !s?.paper_enabled })}
           >
             {s?.paper_enabled ? 'On — turn off' : 'Off — turn on'}
           </Button>
-          <LaneToggle
+          <Chip
             label="6 PM (NY N-Break)"
             on={!!s?.lanes.ny_n_break}
             onClick={() => cfg.mutate({ ny_n_break_enabled: !s?.lanes.ny_n_break })}
           />
-          <LaneToggle
+          <Chip
             label="Ichimoku"
             on={!!s?.lanes.ichimoku}
             onClick={() => cfg.mutate({ ichimoku_enabled: !s?.lanes.ichimoku })}
           />
         </div>
+
+        {/* symbol picker */}
+        <div className="space-y-1.5">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+            Trade symbols
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {chipSymbols.map((sym) => {
+              const on = picked.has(sym)
+              return (
+                <Chip
+                  key={sym}
+                  label={sym}
+                  on={on}
+                  showState={false}
+                  onClick={() => {
+                    const next = on ? [...picked].filter((x) => x !== sym) : [...picked, sym]
+                    if (!next.length) return toast.error('Keep at least one symbol')
+                    cfg.mutate({ symbols: next })
+                  }}
+                />
+              )
+            })}
+          </div>
+          {(s?.symbols?.length ?? 0) > 4 ? (
+            <p className="text-[11px] text-[var(--warn)]/80">
+              {s?.symbols.length} symbols × ~5 Delta calls per 60s scan — within Delta's quota,
+              but trims the scan headroom.
+            </p>
+          ) : null}
+        </div>
+
         <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
           <label className="flex items-center gap-2">
             Deploy $ / trade (min 100)
@@ -200,20 +268,23 @@ export function CryptoPanel() {
           {Object.entries(s?.half_spread_bps ?? {}).map(([sym, v], i) => (
             <span key={sym}>
               {i > 0 ? ' · ' : ''}
-              {sym} {v.measured != null ? `${v.measured.toFixed(2)} bps (measured)` : `${v.fallback ?? '?'} bps (est.)`}
+              {sym}{' '}
+              {v.measured != null
+                ? `${v.measured.toFixed(2)} bps (measured)`
+                : `${v.fallback ?? '?'} bps (est.)`}
             </span>
           ))}
         </p>
       </div>
 
       {/* open positions */}
-      <div>
-        <p className="mb-2 text-xs font-semibold text-slate-300">Open (paper)</p>
+      <section className={cn(fx.panel, 'p-4')}>
+        <h3 className="mb-3 text-sm font-semibold text-cyan-50/95">Open (paper)</h3>
         {positions.data?.paper?.length ? (
-          <div className="overflow-x-auto rounded-lg border border-slate-800">
-            <table className="w-full text-xs">
-              <thead className="text-slate-500">
-                <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left">
+          <div className="overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
+            <table className="min-w-full text-xs">
+              <thead className="text-cyan-200/50">
+                <tr className="border-b border-slate-800 [&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
                   <th>Asset</th>
                   <th>Strategy</th>
                   <th>Side</th>
@@ -225,23 +296,31 @@ export function CryptoPanel() {
               </thead>
               <tbody className="font-mono">
                 {positions.data.paper.map((p) => (
-                  <tr key={p.key} className="border-t border-slate-800 [&>td]:px-3 [&>td]:py-2">
+                  <tr
+                    key={p.key}
+                    className="border-b border-slate-800/60 text-slate-200 [&>td]:px-3 [&>td]:py-2"
+                  >
                     <td>{p.asset}</td>
                     <td className="text-slate-400">{p.strategy}</td>
-                    <td className={p.side === 'long' ? 'text-emerald-300' : 'text-rose-300'}>
+                    <td className={p.side === 'long' ? 'text-[var(--up)]' : 'text-[var(--down)]'}>
                       {p.side}
                     </td>
-                    <td>{p.size}</td>
-                    <td className="text-slate-400">
+                    <td className="tabular-nums">{p.size}</td>
+                    <td className="text-slate-400 tabular-nums">
                       ${num(p.entry_price)} → ${p.mark ? num(p.mark) : '—'}
                     </td>
-                    <td className={pnlCls(p.unrealized_usd)}>
-                      {money(p.unrealized_usd)} <span className="text-slate-600">{rupees(p.unrealized_inr)}</span>
+                    <td className={cn('tabular-nums', pnlCls(p.unrealized_usd))}>
+                      {usd(p.unrealized_usd)}{' '}
+                      <span className="text-slate-600">{inr(p.unrealized_inr)}</span>
                       {ok(p.unrealized_pct) && p.unrealized_pct !== 0 ? (
-                        <span className="text-slate-600"> ({p.unrealized_pct > 0 ? '+' : ''}{p.unrealized_pct}%)</span>
+                        <span className="text-slate-600">
+                          {' '}
+                          ({p.unrealized_pct > 0 ? '+' : ''}
+                          {p.unrealized_pct}%)
+                        </span>
                       ) : null}
                     </td>
-                    <td className="text-slate-400">
+                    <td className="text-slate-400 tabular-nums">
                       ${num(p.margin_total_usd)} · {num(p.leverage, 0)}x
                     </td>
                   </tr>
@@ -250,18 +329,18 @@ export function CryptoPanel() {
             </table>
           </div>
         ) : (
-          <p className="text-xs text-slate-600">No open paper positions.</p>
+          <p className="text-sm text-cyan-200/45">No open paper positions.</p>
         )}
-      </div>
+      </section>
 
       {/* journal */}
-      <div>
-        <p className="mb-2 text-xs font-semibold text-slate-300">Closed trades</p>
+      <section className={cn(fx.panel, 'p-4')}>
+        <h3 className="mb-3 text-sm font-semibold text-cyan-50/95">Closed trades</h3>
         {trades.length ? (
-          <div className="overflow-x-auto rounded-lg border border-slate-800">
-            <table className="w-full text-xs">
-              <thead className="text-slate-500">
-                <tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left">
+          <div className="max-h-[28rem] overflow-auto rounded-lg border border-[var(--hair)] bg-black/25">
+            <table className="min-w-full text-xs">
+              <thead className="sticky top-0 z-10 bg-slate-950/95 text-cyan-200/50">
+                <tr className="border-b border-slate-800 [&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
                   <th>Day</th>
                   <th>Asset</th>
                   <th>Strategy</th>
@@ -273,18 +352,21 @@ export function CryptoPanel() {
               </thead>
               <tbody className="font-mono">
                 {[...trades].reverse().map((t, i) => (
-                  <tr key={i} className="border-t border-slate-800 [&>td]:px-3 [&>td]:py-2">
+                  <tr
+                    key={i}
+                    className="border-b border-slate-800/60 text-slate-200 [&>td]:px-3 [&>td]:py-2"
+                  >
                     <td className="text-slate-500">{t.day}</td>
                     <td>{t.asset}</td>
                     <td className="text-slate-400">{t.strategy}</td>
-                    <td className={t.side === 'long' ? 'text-emerald-300' : 'text-rose-300'}>
+                    <td className={t.side === 'long' ? 'text-[var(--up)]' : 'text-[var(--down)]'}>
                       {t.side}
                     </td>
-                    <td className="text-slate-400">
+                    <td className="text-slate-400 tabular-nums">
                       ${num(t.entry_price)} → ${num(t.exit_price)}
                     </td>
-                    <td className={pnlCls(t.pnl_usd)}>
-                      {money(t.pnl_usd)} <span className="text-slate-600">{rupees(t.pnl_inr)}</span>
+                    <td className={cn('tabular-nums', pnlCls(t.pnl_usd))}>
+                      {usd(t.pnl_usd)} <span className="text-slate-600">{inr(t.pnl_inr)}</span>
                     </td>
                     <td className="text-slate-500">{t.exit_reason ?? ''}</td>
                   </tr>
@@ -293,18 +375,28 @@ export function CryptoPanel() {
             </table>
           </div>
         ) : (
-          <p className="text-xs text-slate-600">No closed trades yet.</p>
+          <p className="text-sm text-cyan-200/45">No closed trades yet.</p>
         )}
-      </div>
+      </section>
 
-      <CryptoSetupPanel />
+      <CollapsibleSection title="Delta connection" summary="keys · wallet · live quotes">
+        <CryptoSetupPanel />
+      </CollapsibleSection>
     </div>
   )
 }
 
-const blank: DaySum = { trades: 0, wins: 0, losses: 0, net_usd: 0, net_inr: 0 }
-
-function LaneToggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+function Chip({
+  label,
+  on,
+  onClick,
+  showState = true,
+}: {
+  label: string
+  on: boolean
+  onClick: () => void
+  showState?: boolean
+}) {
   return (
     <button
       type="button"
@@ -312,11 +404,12 @@ function LaneToggle({ label, on, onClick }: { label: string; on: boolean; onClic
       className={cn(
         'rounded-full border px-3 py-1 text-xs font-medium transition',
         on
-          ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200'
-          : 'border-slate-700 bg-slate-800/40 text-slate-400',
+          ? 'border-[var(--acc)]/40 bg-[var(--acc)]/15 text-[var(--acc)]'
+          : 'border-[var(--hair)] bg-white/[0.03] text-slate-400 hover:text-slate-200',
       )}
     >
-      {label}: {on ? 'on' : 'off'}
+      {label}
+      {showState ? `: ${on ? 'on' : 'off'}` : ''}
     </button>
   )
 }
