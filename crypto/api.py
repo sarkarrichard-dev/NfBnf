@@ -315,7 +315,19 @@ def crypto_mode(mode: str = Body(..., embed=True)) -> dict:
     os.environ["CRYPTO_TRADING_MODE"] = m
     if m == "PAPER":
         os.environ["CRYPTO_ALLOW_LIVE"] = "false"
+    _reset_reconcile_stamp()
     return {"trading_mode": m, "status": crypto_status()}
+
+
+def _reset_reconcile_stamp() -> None:
+    """Force a fresh position reconcile on the next live scan after any
+    mode/arm change."""
+    try:
+        st = journal.load_state()
+        if st.pop("_live_reconciled", None) is not None:
+            journal.save_state(st)
+    except OSError:
+        pass
 
 
 @router.post("/arm-live", include_in_schema=False)
@@ -333,6 +345,7 @@ def crypto_arm_live(
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         os.environ["CRYPTO_ALLOW_LIVE"] = "true"
+    _reset_reconcile_stamp()
     s = crypto_settings()
     return {
         "live_orders_enabled": s.live_orders_enabled,

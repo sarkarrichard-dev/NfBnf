@@ -141,7 +141,11 @@ class DeltaClient:
                     resp = client.request(m, url, headers=headers, content=payload or None)
             except httpx.HTTPError as exc:
                 last_exc = exc
-                if attempt >= _MAX_RETRIES:
+                # A transport error on a mutating call may mean the request DID
+                # reach Delta (response lost) — retrying would place a duplicate
+                # order. Only idempotent GETs are retried on transport failure;
+                # 429 (below) is safe to retry for any method — nothing ran.
+                if m != "GET" or attempt >= _MAX_RETRIES:
                     raise DeltaError(f"{m} {path}: {exc}") from exc
                 time.sleep(0.3 * (attempt + 1))
                 continue

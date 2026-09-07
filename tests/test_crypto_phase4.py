@@ -193,6 +193,9 @@ def live_lane(tmp_path, monkeypatch):
     monkeypatch.setattr(notify, "send", lambda *a, **k: None)
     monkeypatch.setattr(lanes.executor, "reconcile", lambda c: [])
     monkeypatch.setattr(lanes.executor, "live_gate", lambda s=None: (True, ""))
+    monkeypatch.setattr(lanes.executor, "position_state", lambda c, sym: "open")
+    monkeypatch.setattr(lanes.executor, "fill_report", lambda c, oid: (None, 0.0))
+    monkeypatch.setattr(lanes.executor, "fill_price", lambda c, oid: None)
     return monkeypatch
 
 
@@ -206,16 +209,45 @@ def test_live_entry_failure_records_no_position(live_lane):
     assert not journal.load_state().get("ny_n_break:BTCUSD", {}).get("position")
 
 
+def test_order_fills_but_fill_lookup_throws_still_records_position(live_lane):
+    # the order IS live on Delta — a failed /v2/fills read must not drop it
+    live_lane.setattr(lanes.executor, "place_entry", lambda *a, **k: {"order_id": "27:9"})
+
+    def boom(*a, **k):
+        raise ValueError("malformed fills row")
+
+    live_lane.setattr(lanes.executor, "fill_report", boom)
+    lanes.scan_crypto_paper()
+    pos = journal.load_state()["ny_n_break:BTCUSD"]["position"]
+    assert pos and pos["mode"] == "live" and pos["order_id"] == "27:9"
+    assert pos["entry_price_source"] == "signal"  # fell back, did not lose the position
+
+
+def test_position_closed_on_exchange_is_reaped(live_lane):
+    live_lane.setattr(lanes.executor, "place_entry", lambda *a, **k: {"order_id": "27:1"})
+    lanes.scan_crypto_paper()
+    assert journal.load_state()["ny_n_break:BTCUSD"]["position"]["mode"] == "live"
+
+    # bracket stop filled — Delta now shows flat, strategy still says "hold"
+    live_lane.setattr(lanes.executor, "position_state", lambda c, sym: "flat")
+    live_lane.setattr(lanes.market_data, "ticker", lambda sym, **k: {"mark_price": 58000.0})
+    events = lanes.scan_crypto_paper()
+    assert any(e.get("event") == "reaped" for e in events)
+    rows = journal.recent()
+    assert len(rows) == 1 and rows[0]["exit_reason"] == "closed on exchange"
+    assert journal.load_state()["ny_n_break:BTCUSD"]["position"] is None
+
+
 def test_live_round_trip_journals_real_fill(live_lane):
     live_lane.setattr(lanes.executor, "place_entry", lambda *a, **k: {"order_id": "27:1"})
     live_lane.setattr(lanes.executor, "place_exit", lambda *a, **k: {"order_id": "27:2"})
-    live_lane.setattr(
-        lanes.executor, "fill_price", lambda c, oid: 61234.0 if oid == "27:1" else 61999.0
-    )
+    live_lane.setattr(lanes.executor, "fill_report", lambda c, oid: (61234.0, 3.0))
+    live_lane.setattr(lanes.executor, "fill_price", lambda c, oid: 61999.0)
 
     lanes.scan_crypto_paper()  # opens live
     pos = journal.load_state()["ny_n_break:BTCUSD"]["position"]
     assert pos["mode"] == "live" and pos["entry_price"] == 61234.0 and pos["order_id"] == "27:1"
+    assert pos["entry_price_source"] == "fill"
 
     live_lane.setattr(lanes, "in_ny_window", lambda *a, **k: False)  # session end -> exit
     lanes.scan_crypto_paper()

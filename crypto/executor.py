@@ -106,6 +106,13 @@ def _place(client: DeltaClient, body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _coid(*parts: Any) -> str:
+    """Deterministic client_order_id so a transport-level retry is de-duped by
+    Delta rather than placing a second order. <= 40 chars."""
+    raw = "-".join(str(p) for p in parts if p is not None)
+    return raw.replace(" ", "").replace(":", "")[:40]
+
+
 def place_entry(
     client: DeltaClient,
     contract: Contract,
@@ -114,6 +121,7 @@ def place_entry(
     *,
     leverage: float,
     sl_price: float | None = None,
+    client_order_id: str | None = None,
 ) -> dict[str, Any]:
     """Market entry. Sets leverage first, then POST /v2/orders. Raises on failure."""
     if size < 1:
@@ -127,12 +135,17 @@ def place_entry(
         "order_type": "market_order",
         "time_in_force": "ioc",
     }
+    if client_order_id:
+        body["client_order_id"] = _coid(client_order_id)
     if sl_price and sl_price > 0:
         body["bracket_stop_loss_price"] = str(round(float(sl_price), 2))
     return _place(client, body)
 
 
-def place_exit(client: DeltaClient, contract: Contract, side: str, size: int) -> dict[str, Any]:
+def place_exit(
+    client: DeltaClient, contract: Contract, side: str, size: int,
+    *, client_order_id: str | None = None,
+) -> dict[str, Any]:
     """Reduce-only market order that closes a `side` position of `size` contracts."""
     body = {
         "product_id": contract.product_id,
@@ -143,7 +156,44 @@ def place_exit(client: DeltaClient, contract: Contract, side: str, size: int) ->
         "time_in_force": "ioc",
         "reduce_only": True,
     }
+    if client_order_id:
+        body["client_order_id"] = _coid(client_order_id)
     return _place(client, body)
+
+
+def position_state(client: DeltaClient, symbol: str) -> str:
+    """'open' | 'flat' | 'unknown' for `symbol` on Delta right now.
+    'unknown' means the API call failed — the caller must NOT treat that as flat."""
+    try:
+        for p in client.positions() or []:
+            if str(p.get("product_symbol")) == symbol:
+                return "open" if abs(float(p.get("size") or 0)) > 0 else "flat"
+        return "flat"
+    except Exception:
+        return "unknown"
+
+
+def fill_report(client: DeltaClient, order_id: str | None) -> tuple[float | None, float]:
+    """(size-weighted avg price, total filled size) for an order id. (None, 0) on failure."""
+    if not order_id:
+        return None, 0.0
+    raw = str(order_id).split(":")[-1]
+    try:
+        fills = client.signed("GET", "/v2/fills")
+    except DeltaError:
+        return None, 0.0
+    num = px = 0.0
+    for f in fills or []:
+        if isinstance(f, dict) and str(f.get("order_id")) == raw:
+            try:
+                q = abs(float(f.get("size") or 0))
+                p = float(f.get("price") or 0)
+            except (TypeError, ValueError):
+                continue
+            if q and p:
+                num += p * q
+                px += q
+    return (round(num / px, 2) if px else None), px
 
 
 def fill_price(client: DeltaClient, order_id: str | None) -> float | None:
