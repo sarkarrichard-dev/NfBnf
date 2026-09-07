@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
+import { usd0 } from '../lib/cryptoFmt'
 import { Button } from './ui/Button'
 
 type KillSwitch = {
@@ -29,12 +30,15 @@ type Status = {
   arm_phrase: string
   egress: Egress
   kill_switch: KillSwitch
+  sizing: { lots: number; leverage: number }
 }
+type LotRow = { symbol: string; margin_per_lot_usd: number | null }
+type Lots = { lots: number; table: LotRow[] }
 
 /**
- * Crypto paper -> live switch. Its own two locks and its own phrase
- * ("ARM CRYPTO LIVE"), completely separate from the index arm. Delta rejects
- * orders from a non-whitelisted IP, so the egress IP is shown here.
+ * Crypto Execution — mirrors the index ExecutionPanel: a sliding PAPER/LIVE
+ * pill, a LOTS stepper, and the arm strip. Its own two locks and its own phrase
+ * ("ARM CRYPTO LIVE"), separate from the index arm. Leverage is fixed at 100x.
  */
 export function CryptoExecutionPanel() {
   const qc = useQueryClient()
@@ -43,9 +47,15 @@ export function CryptoExecutionPanel() {
     queryFn: () => api<Status>('/api/crypto/status'),
     refetchInterval: 30_000,
   })
+  const lotsQ = useQuery({
+    queryKey: ['crypto', 'lots'],
+    queryFn: () => api<Lots>('/api/crypto/lots'),
+    refetchInterval: 60_000,
+  })
   const s = status.data
   const isLive = (s?.trading_mode ?? 'PAPER').toUpperCase() === 'LIVE'
   const armed = !!s?.live_armed
+  const lots = s?.sizing.lots ?? 1
   const [phrase, setPhrase] = useState('')
   const [arming, setArming] = useState(false)
 
@@ -77,60 +87,161 @@ export function CryptoExecutionPanel() {
     onError: (e: Error) => toast.error(e.message),
   })
 
+  const adjustLots = useMutation({
+    mutationFn: (n: number) =>
+      api('/api/crypto/config', { method: 'POST', body: JSON.stringify({ lots: n }) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['crypto'] }),
+    onError: (e: Error) => toast.error(e.message),
+  })
+
   const ks = s?.kill_switch
   const eg = s?.egress
   const busy = setMode.isPending || armLive.isPending
+  const bumpLots = (d: number) => {
+    const next = Math.min(50, Math.max(1, lots + d))
+    if (next !== lots && !adjustLots.isPending) adjustLots.mutate(next)
+  }
+
+  // total margin for the current lot count, summed over the symbols Delta prices
+  const totalMargin = (lotsQ.data?.table ?? []).reduce(
+    (a, r) => a + (r.margin_per_lot_usd ?? 0) * (lotsQ.data?.lots ?? lots),
+    0,
+  )
 
   return (
-    <div
+    <section
       className={cn(
         fx.panel,
-        'space-y-3 p-4',
+        'p-4',
         s?.live_orders_enabled
-          ? 'border-[var(--armed)]/70 bg-[var(--armed)]/10'
+          ? 'border-[var(--armed)]/70 bg-[var(--armed)]/[0.06]'
           : isLive
-            ? 'border-[var(--warn)]/60 bg-[var(--warn)]/10'
+            ? 'border-[var(--warn)]/60 bg-[var(--warn)]/[0.06]'
             : '',
       )}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold text-cyan-50/90">Mode</span>
-        <div className="inline-flex overflow-hidden rounded-lg border border-[var(--hair)] text-xs">
+      <h2 className="mb-3 text-sm font-semibold tracking-wide text-slate-200">Execution</h2>
+
+      <div className="flex flex-wrap items-start gap-x-8 gap-y-4">
+        {/* Paper / Live pill */}
+        <div>
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+            Trading mode
+          </p>
           <button
             type="button"
-            disabled={busy || !isLive}
-            onClick={() => setMode.mutate('PAPER')}
-            className={cn('px-3 py-1', !isLive ? 'bg-white/10 text-slate-100' : 'text-slate-400')}
-          >
-            Paper
-          </button>
-          <button
-            type="button"
-            disabled={busy || isLive || !s?.credentials_ready}
-            onClick={() => setMode.mutate('LIVE')}
+            role="switch"
+            aria-checked={isLive}
+            aria-label="Toggle between Paper and Live crypto trading"
+            disabled={busy || (!isLive && !s?.credentials_ready)}
+            onClick={() => {
+              if (busy) return
+              if (isLive) setMode.mutate('PAPER')
+              else setMode.mutate('LIVE')
+            }}
             className={cn(
-              'px-3 py-1',
-              isLive ? 'bg-[var(--armed)] text-white' : 'text-slate-400',
+              'relative flex h-9 w-[164px] items-center rounded-full border p-1 text-xs font-semibold transition-colors',
+              'disabled:cursor-not-allowed disabled:opacity-70',
+              isLive
+                ? armed
+                  ? 'border-[var(--armed)] bg-[var(--armed)]/20'
+                  : 'border-[var(--warn)]/70 bg-[var(--warn)]/15'
+                : 'border-[var(--acc)]/50 bg-[var(--acc)]/10',
             )}
           >
-            Live
+            <span
+              className={cn(
+                'absolute z-10 flex h-7 w-[76px] items-center justify-center rounded-full shadow transition-transform duration-200 ease-out motion-reduce:transition-none',
+                isLive
+                  ? armed
+                    ? 'translate-x-[80px] bg-[var(--armed)] text-white'
+                    : 'translate-x-[80px] bg-[var(--warn)] text-black'
+                  : 'translate-x-0 bg-[var(--acc)] text-[var(--acc-ink)]',
+              )}
+            >
+              {isLive ? 'LIVE' : 'PAPER'}
+            </span>
+            <span className="z-0 flex-1 text-center text-slate-500">Paper</span>
+            <span className="z-0 flex-1 text-center text-slate-500">Live</span>
           </button>
+          {isLive ? (
+            <p
+              className={cn(
+                'mt-1.5 text-xs',
+                armed ? 'font-semibold text-[var(--armed)]' : 'text-[var(--warn)]',
+              )}
+            >
+              {armed ? '● Real orders will be sent to Delta' : '○ Live mode — orders disarmed'}
+            </p>
+          ) : !s?.credentials_ready ? (
+            <p className="mt-1.5 text-xs text-slate-500">Add Delta keys to enable Live</p>
+          ) : null}
         </div>
-        {!s?.credentials_ready ? (
-          <span className="text-[11px] text-slate-500">add Delta keys first</span>
-        ) : null}
+
+        {/* Lots stepper */}
+        <div>
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+            Lots per trade
+          </p>
+          <div
+            className={cn(
+              'flex items-center gap-2 rounded-lg p-0.5 transition-shadow',
+              adjustLots.isPending && 'shadow-[0_0_0_1px_var(--acc)]',
+            )}
+          >
+            <Button
+              aria-label="Decrease lots"
+              disabled={lots <= 1 || adjustLots.isPending}
+              onClick={() => bumpLots(-1)}
+            >
+              −
+            </Button>
+            <strong
+              aria-live="polite"
+              className={cn(
+                'min-w-[2rem] text-center text-lg tabular-nums text-slate-50',
+                adjustLots.isPending && 'animate-pulse text-[var(--acc)]',
+              )}
+            >
+              {lots}
+            </strong>
+            <Button
+              aria-label="Increase lots"
+              disabled={lots >= 50 || adjustLots.isPending}
+              onClick={() => bumpLots(1)}
+            >
+              +
+            </Button>
+          </div>
+          <p className="mt-1 text-xs tabular-nums text-slate-500">
+            {totalMargin > 0
+              ? `≈ ${usd0(totalMargin)} margin @ 100x · ${lots} lot${lots === 1 ? '' : 's'} per symbol`
+              : `${lots} contract${lots === 1 ? '' : 's'} per symbol · 100x`}
+          </p>
+        </div>
       </div>
 
+      {/* Live arm / disarm strip */}
       {isLive ? (
-        <>
-          <p className="text-xs text-slate-300">
-            {s?.live_orders_enabled
-              ? '⚠ ARMED — strategy entries place real orders on Delta with real money.'
-              : 'Live mode on, disarmed. No real orders until you arm.'}
+        <div
+          className={cn(
+            'mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3',
+            armed
+              ? 'border-[var(--armed)]/60 bg-[var(--armed)]/10'
+              : 'border-[var(--warn)]/50 bg-[var(--warn)]/10',
+          )}
+        >
+          <p className="text-sm text-slate-100">
+            {armed
+              ? '⚠ Live orders ARMED — strategy entries go to Delta with real money.'
+              : 'Live mode is on but disarmed. No real orders until you arm.'}
           </p>
-
           {armed ? (
-            <Button variant="danger" pending={armLive.isPending} onClick={() => armLive.mutate({ disarm: true })}>
+            <Button
+              variant="danger"
+              pending={armLive.isPending}
+              onClick={() => armLive.mutate({ disarm: true })}
+            >
               Disarm
             </Button>
           ) : arming ? (
@@ -150,7 +261,13 @@ export function CryptoExecutionPanel() {
               >
                 Arm
               </Button>
-              <Button variant="ghost" onClick={() => { setArming(false); setPhrase('') }}>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setArming(false)
+                  setPhrase('')
+                }}
+              >
                 Cancel
               </Button>
             </div>
@@ -159,35 +276,37 @@ export function CryptoExecutionPanel() {
               Arm live orders
             </Button>
           )}
-
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-            <dt className="text-slate-500">Whitelist on your Delta key</dt>
-            <dd className="font-mono text-slate-300">
-              IPv4 {eg?.ipv4 ?? '—'}
-              {eg?.ipv6 ? <span className="text-slate-600"> · IPv6 {eg.ipv6}</span> : null}
-            </dd>
-            <dt className="text-slate-500">Delta sees</dt>
-            <dd
-              className={cn(
-                'font-mono',
-                eg?.delta_sees_ip ? 'text-[var(--down)]' : 'text-[var(--up)]',
-              )}
-            >
-              {eg?.delta_sees_ip
-                ? `${eg.delta_sees_ip} — not whitelisted; add this`
-                : eg?.forcing_ipv4
-                  ? 'IPv4 pinned — whitelist the IPv4 above'
-                  : 'ok'}
-            </dd>
-            <dt className="text-slate-500">Kill switch</dt>
-            <dd className={cn('font-mono', ks?.tripped ? 'text-[var(--down)]' : 'text-slate-300')}>
-              {ks?.tripped
-                ? `TRIPPED — ${ks.reason}`
-                : `${ks?.today_live_trades ?? 0} live trades · net $${(ks?.today_live_net_usd ?? 0).toFixed(2)} · limit $${ks?.max_daily_loss_usd ?? 50} / ${ks?.max_consec_losses ?? 3} losses`}
-            </dd>
-          </dl>
-        </>
+        </div>
       ) : null}
-    </div>
+
+      {isLive ? (
+        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+          <dt className="text-slate-500">Whitelist on your Delta key</dt>
+          <dd className="font-mono text-slate-300">
+            IPv4 {eg?.ipv4 ?? '—'}
+            {eg?.ipv6 ? <span className="text-slate-600"> · IPv6 {eg.ipv6}</span> : null}
+          </dd>
+          <dt className="text-slate-500">Delta sees</dt>
+          <dd
+            className={cn(
+              'font-mono',
+              eg?.delta_sees_ip ? 'text-[var(--down)]' : 'text-[var(--up)]',
+            )}
+          >
+            {eg?.delta_sees_ip
+              ? `${eg.delta_sees_ip} — not whitelisted; add this`
+              : eg?.forcing_ipv4
+                ? 'IPv4 pinned — whitelist the IPv4 above'
+                : 'ok'}
+          </dd>
+          <dt className="text-slate-500">Kill switch</dt>
+          <dd className={cn('font-mono', ks?.tripped ? 'text-[var(--down)]' : 'text-slate-300')}>
+            {ks?.tripped
+              ? `TRIPPED — ${ks.reason}`
+              : `${ks?.today_live_trades ?? 0} live trades · net $${(ks?.today_live_net_usd ?? 0).toFixed(2)} · limit $${ks?.max_daily_loss_usd ?? 50} / ${ks?.max_consec_losses ?? 3} losses`}
+          </dd>
+        </dl>
+      ) : null}
+    </section>
   )
 }

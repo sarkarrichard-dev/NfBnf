@@ -15,6 +15,12 @@ type Status = {
   paper_enabled: boolean
   lanes: { ny_n_break: boolean; ichimoku: boolean }
   sizing: { lots: number; deploy_cap_usd: number; leverage: number; max_concurrent: number }
+  trailing: {
+    stop_pnl_pct: number
+    ratchet_step_pnl_pct: number
+    tp_trigger_pnl_pct: number
+    peak_trail_pnl_pct: number
+  }
   session_ist: { start: string; end: string }
   ichimoku_tf: string
   symbols: string[]
@@ -135,18 +141,14 @@ export function CryptoPanel() {
   })
 
   const s = status.data
-  const [lots, setLots] = useState('')
   const [cap, setCap] = useState('')
-  const [lev, setLev] = useState('')
 
   const cfg = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       api('/api/crypto/config', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       toast.success('Saved — restart the server to apply')
-      setLots('')
       setCap('')
-      setLev('')
       void qc.invalidateQueries({ queryKey: ['crypto'] })
     },
     onError: (e: Error) => toast.error(e.message),
@@ -240,59 +242,46 @@ export function CryptoPanel() {
           ) : null}
         </div>
 
-        {/* sizing — universal lot count */}
-        <div className="flex flex-wrap items-end gap-4 text-xs text-slate-400">
-          <label className="flex flex-col gap-1">
-            <span>Lots (universal — N contracts per symbol)</span>
-            <input
-              className={inputCls}
-              inputMode="numeric"
-              placeholder={num(s?.sizing.lots, 0)}
-              value={lots}
-              onChange={(e) => setLots(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>Leverage</span>
-            <input
-              className={inputCls}
-              inputMode="decimal"
-              placeholder={num(s?.sizing.leverage, 0)}
-              value={lev}
-              onChange={(e) => setLev(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span>Margin cap $ / trade (blank = off)</span>
-            <input
-              className={inputCls}
-              inputMode="decimal"
-              placeholder={s?.sizing.deploy_cap_usd ? num(s.sizing.deploy_cap_usd, 0) : 'none'}
-              value={cap}
-              onChange={(e) => setCap(e.target.value)}
-            />
-          </label>
+        {/* exit rule — read-only */}
+        {s?.trailing ? (
+          <p className="text-[11px] text-slate-500">
+            Exit: stop −{s.trailing.stop_pnl_pct}% P&L, ratchets +
+            {s.trailing.ratchet_step_pnl_pct}% for every +{s.trailing.ratchet_step_pnl_pct}% gained ·
+            trailing profit from +{s.trailing.tp_trigger_pnl_pct}%, then floor tracks peak −
+            {s.trailing.peak_trail_pnl_pct}% · window {s?.session_ist.start}–{s?.session_ist.end} IST
+          </p>
+        ) : null}
+
+        {/* minimum capital per instrument */}
+        <div className="space-y-1.5">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+            Minimum capital per instrument · {s?.sizing.lots ?? 1} lot
+            {(s?.sizing.lots ?? 1) === 1 ? '' : 's'} @ 100x
+          </span>
+          <LotTable rows={lotsQ.data?.table ?? []} lots={lotsQ.data?.lots ?? s?.sizing.lots ?? 1} />
+        </div>
+
+        {/* optional margin cap */}
+        <label className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+          Margin cap $ / trade (blank = off, currently{' '}
+          {s?.sizing.deploy_cap_usd ? `$${num(s.sizing.deploy_cap_usd, 0)}` : 'off'})
+          <input
+            className={inputCls}
+            inputMode="decimal"
+            placeholder="none"
+            value={cap}
+            onChange={(e) => setCap(e.target.value)}
+          />
           <Button
             variant="secondary"
             pending={cfg.isPending}
-            disabled={!lots && !lev && !cap}
-            onClick={() =>
-              cfg.mutate({
-                ...(lots ? { lots: Number(lots) } : {}),
-                ...(lev ? { leverage: Number(lev) } : {}),
-                ...(cap ? { deploy_cap_usd: Number(cap) } : {}),
-              })
-            }
+            disabled={!cap}
+            onClick={() => cfg.mutate({ deploy_cap_usd: Number(cap) })}
           >
-            Save
+            Set
           </Button>
-          <span className="text-slate-600">
-            window {s?.session_ist.start}–{s?.session_ist.end} IST · Ichimoku {s?.ichimoku_tf}
-          </span>
-        </div>
+        </label>
 
-        {/* what one lot costs, per symbol */}
-        <LotTable rows={lotsQ.data?.table ?? []} />
         <p className="text-[11px] text-slate-600">
           spread cost:{' '}
           {Object.entries(s?.half_spread_bps ?? {}).map(([sym, v], i) => (
@@ -533,8 +522,12 @@ function LearningRow({ ml }: { ml: NonNullable<Status['ml']> }) {
   )
 }
 
-function LotTable({ rows }: { rows: LotRow[] }) {
+function LotTable({ rows, lots }: { rows: LotRow[]; lots: number }) {
   if (!rows.length) return null
+  const usdInr = (() => {
+    const r = rows.find((x) => ok(x.margin_per_lot_usd) && ok(x.margin_per_lot_inr) && x.margin_per_lot_usd)
+    return r ? (r.margin_per_lot_inr as number) / (r.margin_per_lot_usd as number) : 0
+  })()
   return (
     <div className="overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
       <table className="min-w-full text-xs">
@@ -543,33 +536,40 @@ function LotTable({ rows }: { rows: LotRow[] }) {
             <th>Symbol</th>
             <th>1 lot =</th>
             <th>Notional / lot</th>
-            <th>Margin / lot ($)</th>
-            <th>Margin / lot (₹)</th>
+            <th>Min capital ({lots} lot{lots === 1 ? '' : 's'})</th>
           </tr>
         </thead>
         <tbody className="font-mono">
-          {rows.map((r) => (
-            <tr
-              key={r.symbol}
-              className="border-b border-slate-800/60 text-slate-200 [&>td]:px-3 [&>td]:py-2"
-            >
-              <td>{r.symbol}</td>
-              <td className="tabular-nums text-slate-400">
-                {ok(r.coin_per_lot) ? `${r.coin_per_lot} ${r.symbol.replace(/USD.?$/, '')}` : '—'}
-              </td>
-              <td className="tabular-nums text-slate-400">{usd0(r.notional_per_lot_usd)}</td>
-              <td className="tabular-nums">
-                {usd0(r.margin_per_lot_usd)}
-                {r.source === 'delta' ? (
-                  <span className="text-slate-600"> · Delta</span>
-                ) : null}
-              </td>
-              <td className="tabular-nums">
-                {inr0(r.margin_per_lot_inr)}
-                {r.note ? <span className="text-[var(--warn)]/80"> · {r.note}</span> : null}
-              </td>
-            </tr>
-          ))}
+          {rows.map((r) => {
+            const minUsd = ok(r.margin_per_lot_usd) ? r.margin_per_lot_usd * lots : null
+            return (
+              <tr
+                key={r.symbol}
+                className="border-b border-slate-800/60 text-slate-200 [&>td]:px-3 [&>td]:py-2"
+              >
+                <td>{r.symbol}</td>
+                <td className="tabular-nums text-slate-400">
+                  {ok(r.coin_per_lot) ? `${r.coin_per_lot} ${r.symbol.replace(/USD.?$/, '')}` : '—'}
+                </td>
+                <td className="tabular-nums text-slate-400">{usd0(r.notional_per_lot_usd)}</td>
+                <td className="tabular-nums">
+                  {ok(minUsd) ? (
+                    <>
+                      {usd0(minUsd)}{' '}
+                      <span className="text-slate-600">
+                        {inr0(usdInr ? minUsd * usdInr : null)}
+                      </span>
+                      {r.source === 'delta' ? (
+                        <span className="text-slate-600"> · Delta</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-[var(--warn)]/80">— · {r.note || 'no mark'}</span>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
