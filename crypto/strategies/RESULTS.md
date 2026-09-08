@@ -87,17 +87,32 @@ Asian afternoon). **Exit:** the shared P&L trailing engine (same `TrailConfig`
 as the other two lanes), a 5m close through the far side of the entry gap, or
 session end.
 
-## Backtest — defaults, 90 days, BTCUSD / ETHUSD / SOLUSD
+## Backtest — defaults, 90 days, BTCUSD / ETHUSD / SOLUSD / PAXGUSD
 
-_Pending — `python -m crypto.backtest --days 90 --strategy fvg_scalp` running;
-fill the table + the auto-tune result before deciding whether it stays enabled._
+| symbol | trades | net USD | win rate |
+|---|---:|---:|---:|
+| BTCUSD | 224 | **−$547** | 25% |
+| ETHUSD | 218 | **−$146** | 22% |
+| SOLUSD | 220 | **−$766** | 26% |
+| PAXGUSD | 163 | **−$23** | 18% |
+| **total** | **825** | **−$1,483** | 23% |
+
+~9 trades/day across four symbols, `avg win $3.70` vs `avg loss −$3.47` — a
+symmetric ~1:1 payoff at a 23% hit rate, EV ≈ −$1.8/trade. **5× better than
+`candle_renko` (−$7,605) and far better than the video strategies** — the FVG +
+impulse + structure + session filters genuinely cut the trade count (9/day vs
+candle_renko's 40) and squared up the payoff — but the win rate is still too low
+to clear friction. Same structural verdict as everything else on the 5m frame.
+
+Auto-tune (`optimize_one("fvg_scalp", days=90)`): _running — add OOS result._
 
 ## Status
 
-`CRYPTO_FVG_SCALP_ENABLED` defaults `true` — it runs in the **paper** lane.
-**Do not arm crypto live** until this table is filled and the walk-forward OOS
-net is stably positive across ≥ 2 symbols (the standing gate). `retune_all()`
-tunes it nightly via `SEARCH_SPACE["fvg_scalp"]`.
+`CRYPTO_FVG_SCALP_ENABLED` defaults `true` — it runs in the **paper** lane
+only, as the third strategy Richard asked for. **Do not arm crypto live**: on
+this measurement it bleeds ~$1.8/trade. It stays paper until the walk-forward
+OOS net is stably positive across ≥ 2 symbols (the standing gate).
+`retune_all()` tunes it nightly via `SEARCH_SPACE["fvg_scalp"]`.
 
 The live crypto strategies are now **`ny_n_break`** (6 PM), **`ichimoku`**, and
 **`fvg_scalp`** (paper only until it clears the cost floor).
