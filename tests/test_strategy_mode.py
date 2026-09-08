@@ -135,3 +135,32 @@ def test_route_auto_sideways_no_iron_condor(monkeypatch) -> None:
     assert regime.day_bias == "SIDEWAYS"
     assert signal.action != "SELL_IRON_CONDOR"
     assert signal.strategy_mode != "cpr_sideways"
+
+
+def test_tape_veto_blocks_bull_put_when_the_day_is_selling_off(monkeypatch) -> None:
+    # The BANKNIFTY 2026-09-08 loss: CPR read TRENDING_BULL off a prior-day pivot,
+    # the 1m EMA flickered bull, and a bull-put spread fired while price fell all
+    # session. With the tape (candle structure + Supertrend) pointing DOWN, the
+    # bullish credit must be vetoed.
+    for k in ("SUPERTREND_PERIOD", "SUPERTREND_MULTIPLIER", "CREDIT_MIN_VOLUME_RATIO",
+              "CREDIT_VOLUME_LOOKBACK_BARS"):
+        monkeypatch.delenv(k, raising=False)
+    reload_strategy_params()
+    frame = _downtrend_frame()
+    action, reason, mode = pick_auto_credit(
+        _regime("TRENDING_BULL"), {"aligned": "bull"}, ema_fast=8, ema_slow=20, frame=frame
+    )
+    assert action is None
+    assert mode == "conflict"
+    assert "sell puts into it" in reason
+
+    # mirror: a bear-call credit is vetoed on a clean rally
+    up = _downtrend_frame()
+    up["close"] = up["close"][::-1].to_numpy()
+    up["open"] = up["close"]
+    up["high"] = up["close"] + 1.0
+    up["low"] = up["close"] - 1.0
+    action2, reason2, mode2 = pick_auto_credit(
+        _regime("TRENDING_BEAR"), {"aligned": "bear"}, ema_fast=8, ema_slow=20, frame=up
+    )
+    assert action2 is None and mode2 == "conflict" and "sell calls into it" in reason2
