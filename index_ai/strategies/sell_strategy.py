@@ -125,9 +125,18 @@ def evaluate_sell_signal(
     if not action:
         naked, naked_reason = _naked_at_cpr_boundary(regime, price, allow_naked=allow_naked)
         if naked and cross.get("cross"):
-            action = naked
-            reason = naked_reason
-            mode = "cpr_naked"
+            # same tape veto pick_auto_credit applies — never let a vetoed hedged
+            # spread fall through to an *unhedged* short in the same direction
+            from index_ai.strategies.candlestick_sr import intraday_candle_trend
+
+            tape = intraday_candle_trend(df, lookback=15)
+            opposed = (naked == "SELL_ATM_PUT" and tape == "DOWN") or (
+                naked == "SELL_ATM_CALL" and tape == "UP"
+            )
+            if not opposed:
+                action = naked
+                reason = naked_reason
+                mode = "cpr_naked"
 
     if not action:
         return StrategySignal(

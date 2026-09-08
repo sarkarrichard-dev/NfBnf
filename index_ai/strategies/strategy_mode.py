@@ -58,17 +58,20 @@ def pick_auto_credit(
     _tape = intraday_candle_trend(frame, lookback=15) if frame is not None else "RANGE"
 
     def _tape_veto(action: str | None) -> str | None:
-        """Reason string if the tape opposes the credit direction, else None.
-        Opposes = the candle structure AND the Supertrend both point the other
-        way (either alone can be noise; both agreeing is a real move)."""
-        if action == "SELL_BULL_PUT_SPREAD" and _tape == "DOWN" and _st_dir == -1:
+        """Reason string if the intraday tape opposes the credit direction, else
+        None. ``intraday_candle_trend`` is already the deliberately-smoothed
+        HH/HL-vs-LH/LL read; the cost of a false veto is one marginal credit
+        skipped (every tested credit config is net-negative — strategy-findings),
+        the cost of a false pass is real rupees the wrong way, so it vetoes on
+        the structure alone rather than waiting for Supertrend to also agree."""
+        if action == "SELL_BULL_PUT_SPREAD" and _tape == "DOWN":
             return (
-                "AUTO: bull-put credit blocked — 1m structure DOWN + Supertrend down; "
+                "AUTO: bull-put credit blocked — 1m structure is DOWN; "
                 "the day is selling off, don't sell puts into it."
             )
-        if action == "SELL_BEAR_CALL_SPREAD" and _tape == "UP" and _st_dir == 1:
+        if action == "SELL_BEAR_CALL_SPREAD" and _tape == "UP":
             return (
-                "AUTO: bear-call credit blocked — 1m structure UP + Supertrend up; "
+                "AUTO: bear-call credit blocked — 1m structure is UP; "
                 "the day is rallying, don't sell calls into it."
             )
         return None
