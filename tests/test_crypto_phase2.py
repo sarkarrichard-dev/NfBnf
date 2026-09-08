@@ -8,7 +8,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from crypto import journal, lanes, notify, session
+from crypto import journal, lanes, session
 from crypto.delta.products import Contract
 from crypto.sizing import size_position
 from crypto.strategies import ichimoku as ichi
@@ -180,11 +180,6 @@ def paper_env(tmp_path, monkeypatch):
     }
     monkeypatch.setattr(lanes.products, "all_contracts", lambda client=None: contracts)
 
-    opened: list = []
-    closed: list = []
-    monkeypatch.setattr(notify, "opened", lambda p: opened.append(p))
-    monkeypatch.setattr(notify, "closed", lambda r: closed.append(r))
-    monkeypatch.setattr(notify, "day_summary", lambda *a, **k: None)
     monkeypatch.setattr(lanes.charges, "sample_spread", lambda *a, **k: None)
     monkeypatch.setattr(lanes.market_data, "depth", lambda *a, **k: {})
     # a 5m frame whose last *closed* bar (after the forming bar is dropped) is a
@@ -207,7 +202,7 @@ def paper_env(tmp_path, monkeypatch):
         }
     )
     # DeltaClient with no creds → _fx_rate falls back to CRYPTO_USDINR
-    return {"opened": opened, "closed": closed, "df5": df5}
+    return {"df5": df5}
 
 
 def test_lane_opens_and_journals_a_paper_trade(paper_env, monkeypatch):
@@ -228,7 +223,6 @@ def test_lane_opens_and_journals_a_paper_trade(paper_env, monkeypatch):
 
     events = lanes.scan_crypto_paper()
     assert any(e.get("event") == "enter" and e.get("asset") == "BTCUSD" for e in events)
-    assert len(paper_env["opened"]) == 1
     st = journal.load_state()
     assert st["ny_n_break:BTCUSD"]["position"]["side"] == "long"
     assert st["ny_n_break:BTCUSD"]["position"]["size"] >= 1
@@ -242,7 +236,6 @@ def test_lane_opens_and_journals_a_paper_trade(paper_env, monkeypatch):
     assert row["strategy"] == "ny_n_break" and row["asset"] == "BTCUSD"
     assert "pnl_usd" in row and "pnl_inr" in row and row["fx_usdinr"] == 88.0
     assert journal.load_state()["ny_n_break:BTCUSD"]["position"] is None
-    assert len(paper_env["closed"]) == 1
 
     # simulate a crash between the journal append and the state save: both the
     # lane position and the strategy position come back. Next scan must NOT

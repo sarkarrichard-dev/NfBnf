@@ -77,7 +77,6 @@ class ScannerState:
     executions: int = 0
     pre_open_brief_date: str | None = None
     pre_open_brief: dict[str, Any] | None = None
-    pre_open_alert_date: str | None = None
     last_reconcile: dict[str, Any] | None = None
     market_context: dict[str, Any] | None = None
     last_spread_sample: dict[str, Any] | None = None
@@ -477,18 +476,6 @@ async def _run_pre_open_brief_if_due(client: DhanClient, cfg: AppSettings) -> No
         confidence_bump=brief.get("confidence_bump"),
         notes=brief.get("notes"),
     )
-
-    # One Telegram pre-open read near 9:20, once the window's data has settled.
-    from datetime import time as _time
-
-    if now_ist().time() >= _time(9, 18) and _state.pre_open_alert_date != today_ist_date():
-        _state.pre_open_alert_date = today_ist_date()
-        try:
-            from index_ai.notify import pre_open
-
-            pre_open(brief)
-        except Exception:
-            pass
 
 
 async def _scan_index(

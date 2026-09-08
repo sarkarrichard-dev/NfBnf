@@ -220,12 +220,6 @@ def run_eod() -> dict[str, Any]:
 
         dr = build_day_review(refresh=True)
         report["day_review"] = {"summary": dr["summary"], "review": dr["review"]}
-        try:
-            from index_ai.notify import day_summary
-
-            day_summary(dr["summary"])
-        except Exception:
-            pass
     except Exception as exc:
         report["day_review"] = {"error": str(exc)[:200]}
 

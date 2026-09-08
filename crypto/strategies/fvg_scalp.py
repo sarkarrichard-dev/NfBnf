@@ -20,7 +20,7 @@ structure, and an IST session window (skip the dead Asian afternoon).
 
 ``step(symbol, candles, *, state, cfg)`` — ``candles`` is the 5m frame; the 15m
 frame is derived inside. Pure: returns ``(state, event)``. The lane owns sizing,
-journalling and Telegram, same as the other simple strategies.
+journalling, same as the other simple strategies.
 """
 
 from __future__ import annotations

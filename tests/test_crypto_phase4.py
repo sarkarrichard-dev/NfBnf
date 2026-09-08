@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import pytest
 
-from crypto import executor, journal, lanes, live, notify
+from crypto import executor, journal, lanes, live
 from crypto.config import crypto_settings
 from crypto.delta.products import Contract
 
@@ -112,7 +112,6 @@ def test_live_gate_disarms_on_kill_switch(tmp_path, monkeypatch):
     monkeypatch.setattr(journal, "JOURNAL_PATH", tmp_path / "j.jsonl")
     disarmed = {}
     monkeypatch.setattr(executor, "disarm_crypto_live", lambda: disarmed.setdefault("hit", True))
-    monkeypatch.setattr("crypto.notify.alert", lambda *a, **k: None)
     today = datetime.now(timezone.utc).date().isoformat()
     for _ in range(3):
         journal.journal({"mode": "live", "closed_at": f"{today}T10:00:00", "pnl_usd": -5.0})
@@ -131,7 +130,6 @@ def test_reconcile_flags_mismatch_without_trading(tmp_path, monkeypatch):
     journal.save_state(
         {"ny_n_break:BTCUSD": {"position": {"asset": "BTCUSD", "side": "long", "mode": "live"}}}
     )
-    monkeypatch.setattr("crypto.notify.alert", lambda *a, **k: None)
     issues = executor.reconcile(_Client(positions=[]))  # Delta shows flat
     assert any("Delta shows FLAT" in i for i in issues)
 
@@ -200,9 +198,6 @@ def live_lane(tmp_path, monkeypatch):
     monkeypatch.setattr(lanes, "in_ny_window", lambda *a, **k: True)
     monkeypatch.setattr(lanes, "ny_session_date", lambda *a, **k: "2026-09-07")
     monkeypatch.setattr(lanes, "_live_wallet_usd", lambda c: 5000.0)
-    monkeypatch.setattr(notify, "opened", lambda p: None)
-    monkeypatch.setattr(notify, "closed", lambda r: None)
-    monkeypatch.setattr(notify, "send", lambda *a, **k: None)
     monkeypatch.setattr(lanes.executor, "reconcile", lambda c: [])
     monkeypatch.setattr(lanes.executor, "live_gate", lambda s=None: (True, ""))
     monkeypatch.setattr(lanes.executor, "position_state", lambda c, sym: "open")

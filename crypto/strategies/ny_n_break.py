@@ -2,7 +2,7 @@
 
 5-minute entries inside the IST window, 15-minute opposite-N exit, max 3 trades
 per session. Pure: ``step`` reads the candles + a state dict and returns
-``(state, event)``. The lane owns sizing, journaling and Telegram.
+``(state, event)``. The lane owns sizing and journaling.
 """
 
 from __future__ import annotations
