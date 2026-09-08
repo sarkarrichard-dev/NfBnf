@@ -15,6 +15,7 @@ from typing import Any
 
 import pandas as pd
 
+from crypto._util import num as _f
 from crypto.delta.client import DeltaClient
 
 logger = logging.getLogger(__name__)
@@ -32,13 +33,6 @@ _CHUNK_DAYS = {
 
 _TTL = 5.0
 _cache: dict[str, tuple[float, Any]] = {}
-
-
-def _f(v: Any, default: float = 0.0) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return default
 
 
 def _cached(key: str, ttl: float, produce):

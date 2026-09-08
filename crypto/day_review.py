@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from crypto._util import num as _num
 from crypto.config import CRYPTO_MEMORY
 from crypto.journal import recent
 
@@ -84,6 +86,7 @@ _EXIT_BUCKETS = (
     ("trailing stop", "trailing stop"),
     ("session end", "session end"),
     ("cloud re-entry", "cloud re-entry"),
+    ("supertrend", "trend flip"),
     ("15m", "structural signal"),
     ("N-break", "structural signal"),
     ("inverted-N", "structural signal"),
@@ -104,13 +107,6 @@ def _bucket_exit(reason: str | None) -> str:
     return "other"
 
 
-def _num(v: Any) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     closed = len(rows)
     if not closed:
@@ -119,9 +115,7 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "how_trades_ended": {}, "by_strategy": {}}
     wins = sum(1 for r in rows if _num(r.get("pnl_usd")) > 0)
     losses = sum(1 for r in rows if _num(r.get("pnl_usd")) < 0)
-    ends: dict[str, int] = {}
-    for r in rows:
-        ends[_bucket_exit(r.get("exit_reason"))] = ends.get(_bucket_exit(r.get("exit_reason")), 0) + 1
+    ends = Counter(_bucket_exit(r.get("exit_reason")) for r in rows)
     by_strat: dict[str, dict[str, Any]] = {}
     for r in rows:
         k = str(r.get("strategy") or "?")
@@ -140,7 +134,7 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "win_rate": round(wins / closed, 3),
         "net_usd": round(sum(_num(r.get("pnl_usd")) for r in rows), 4),
         "net_inr": round(sum(_num(r.get("pnl_inr")) for r in rows), 2),
-        "how_trades_ended": dict(sorted(ends.items(), key=lambda kv: -kv[1])),
+        "how_trades_ended": dict(ends.most_common()),
         "by_strategy": by_strat,
         "fee_bled_trades": fee_bleed,
         "best_trade": {"asset": best.get("asset"), "strategy": best.get("strategy"),

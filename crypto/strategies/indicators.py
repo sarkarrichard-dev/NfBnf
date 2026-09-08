@@ -50,6 +50,14 @@ def bollinger(series: pd.Series, length: int, dev: float) -> tuple[pd.Series, pd
     return mid, mid + dev * sd, mid - dev * sd
 
 
+def atr(df: pd.DataFrame, length: int) -> pd.Series:
+    """Wilder ATR (RMA of true range). Needs high/low/close columns."""
+    h, low, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
+    pc = c.shift(1)
+    tr = pd.concat([h - low, (h - pc).abs(), (low - pc).abs()], axis=1).max(axis=1)
+    return tr.ewm(alpha=1.0 / length, adjust=False).mean()
+
+
 def cross_dir(a: pd.Series, b: pd.Series) -> int:
     """+1 if ``a`` closed the last bar crossing above ``b``, -1 if below, else 0."""
     if len(a) < 2 or len(b) < 2:
@@ -98,4 +106,6 @@ if __name__ == "__main__":  # self-check
     assert cross_dir(pd.Series([1.0, 3.0]), pd.Series([2.0, 2.0])) == 1
     assert cross_dir(pd.Series([3.0, 1.0]), pd.Series([2.0, 2.0])) == -1
     assert cross_dir(pd.Series([1.0, 1.5]), pd.Series([2.0, 2.0])) == 0
+    a = atr(df, 3)
+    assert a.iloc[-1] > 0 and len(a) == 10
     print("crypto.strategies.indicators self-check ok")

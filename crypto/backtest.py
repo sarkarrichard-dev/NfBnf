@@ -25,19 +25,34 @@ from crypto.delta import market_data, products
 from crypto.delta.products import Contract
 from crypto.session import in_ny_window, ny_session_date
 from crypto.sizing import size_position
-from crypto.strategies import bb_reversal, ema_jaguar, ichimoku as ichi, ny_n_break as nb, vp_edge
+from crypto.strategies import (
+    bb_reversal,
+    candle_renko,
+    ema_jaguar,
+    ichimoku as ichi,
+    ny_n_break as nb,
+    vp_edge,
+)
 from crypto.strategies.trailing import TrailConfig
 
-# name -> (module, timeframe, cfg factory taking (settings, **overrides))
+# name -> (module, timeframe (str, or a settings->str fn), cfg factory taking
+# (settings, **overrides)). Every plain step(sym, candles, *, state, cfg)
+# strategy runs through backtest_simple; ny_n_break is the only bespoke one
+# (needs 5m + 15m + session flags).
 _SIMPLE = {
+    "ichimoku": (ichi, lambda s: s.ichimoku_tf,
+                 lambda s, **kw: ichi.IchimokuConfig(trail=_trail(s), **kw)),
     "bb_reversal": (bb_reversal, "5m",
                     lambda s, **kw: bb_reversal.BBReversalConfig(trail=_trail(s), **kw)),
     "ema_jaguar": (ema_jaguar, "5m",
                    lambda s, **kw: ema_jaguar.EmaJaguarConfig(trail=_trail(s), **kw)),
     "vp_edge": (vp_edge, "15m",
                 lambda s, **kw: vp_edge.VpEdgeConfig(trail=_trail(s), **kw)),
+    "candle_renko": (candle_renko, "5m",
+                     lambda s, **kw: candle_renko.CandleRenkoConfig(trail=_trail(s), **kw)),
 }
-ALL_STRATEGIES = ["ny_n_break", "ichimoku", *_SIMPLE]
+_WIN_N = {"ichimoku": 220}  # cloud needs a longer warm-up; the rest use 160
+ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 
 
 def _trail(s) -> TrailConfig:
@@ -120,7 +135,7 @@ def _summarise(trades: list[Trade]) -> dict[str, Any]:
 def _record_exit(trades, strat, sym, pos, exit_px, exit_ts, reason, s, contract):
     sr = size_position(
         contract, pos["entry"], lots=s.lots, deploy_usd=s.deploy_usd, leverage=s.leverage,
-        wallet_usd=s.paper_bankroll_usd, allow_min_one=s.allow_min_one,
+        wallet_usd=s.paper_bankroll_usd,
     )
     size = sr.size if sr.ok else 1
     notional = size * contract.contract_value * pos["entry"]
@@ -164,36 +179,16 @@ def backtest_ny_n_break(sym: str, days: float, s) -> list[Trade]:
     return trades
 
 
-def backtest_ichimoku(sym: str, days: float, s) -> list[Trade]:
-    contract = _contract(sym)
-    ch = market_data.candles(sym, s.ichimoku_tf, days=days)
-    if len(ch) < _WINDOW + 10:
-        return []
-    state: dict[str, Any] | None = None
-    open_pos: dict[str, Any] | None = None
-    trades: list[Trade] = []
-    for i in range(_WINDOW, len(ch)):
-        win = ch.iloc[i - _WINDOW : i + 1].reset_index(drop=True)
-        state, ev = ichi.step(sym, win, state=state, cfg=ichi.IchimokuConfig(trail=_trail(s)))
-        px = float(win["close"].iloc[-1])
-        ts = win["datetime"].iloc[-1]
-        if ev["event"] == "enter":
-            open_pos = {"side": ev["side"], "entry": px, "entry_ts": str(ts)}
-        elif ev["event"] == "exit" and open_pos:
-            _record_exit(trades, "ichimoku", sym, open_pos, px, ts, ev.get("reason", ""), s, contract)
-            open_pos = None
-    return trades
-
-
 def backtest_simple(name: str, sym: str, days: float, s, *, cfg_overrides: dict | None = None,
                     frame: pd.DataFrame | None = None) -> list[Trade]:
     """Generic replay for a strategy with the plain step(sym, candles, *, state, cfg)
-    shape (bb_reversal / ema_jaguar / vp_edge). ``frame`` overrides the fetched
-    candles (used by the walk-forward optimiser to score one fold)."""
+    shape (ichimoku / bb_reversal / ema_jaguar / vp_edge / candle_renko).
+    ``frame`` overrides the fetched candles (walk-forward optimiser, one fold)."""
     module, tf, make_cfg = _SIMPLE[name]
+    tf = tf(s) if callable(tf) else tf
     contract = _contract(sym)
     fr = frame if frame is not None else market_data.candles(sym, tf, days=days)
-    win_n = 160  # these strategies need << the shared _WINDOW (EMA89 / VP128 / BB30)
+    win_n = _WIN_N.get(name, 160)
     if len(fr) < win_n + 10:
         return []
     cfg = make_cfg(s, **(cfg_overrides or {}))
@@ -222,8 +217,6 @@ def run(days: float = 120, assets: list[str] | None = None,
     for sym in assets:
         if "ny_n_break" in strategies:
             res.trades += backtest_ny_n_break(sym, days, s)
-        if "ichimoku" in strategies:
-            res.trades += backtest_ichimoku(sym, days, s)
         for name in _SIMPLE:
             if name in strategies:
                 res.trades += backtest_simple(name, sym, days, s)

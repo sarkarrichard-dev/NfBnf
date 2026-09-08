@@ -13,22 +13,15 @@ tax on crypto gains (30% + 1% TDS).
 from __future__ import annotations
 
 import json
-import os
 import time
 from typing import Any
 
+from crypto._util import env_float as _pct
 from crypto.config import CRYPTO_MEMORY
 
 _SAMPLES_PATH = CRYPTO_MEMORY / "crypto_spread_samples.jsonl"
 _MIN_SAMPLES = 30          # below this, use the bps fallback
 _SAMPLE_WINDOW = 2000      # rows scanned for the running median
-
-
-def _pct(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        return default
 
 
 # Delta Exchange India published derivative fees; GST applies on the fee itself.

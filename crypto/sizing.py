@@ -8,13 +8,11 @@ and ``lot_economics`` exposes it for the dashboard. ``crypto/executor.py``
 (Phase 4) confirms against Delta's own ``GET /v2/products/{id}/margin_required``
 before a live order.
 
-``deploy_usd`` is an optional per-trade margin cap (0 = no cap). A legacy
-capital-first path (``lots=0``) is kept for the backtest helper.
+``deploy_usd`` is an optional per-trade margin cap (0 = no cap).
 """
 
 from __future__ import annotations
 
-import logging
 import math
 from dataclasses import dataclass
 
@@ -25,36 +23,16 @@ _FEE_BUFFER = 1.02     # margin headroom over the raw notional/leverage figure
 
 # Plausible mark-price band per asset — rejects a corrupted feed or a units
 # mix-up before it silently sizes the position 10x off. Wide on purpose. Only
-# BTC/ETH have a built-in band; any other symbol just needs mark > 0 (the
-# deploy-cap and 90% wallet guard bound the risk regardless), unless the
-# operator sets CRYPTO_SANE_MIN_<SYM> / CRYPTO_SANE_MAX_<SYM>.
+# BTC/ETH have a built-in band; any other symbol just needs mark > 0 — the
+# deploy cap and the 90% wallet guard bound the risk regardless.
 _SANE_PRICE = {
     "BTCUSD": (1_000.0, 10_000_000.0),
     "ETHUSD": (10.0, 1_000_000.0),
 }
-_warned: set[str] = set()
 
 
 def _band(symbol: str) -> tuple[float, float]:
-    sym = symbol.upper()
-    if sym in _SANE_PRICE:
-        return _SANE_PRICE[sym]
-    import os
-
-    def _env(name: str, default: float) -> float:
-        try:
-            return float(os.getenv(name, str(default)))
-        except (TypeError, ValueError):
-            return default
-
-    lo = _env(f"CRYPTO_SANE_MIN_{sym}", 0.0)
-    hi = _env(f"CRYPTO_SANE_MAX_{sym}", float("inf"))
-    if lo == 0.0 and hi == float("inf") and sym not in _warned:
-        _warned.add(sym)
-        logging.getLogger(__name__).info(
-            "crypto sizing: no sane-price band for %s — accepting any mark > 0", sym
-        )
-    return lo, hi
+    return _SANE_PRICE.get(symbol.upper(), (0.0, float("inf")))
 
 
 @dataclass(frozen=True)
@@ -102,9 +80,8 @@ def size_position(
     *,
     leverage: float,
     wallet_usd: float,
-    lots: int = 0,
+    lots: int,
     deploy_usd: float = 0.0,
-    allow_min_one: bool = False,
 ) -> SizingResult:
     lev = min(max(1.0, float(leverage)), max(1.0, contract.max_leverage))
     mark = float(mark_price)
@@ -123,42 +100,19 @@ def size_position(
     safe_wallet = wallet_usd * _WALLET_SAFETY
     min_contracts = max(1, int(math.ceil(contract.min_size)))
 
-    if lots and lots > 0:
-        size = max(int(lots), min_contracts)
-        need = size * margin1
-        if cap and need > cap:
-            return _fail(
-                f"{size} lot(s) need ${need:,.2f} margin, over the ${cap:,.0f} cap",
-                m1=margin1, mark=mark, lev=lev,
-            )
-        if need > safe_wallet:
-            return _fail(
-                f"{size} lot(s) need ${need:,.2f}, safe bankroll is ${safe_wallet:,.2f}",
-                m1=margin1, mark=mark, lev=lev,
-            )
-        reason = f"{size} lot(s) × ${margin1:,.2f} margin @ {lev:g}x"
-    else:
-        # legacy capital-first path (backtest helper) — deploy_usd is the budget
-        deploy = max(100.0, cap or 100.0)
-        size = int(math.floor(deploy / margin1))
-        if size < 1:
-            if allow_min_one and margin1 <= min(safe_wallet, deploy * 2.0):
-                size = 1
-            else:
-                return _fail(
-                    f"1-contract margin ${margin1:,.2f} exceeds deploy ${deploy:,.0f}",
-                    m1=margin1, mark=mark, lev=lev,
-                )
-        while size > 1 and size * margin1 > safe_wallet:
-            size -= 1
-        if size * margin1 > safe_wallet:
-            return _fail(
-                f"insufficient bankroll: need ${margin1:,.2f}, have ${safe_wallet:,.2f}",
-                m1=margin1, mark=mark, lev=lev,
-            )
-        if size < min_contracts:
-            return _fail(f"size {size} below Delta minimum {min_contracts}", m1=margin1, mark=mark, lev=lev)
-        reason = f"${deploy:,.0f} / ${margin1:,.2f} per contract @ {lev:g}x"
+    size = max(int(lots), min_contracts)
+    need = size * margin1
+    if cap and need > cap:
+        return _fail(
+            f"{size} lot(s) need ${need:,.2f} margin, over the ${cap:,.0f} cap",
+            m1=margin1, mark=mark, lev=lev,
+        )
+    if need > safe_wallet:
+        return _fail(
+            f"{size} lot(s) need ${need:,.2f}, safe bankroll is ${safe_wallet:,.2f}",
+            m1=margin1, mark=mark, lev=lev,
+        )
+    reason = f"{size} lot(s) × ${margin1:,.2f} margin @ {lev:g}x"
 
     return SizingResult(
         ok=True,
@@ -196,7 +150,4 @@ if __name__ == "__main__":  # self-check
     assert le["coin_per_lot"] == 0.001 and le["notional_per_lot_usd"] == 60.0
     assert le["margin_per_lot_usd"] and le["margin_per_lot_inr"]
     assert lot_economics(btc, 0, leverage=3)["margin_per_lot_usd"] is None
-    # legacy capital-first path (lots=0) still works for the backtest helper
-    rl = size_position(btc, 60_000, leverage=3, wallet_usd=2000, deploy_usd=100)
-    assert rl.ok and rl.size == 4
     print("crypto.sizing self-check ok")

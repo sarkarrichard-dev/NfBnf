@@ -5,7 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from crypto.strategies import bb_reversal, ema_jaguar, vp_edge
+from crypto.strategies import bb_reversal, candle_renko, ema_jaguar, vp_edge
+from crypto.strategies.renko import brick_dir
 from crypto.strategies.volprofile import profile
 
 
@@ -106,6 +107,46 @@ def test_vp_edge_fades_a_balanced_range():
     df2 = df.assign(open=ramp, high=ramp + 0.3, low=ramp - 0.3, close=ramp)
     saw2, _ = _run(vp_edge, cfg, df2, 102)
     assert saw2["enter"] == 0
+
+
+def test_candle_renko_needs_trend_renko_and_pattern_aligned():
+    rng = np.random.default_rng(7)
+    # a clean up-trend then a flip down — enters long in the up-leg, then the
+    # 15m supertrend flip forces the exit
+    steps = np.concatenate([rng.normal(0.4, 1.1, 320), rng.normal(-0.6, 1.1, 240)])
+    n = len(steps)
+    close = 100 + np.cumsum(steps)
+    open_ = np.empty(n)
+    open_[0] = 100.0
+    open_[1:] = close[:-1]
+    hi = np.maximum(open_, close) + np.abs(rng.normal(0.3, 0.3, n))
+    lo = np.minimum(open_, close) - np.abs(rng.normal(0.3, 0.3, n))
+    df = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-09-01", periods=n, freq="5min", tz="UTC"),
+            "open": open_,
+            "high": hi,
+            "low": lo,
+            "close": close,
+            "volume": np.abs(rng.normal(10, 2, n)),
+        }
+    )
+    saw, first = _run(candle_renko, candle_renko.CandleRenkoConfig(), df, 40)
+    assert saw["enter"] >= 1 and saw["exit"] >= 1
+    assert first == "long"  # the first aligned setup is in the up-leg
+
+    # a dead-flat market never aligns a pattern
+    flat = df.assign(open=100.0, high=100.5, low=99.5, close=100.0)
+    saw2, _ = _run(candle_renko, candle_renko.CandleRenkoConfig(), flat, 40)
+    assert saw2["enter"] == 0
+
+
+def test_renko_brick_direction_follows_the_last_completed_brick():
+    up = pd.Series([100 + i for i in range(30)])
+    assert brick_dir(up, 5.0) == 1
+    reverse = pd.Series([100 + i for i in range(20)] + [120 - i for i in range(25)])
+    assert brick_dir(reverse, 5.0) == -1
+    assert brick_dir(pd.Series([100.0] * 10), 5.0) == 0
 
 
 def test_volprofile_value_area_ordering():

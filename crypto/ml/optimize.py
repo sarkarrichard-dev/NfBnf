@@ -57,6 +57,12 @@ SEARCH_SPACE: dict[str, dict[str, list]] = {
         "value_area_pct": [0.6, 0.7, 0.8],
         "edge_buffer_pct": [0.3, 0.6, 1.0],
     },
+    "candle_renko": {
+        "atr_len": [10, 14, 20],
+        "renko_atr_mult": [0.5, 1.0, 2.0],
+        "st_period": [7, 10, 14],
+        "st_mult": [2.0, 3.0, 4.0],
+    },
 }
 
 
