@@ -52,6 +52,9 @@ class StrategyParams:
     credit_wing_strikes: int = 2
     credit_short_strike_steps: int = 2
     credit_min_confidence: float = 0.58
+    # Entry gate for the sell lane — separate from credit_min_confidence (which is
+    # the *emitted* signal-confidence base). Take any sell setup at/above this.
+    credit_confidence_gate: float = 0.45
     credit_min_volume_ratio: float = 0.85
     credit_volume_lookback_bars: int = 20
     credit_min_reward_to_risk: float = 0.05
@@ -61,6 +64,11 @@ class StrategyParams:
     ml_gate_buy_min: float = 0.50
     buy_min_volume_ratio: float = 0.85
     buy_volume_lookback_bars: int = 20
+    # Buys are swift scalps — the chosen ATM leg must actually be liquid, and the
+    # ATM OI profile must not fight the direction. 0 disables a numeric floor.
+    buy_min_leg_oi: int = 0
+    buy_min_leg_volume: int = 0
+    buy_block_contra_oi: bool = True
     auto_buy_trending_only: bool = True
     credit_profit_target_pct: float = 0.50
     credit_stop_loss_pct: float = 0.60
@@ -134,6 +142,7 @@ def get_strategy_params() -> StrategyParams:
         credit_wing_strikes=_int("CREDIT_WING_STRIKES", 2),
         credit_short_strike_steps=_int("CREDIT_SHORT_STRIKE_STEPS", 2),
         credit_min_confidence=_float("CPR_CREDIT_MIN_CONFIDENCE", 0.58),
+        credit_confidence_gate=_float("CPR_CREDIT_CONFIDENCE_GATE", 0.45),
         credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.85),
         credit_volume_lookback_bars=_int("CREDIT_VOLUME_LOOKBACK_BARS", 20),
         credit_min_reward_to_risk=_float("CREDIT_MIN_REWARD_TO_RISK", 0.05),
@@ -143,6 +152,9 @@ def get_strategy_params() -> StrategyParams:
         ml_gate_buy_min=_float("ML_GATE_BUY_MIN", 0.50),
         buy_min_volume_ratio=_float("BUY_MIN_VOLUME_RATIO", 0.85),
         buy_volume_lookback_bars=_int("BUY_VOLUME_LOOKBACK_BARS", 20),
+        buy_min_leg_oi=_int("BUY_MIN_LEG_OI", 0),
+        buy_min_leg_volume=_int("BUY_MIN_LEG_VOLUME", 0),
+        buy_block_contra_oi=_bool("BUY_BLOCK_CONTRA_OI", True),
         auto_buy_trending_only=_bool("AUTO_BUY_TRENDING_ONLY", True),
         credit_profit_target_pct=_float("CREDIT_PROFIT_TARGET_PCT", 0.50),
         credit_stop_loss_pct=_float("CREDIT_STOP_LOSS_PCT", 0.60),
@@ -238,8 +250,12 @@ def strategy_tuning_summary() -> dict[str, object]:
         "ml_gate_sell_min": p.ml_gate_sell_min,
         "ml_gate_sell_max": p.ml_gate_sell_max,
         "ml_gate_buy_min": p.ml_gate_buy_min,
+        "credit_confidence_gate": p.credit_confidence_gate,
         "buy_min_volume_ratio": p.buy_min_volume_ratio,
         "buy_volume_lookback_bars": p.buy_volume_lookback_bars,
+        "buy_min_leg_oi": p.buy_min_leg_oi,
+        "buy_min_leg_volume": p.buy_min_leg_volume,
+        "buy_block_contra_oi": p.buy_block_contra_oi,
         "credit_profit_target_pct": p.credit_profit_target_pct,
         "credit_stop_loss_pct": p.credit_stop_loss_pct,
         "enable_profit_trail": p.enable_profit_trail,
@@ -298,11 +314,15 @@ def strategy_tuning_summary() -> dict[str, object]:
             "CPR_NARROW_WIDTH_PCT",
             "CPR_WIDE_WIDTH_PCT",
             "CPR_CREDIT_MIN_CONFIDENCE",
+            "CPR_CREDIT_CONFIDENCE_GATE",
             "CREDIT_MIN_VOLUME_RATIO",
             "CREDIT_VOLUME_LOOKBACK_BARS",
             "CREDIT_MIN_REWARD_TO_RISK",
             "SELL_ALLOW_TREND_OVERRIDE",
             "BUY_MIN_VOLUME_RATIO",
+            "BUY_MIN_LEG_OI",
+            "BUY_MIN_LEG_VOLUME",
+            "BUY_BLOCK_CONTRA_OI",
             "BUY_VOLUME_LOOKBACK_BARS",
             "CREDIT_WING_STRIKES",
             "CREDIT_SHORT_STRIKE_STEPS",

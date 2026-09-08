@@ -34,9 +34,10 @@ def _min_confidence_gate(
 ) -> float:
     """Buy setups use learned gate; credit spreads use CPR credit floor (not buy-tuned learning)."""
     from index_ai.pre_open_brief import entry_confidence_bump
+    from index_ai.risk_policy import HARDCODED_RISK
 
     if signal_action in CREDIT_ACTIONS or is_premium_sell_action(signal_action):
-        base = get_strategy_params().credit_min_confidence
+        base = get_strategy_params().credit_confidence_gate
     else:
         base = float(
             learned.get("effective_min_confidence")
@@ -45,6 +46,8 @@ def _min_confidence_gate(
                 + float(learned.get("min_confidence_adjustment") or 0)
             )
         )
+        # Buy floor — the learned adjustment can loosen but never below the 60% bar.
+        base = max(base, HARDCODED_RISK.min_confidence)
     return base + entry_confidence_bump()
 
 

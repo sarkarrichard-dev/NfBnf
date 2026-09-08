@@ -9,7 +9,11 @@ from typing import Any
 
 from index_ai.charges import estimate_trade_cost
 from index_ai.config import AppSettings
-from index_ai.strategies.credit_spread import CREDIT_ACTIONS, credit_spread_entry_ready, is_credit_action
+from index_ai.strategies.credit_spread import (
+    CREDIT_ACTIONS,
+    credit_spread_entry_ready,
+    is_credit_action,
+)
 from index_ai.strategies.premium_sell import is_premium_sell_action, premium_sell_entry_ready
 from index_ai.instruments import IndexInstrument, get_instrument
 from index_ai.learning import is_broker_filled_open, open_trades_for_mode
@@ -98,7 +102,9 @@ def validate_action_matches_option(action: str, option: dict[str, Any]) -> Safet
 
     if act == "SELL_IRON_CONDOR":
         if structure != "IRON_CONDOR" or len(legs) != 4:
-            return SafetyCheck(False, "Iron condor action requires 4 legs on option.", "structure_mismatch")
+            return SafetyCheck(
+                False, "Iron condor action requires 4 legs on option.", "structure_mismatch"
+            )
         sells = [l for l in legs if str(l.get("transaction_type")).upper() == "SELL"]
         if len(sells) != 2:
             return SafetyCheck(False, "Iron condor must have two short legs.", "structure_mismatch")
@@ -114,7 +120,9 @@ def validate_action_matches_option(action: str, option: dict[str, Any]) -> Safet
             and str(l.get("transaction_type")).upper() == "SELL"
         ]
         if len(short_puts) != 1:
-            return SafetyCheck(False, "Bull put spread must short one put leg.", "structure_mismatch")
+            return SafetyCheck(
+                False, "Bull put spread must short one put leg.", "structure_mismatch"
+            )
         return SafetyCheck(True, "ok", "ok")
 
     if act == "SELL_BEAR_CALL_SPREAD":
@@ -127,7 +135,9 @@ def validate_action_matches_option(action: str, option: dict[str, Any]) -> Safet
             and str(l.get("transaction_type")).upper() == "SELL"
         ]
         if len(short_calls) != 1:
-            return SafetyCheck(False, "Bear call spread must short one call leg.", "structure_mismatch")
+            return SafetyCheck(
+                False, "Bear call spread must short one call leg.", "structure_mismatch"
+            )
         return SafetyCheck(True, "ok", "ok")
 
     if act == "SELL_ATM_PUT":
@@ -146,7 +156,9 @@ def validate_action_matches_option(action: str, option: dict[str, Any]) -> Safet
 
     if act in {"BUY_CALL", "BUY_PUT"}:
         if legs:
-            return SafetyCheck(False, "Long premium entry must be a single-leg option.", "structure_mismatch")
+            return SafetyCheck(
+                False, "Long premium entry must be a single-leg option.", "structure_mismatch"
+            )
         side = "CALL" if act == "BUY_CALL" else "PUT"
         if str(option.get("option_type") or "").upper() != side:
             return SafetyCheck(
@@ -159,7 +171,9 @@ def validate_action_matches_option(action: str, option: dict[str, Any]) -> Safet
         return SafetyCheck(True, "ok", "ok")
 
     if act in CREDIT_ACTIONS:
-        return SafetyCheck(False, f"Credit action {act} not matched to option structure.", "structure_mismatch")
+        return SafetyCheck(
+            False, f"Credit action {act} not matched to option structure.", "structure_mismatch"
+        )
 
     return SafetyCheck(True, "ok", "ok")
 
@@ -327,15 +341,84 @@ def validate_entry_quotes(option: dict[str, Any]) -> SafetyCheck:
     return SafetyCheck(True, "ok", "ok")
 
 
-def validate_open_position(instrument_key: str, mode: str) -> SafetyCheck:
-    normalized = str(mode or "PAPER").upper()
-    for trade in open_trades_for_mode(normalized):
-        if str(trade.get("instrument") or "") == instrument_key and trade.get("pnl") is None:
+_BUY_ACTIONS = frozenset({"BUY_CALL", "BUY_PUT"})
+
+
+def validate_buy_liquidity(option: dict[str, Any], action: str) -> SafetyCheck:
+    """Buys are swift ATM scalps — the leg the chain picked has to actually be
+    liquid, and the ATM OI profile must not point the other way. Numeric floors
+    (``buy_min_leg_oi`` / ``buy_min_leg_volume``) default to 0 = off; the
+    contra-OI-bias skip needs no threshold and is on by default."""
+    if str(action or "").upper() not in _BUY_ACTIONS:
+        return SafetyCheck(True, "ok", "ok")
+    p = get_strategy_params()
+    try:
+        leg_oi = int(option.get("oi") or 0)
+        leg_vol = int(option.get("volume") or 0)
+    except (TypeError, ValueError):
+        leg_oi = leg_vol = 0
+    chain_has_oi = (
+        int(option.get("total_call_oi") or 0) + int(option.get("total_put_oi") or 0)
+    ) > 0
+
+    if p.buy_min_leg_oi > 0 and chain_has_oi and leg_oi < p.buy_min_leg_oi:
+        return SafetyCheck(
+            False,
+            f"Buy skipped — chosen strike OI {leg_oi:,} below {p.buy_min_leg_oi:,} (scalp needs a liquid option).",
+            "thin_oi",
+        )
+    if p.buy_min_leg_volume > 0 and chain_has_oi and leg_vol < p.buy_min_leg_volume:
+        return SafetyCheck(
+            False,
+            f"Buy skipped — chosen strike volume {leg_vol:,} below {p.buy_min_leg_volume:,}.",
+            "thin_volume",
+        )
+    # Dead strike: chain has OI elsewhere but this leg shows neither OI nor volume.
+    if chain_has_oi and leg_oi == 0 and leg_vol == 0:
+        return SafetyCheck(
+            False,
+            "Buy skipped — chosen ATM strike shows no OI or volume (not trading).",
+            "dead_strike",
+        )
+    if p.buy_block_contra_oi:
+        bias = str(option.get("chain_bias") or "")
+        if (action.upper() == "BUY_CALL" and bias == "put_heavy") or (
+            action.upper() == "BUY_PUT" and bias == "call_heavy"
+        ):
             return SafetyCheck(
                 False,
-                f"Open {normalized} position already exists for {instrument_key}.",
-                "duplicate_open",
+                f"Buy skipped — ATM OI profile ({bias}) fights the {action} direction.",
+                "oi_contra",
             )
+    return SafetyCheck(True, "ok", "ok")
+
+
+def validate_open_position(
+    instrument_key: str, mode: str, *, action: str | None = None
+) -> SafetyCheck:
+    """One open position per instrument *per lane*. A buy and a sell can run on
+    the same index at once; two buys (or two sells) cannot. Pass ``action=None``
+    for the old any-position-blocks behaviour."""
+    normalized = str(mode or "PAPER").upper()
+    lane = None
+    if action:
+        from index_ai.strategies.strategy_router import trade_lane
+
+        lane = trade_lane(action)
+    for trade in open_trades_for_mode(normalized):
+        if str(trade.get("instrument") or "") != instrument_key or trade.get("pnl") is not None:
+            continue
+        if lane is not None:
+            from index_ai.strategies.strategy_router import trade_lane
+
+            if trade_lane(str(trade.get("action") or "")) != lane:
+                continue
+        tag = f" {lane}" if lane else ""
+        return SafetyCheck(
+            False,
+            f"Open {normalized}{tag} position already exists for {instrument_key}.",
+            "duplicate_open",
+        )
     return SafetyCheck(True, "ok", "ok")
 
 
@@ -364,7 +447,9 @@ def validate_live_exit_allowed(trade: dict[str, Any], settings: AppSettings) -> 
     if str(trade.get("mode") or "").upper() != "LIVE":
         return SafetyCheck(True, "ok", "ok")
     if settings.risk.trading_mode != "LIVE":
-        return SafetyCheck(False, "Dashboard not in Live mode — exit orders blocked.", "mode_mismatch")
+        return SafetyCheck(
+            False, "Dashboard not in Live mode — exit orders blocked.", "mode_mismatch"
+        )
     live_ok = validate_live_entry_allowed(settings)
     if not live_ok.ok:
         return live_ok
@@ -437,7 +522,8 @@ def validate_execution_plan(
         validate_quantities(option, instrument),
         validate_credit_economics(option, action),
         validate_cost_economics(option, action, instrument),
-        validate_open_position(instrument.key, app_settings.risk.trading_mode),
+        validate_open_position(instrument.key, app_settings.risk.trading_mode, action=action),
+        validate_buy_liquidity(option, action),
     ):
         if not check.ok:
             return check

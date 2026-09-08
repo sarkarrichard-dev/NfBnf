@@ -124,9 +124,39 @@ def test_duplicate_open_position_detected() -> None:
         check = validate_open_position("NIFTY", "PAPER")
         assert not check.ok
         assert check.code == "duplicate_open"
+
+        # per-lane slot: an open BUY blocks another BUY but not a SELL
+        assert not validate_open_position("NIFTY", "PAPER", action="BUY_PUT").ok
+        assert validate_open_position("NIFTY", "PAPER", action="SELL_BEAR_CALL_SPREAD").ok
+        # a different instrument is always free
+        assert validate_open_position("BANKNIFTY", "PAPER", action="BUY_CALL").ok
     finally:
         with connect() as db:
             db.execute("DELETE FROM trades WHERE id = ?", (tid,))
+
+
+def test_buy_liquidity_gate() -> None:
+    from index_ai.execution_safety import validate_buy_liquidity
+
+    liquid = {
+        "option_type": "CALL",
+        "oi": 500_000,
+        "volume": 40_000,
+        "chain_bias": "call_heavy",
+        "total_call_oi": 5_000_000,
+        "total_put_oi": 4_000_000,
+    }
+    assert validate_buy_liquidity(liquid, "BUY_CALL").ok
+    # sell actions are never gated here
+    assert validate_buy_liquidity({}, "SELL_BEAR_CALL_SPREAD").ok
+    # contra OI: buying calls into a put-heavy book
+    contra = {**liquid, "chain_bias": "put_heavy"}
+    assert validate_buy_liquidity(contra, "BUY_CALL").code == "oi_contra"
+    # dead strike: chain has OI elsewhere but this leg has none
+    dead = {**liquid, "oi": 0, "volume": 0}
+    assert validate_buy_liquidity(dead, "BUY_CALL").code == "dead_strike"
+    # empty snapshot (no chain OI at all) must not block
+    assert validate_buy_liquidity({"option_type": "CALL"}, "BUY_CALL").ok
 
 
 def test_full_plan_validation_passes_clean_credit(monkeypatch) -> None:

@@ -13,7 +13,9 @@ class HardcodedRiskPolicy:
     max_daily_loss_rupees: float = 6000.0
     # Legacy summary field; per-index trails live on IndexInstrument (activation + distance).
     trailing_stop_index_points: float = 40.0
-    min_confidence: float = 0.55
+    # Option-buying entry gate. Buys are swift directional scalps — hold them to a
+    # higher bar than credit selling (whose gate is credit_confidence_gate ~0.45).
+    min_confidence: float = 0.60
     max_profit_cap_rupees: float | None = None
     default_option_transaction: str = "BUY"
     lots_per_trade: int = 1
