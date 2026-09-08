@@ -114,5 +114,36 @@ this measurement it bleeds ~$1.8/trade. It stays paper until the walk-forward
 OOS net is stably positive across ≥ 2 symbols (the standing gate).
 `retune_all()` tunes it nightly via `SEARCH_SPACE["fvg_scalp"]`.
 
-The live crypto strategies are now **`ny_n_break`** (6 PM), **`ichimoku`**, and
-**`fvg_scalp`** (paper only until it clears the cost floor).
+---
+
+# ema_pivot — 2026-09-08
+
+Fourth crypto strategy, from the CoinSwitch "EMA + Pivot" video (Ahmed Lekhan)
+Richard sent — he felt `ichimoku` wasn't triggering enough. Module
+`crypto/strategies/ema_pivot.py` + `crypto/strategies/pivots.py`.
+
+**Setup:** 5-minute. Two support/resistance types must agree — **horizontal**
+(standard daily pivots P / R1-R3 / S1-S3, from the prior UTC-day OHLC, held all
+day) and **dynamic** (the 9/13/21 EMA fan). Enter only when the fan is stacked
+*and* sloping in the trend direction (9 > 13 > 21 rising for longs), price is on
+the supporting side of the day pivot P, and the last 5m close breaks a pivot
+level — skipping an oversized trigger candle (> `big_candle_atr × ATR`, a
+retracement risk per the video). **Exit:** the shared P&L trailing engine, a
+close back through the 9 EMA, or price stretched `stretch_atr × ATR` from the
+9 EMA (the video's "moved too far from the average, book it").
+
+## Backtest — defaults, 90 days, BTC / ETH / SOL
+
+_Pending — `python -m crypto.backtest --days 90 --strategy ema_pivot` running;
+fill the table + the auto-tune result before deciding whether it stays enabled._
+
+## Status
+
+`CRYPTO_EMA_PIVOT_ENABLED` defaults `true` — runs in the **paper** lane as the
+fourth strategy Richard asked for. **Do not arm crypto live** until the
+walk-forward OOS net is stably positive across ≥ 2 symbols. `retune_all()` tunes
+it nightly via `SEARCH_SPACE["ema_pivot"]`.
+
+The live crypto strategies are now **`ny_n_break`** (6 PM, 24/7),
+**`ichimoku`**, **`fvg_scalp`**, and **`ema_pivot`** (paper only until they
+clear the cost floor).

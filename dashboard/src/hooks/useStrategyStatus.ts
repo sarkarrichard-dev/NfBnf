@@ -54,5 +54,6 @@ export function useStrategyStatus(): Record<string, LiveStatus> {
     ny_n_break: cLane('ny_n_break'),
     ichimoku: cLane('ichimoku'),
     fvg_scalp: cLane('fvg_scalp'),
+    ema_pivot: cLane('ema_pivot'),
   }
 }

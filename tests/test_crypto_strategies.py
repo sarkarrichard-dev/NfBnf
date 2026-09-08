@@ -5,8 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from crypto.strategies import bb_reversal, ema_jaguar, fvg_scalp, vp_edge
+from crypto.strategies import bb_reversal, ema_jaguar, ema_pivot, fvg_scalp, vp_edge
 from crypto.strategies.fairvalue import find_fvgs
+from crypto.strategies.pivots import standard_pivots
 from crypto.strategies.volprofile import profile
 
 
@@ -188,3 +189,37 @@ def test_volprofile_value_area_ordering():
     )
     p = profile(df)
     assert p and p.val < p.poc < p.vah and p.balanced
+
+
+def test_ema_pivot_enters_on_a_pivot_break_with_a_stacked_fan():
+    n = 700
+    idx = pd.date_range("2026-09-06 00:00", periods=n, freq="5min", tz="UTC")
+    day1 = 100.0 + np.sin(np.linspace(0, 8, 288)) * 4  # sets the pivots
+    day2 = np.linspace(100.0, 118.0, n - 288)  # clean rally through them
+    px = np.concatenate([day1, day2])
+    df = pd.DataFrame(
+        {
+            "datetime": idx,
+            "open": px,
+            "high": px + 0.4,
+            "low": px - 0.4,
+            "close": px,
+            "volume": [10.0] * n,
+        }
+    )
+    saw, side = _run(ema_pivot, ema_pivot.EmaPivotConfig(slope_lookback=2), df, 300)
+    assert saw["enter"] >= 1 and side == "long"
+
+    # a dead-flat market: fan never stacks/slopes → no entry
+    flat = df.assign(open=100.0, high=100.4, low=99.6, close=100.0)
+    saw2, _ = _run(ema_pivot, ema_pivot.EmaPivotConfig(slope_lookback=2), flat, 300)
+    assert saw2["enter"] == 0
+
+
+def test_standard_pivots_are_ordered_and_need_a_prior_day():
+    idx = pd.date_range("2026-09-06", periods=600, freq="5min", tz="UTC")
+    px = 100.0 + np.sin(np.linspace(0, 10, 600)) * 3
+    df = pd.DataFrame({"datetime": idx, "open": px, "high": px + 1, "low": px - 1, "close": px})
+    p = standard_pivots(df)
+    assert p["S3"] < p["S2"] < p["S1"] < p["P"] < p["R1"] < p["R2"] < p["R3"]
+    assert standard_pivots(df.iloc[-5:].reset_index(drop=True)) == {}

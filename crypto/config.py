@@ -89,6 +89,7 @@ class CryptoSettings:
     ema_jaguar_enabled: bool
     vp_edge_enabled: bool
     fvg_scalp_enabled: bool
+    ema_pivot_enabled: bool
     # 6 PM (NY N-Break) session window, IST, 24h "HH:MM"
     ny_start: str
     ny_end: str
@@ -144,6 +145,7 @@ def crypto_settings() -> CryptoSettings:
         ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
         vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
         fvg_scalp_enabled=_b("CRYPTO_FVG_SCALP_ENABLED", True),
+        ema_pivot_enabled=_b("CRYPTO_EMA_PIVOT_ENABLED", True),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
         nbreak_allround=_b("CRYPTO_NBREAK_ALLROUND", True),
@@ -172,6 +174,7 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_EMA_JAGUAR_ENABLED",
     "CRYPTO_VP_EDGE_ENABLED",
     "CRYPTO_FVG_SCALP_ENABLED",
+    "CRYPTO_EMA_PIVOT_ENABLED",
     "CRYPTO_NBREAK_ALLROUND",
     "CRYPTO_NBREAK_MAX_TRADES",
     "CRYPTO_DEPLOY_USD",

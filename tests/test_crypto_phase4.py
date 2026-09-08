@@ -177,6 +177,7 @@ def live_lane(tmp_path, monkeypatch):
     monkeypatch.setenv("CRYPTO_NBREAK_ALLROUND", "false")  # these tests exercise the NY-window gate
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_FVG_SCALP_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_EMA_PIVOT_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_USDINR", "88")
     monkeypatch.setattr(journal, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(journal, "JOURNAL_PATH", tmp_path / "journal.jsonl")

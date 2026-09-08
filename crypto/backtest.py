@@ -28,6 +28,7 @@ from crypto.sizing import size_position
 from crypto.strategies import (
     bb_reversal,
     ema_jaguar,
+    ema_pivot,
     fvg_scalp,
     ichimoku as ichi,
     ny_n_break as nb,
@@ -50,8 +51,10 @@ _SIMPLE = {
                 lambda s, **kw: vp_edge.VpEdgeConfig(trail=_trail(s), **kw)),
     "fvg_scalp": (fvg_scalp, "5m",
                   lambda s, **kw: fvg_scalp.FvgScalpConfig(trail=_trail(s), **kw)),
+    "ema_pivot": (ema_pivot, "5m",
+                  lambda s, **kw: ema_pivot.EmaPivotConfig(trail=_trail(s), **kw)),
 }
-_WIN_N = {"ichimoku": 220}  # cloud needs a longer warm-up; the rest use 160
+_WIN_N = {"ichimoku": 220, "ema_pivot": 340}  # ema_pivot needs a full prior UTC day for pivots
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 
 
