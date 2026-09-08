@@ -65,10 +65,16 @@ def test_summary_and_local_review(monkeypatch):
     assert s["how_trades_ended"]["trailing stop"] == 1
     assert s["fee_bled_trades"] == 1
     assert set(s["by_strategy"]) == {"ny_n_break", "ichimoku"}
+    # grouped by asset — the default _row() asset is BTCUSD → the "BTC" group
+    assert set(s["by_asset"]) == {"BTC"}
+    assert s["by_asset"]["BTC"]["trades"] == 3 and s["by_asset"]["BTC"]["wins"] == 1
+    assert s["by_asset"]["BTC"]["strategies"] == {"ny_n_break": 2, "ichimoku": 1}
 
     r = dr._local_review(rows, s)
     assert "trailing profit" in r["narrative"]
-    assert any("fee drag" in x for x in r["went_wrong"])
+    assert any("fee drag" in x for x in r["watch"])
+    assert r["by_group"] and r["by_group"][0]["group"] == "BTC"
+    assert "improve" in r["by_group"][0]
 
 
 def test_signature_cache_and_bust(monkeypatch):
