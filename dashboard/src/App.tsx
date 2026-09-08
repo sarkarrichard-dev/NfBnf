@@ -11,6 +11,8 @@ import {
   IconCoin,
   IconFlask,
   IconGear,
+  IconChart,
+  IconList,
 } from './components/ui/Icons'
 import { ExecutionPanel } from './components/ExecutionPanel'
 import { JournalPanel } from './components/JournalPanel'
@@ -56,6 +58,12 @@ const CryptoPanel = lazy(() =>
 )
 const OperationsPanel = lazy(() =>
   import('./components/OperationsPanel').then((m) => ({ default: m.OperationsPanel })),
+)
+const ReportsPage = lazy(() =>
+  import('./components/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })),
+)
+const TradeHistoryPage = lazy(() =>
+  import('./components/pages/TradeHistoryPage').then((m) => ({ default: m.TradeHistoryPage })),
 )
 
 type StatusResponse = {
@@ -151,6 +159,13 @@ function App() {
         { id: 'trade', label: 'Dashboard', icon: <IconGrid />, badge: openCount || null },
         { id: 'strategies', label: 'Strategies', icon: <IconLayers /> },
         { id: 'crypto', label: 'Crypto', icon: <IconCoin /> },
+      ],
+    },
+    {
+      label: 'Insights',
+      items: [
+        { id: 'trades', label: 'Trade history', icon: <IconList /> },
+        { id: 'reports', label: 'Reports & PnL', icon: <IconChart /> },
       ],
     },
     {
@@ -304,6 +319,36 @@ function App() {
               <CryptoPanel />
             </Suspense>
           </CollapsibleSection>
+        </>
+      ) : null}
+
+      {tab === 'trades' ? (
+        <>
+          <PageHeader
+            eyebrow="Trade history"
+            title="Closed trades"
+            status="Complete round-trip log across strategies and modes."
+          />
+          <Suspense fallback={<PanelFallback />}>
+            <TradeHistoryPage
+              logRows={dashboard.logRows}
+              trades={dashboard.trades}
+              mtmUpdatedAt={dashboard.mtmUpdatedAt}
+            />
+          </Suspense>
+        </>
+      ) : null}
+
+      {tab === 'reports' ? (
+        <>
+          <PageHeader
+            eyebrow="Reports & PnL"
+            title="Performance breakdown"
+            status="Equity, calendar, distribution — your own trading, measured."
+          />
+          <Suspense fallback={<PanelFallback />}>
+            <ReportsPage analytics={dashboard.analytics} trades={dashboard.trades} />
+          </Suspense>
         </>
       ) : null}
 

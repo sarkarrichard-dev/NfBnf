@@ -5,7 +5,16 @@ import { fx } from '../lib/theme'
 import { getSeries, pushPoint } from '../hooks/useSeries'
 import { PeriodBar } from './PeriodBar'
 import { Sparkline } from './Sparkline'
+import { EquityCurve } from './charts/EquityCurve'
 import type { AnalyticsResponse, DateRange, PeriodKey, TradeRow } from '../types/analytics'
+
+const PERIOD_LABEL: Record<PeriodKey, string> = {
+  today: 'today',
+  week: 'this week',
+  month: 'this month',
+  all: 'all time',
+  custom: 'in range',
+}
 
 type Props = {
   period: PeriodKey
@@ -86,43 +95,55 @@ export function StatsOverview({
   })
 
   const equity = equityCurve(analytics)
+  const net = block.pnl_rupees ?? 0
 
   return (
-    <section className={cn(fx.panel, 'mb-4 px-3 py-2.5')}>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+    <section className={cn(fx.panel, 'mb-6 space-y-3 p-4')}>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <PeriodBar
           period={period}
           onPeriodChange={onPeriodChange}
           range={range}
           onRangeChange={onRangeChange}
         />
-        <div className="flex items-center gap-3">
-          {equity.length > 1 ? (
-            <div className="flex items-center gap-2" title="Cumulative realized PnL (last 31 days)">
-              <span className="text-[11px] text-slate-500">Equity</span>
-              <Sparkline points={equity} width={120} height={26} />
-              <span className={cn('text-xs font-semibold tabular-nums', pnlClass(equity[equity.length - 1]))}>
-                {money(equity[equity.length - 1])}
-              </span>
-            </div>
-          ) : null}
-          {updatedLabel ? (
-            <span className="text-[11px] text-slate-500">{updatedLabel}</span>
-          ) : null}
-        </div>
+        {updatedLabel ? (
+          <span className="font-mono text-[10px] text-slate-500">{updatedLabel}</span>
+        ) : null}
       </div>
+
       {period === 'today' && marketOpen === false && marketMessage ? (
-        <p className="mb-2 text-[11px] text-amber-200/70">
+        <p className="text-[11px] text-[var(--warn)]/80">
           Market closed — {marketMessage}. Today counts IST session entries only (9:20–15:10 Mon–Fri).
         </p>
       ) : null}
+
+      {/* cockpit headline: period P&L + a proper equity curve */}
+      <div className="grid items-center gap-4 rounded-lg border border-[var(--hair-soft)] bg-white/[0.015] p-3.5 lg:grid-cols-[minmax(0,1fr),1.5fr]">
+        <div>
+          <p className={fx.cardLabel}>Realised P&amp;L · {PERIOD_LABEL[period]}</p>
+          <p className={cn('mt-1 font-mono text-[2rem] font-extrabold leading-none tabular-nums', pnlClass(net))}>
+            {money(net)}
+          </p>
+          <p className="mt-1.5 font-mono text-[11px] text-slate-500">
+            {block.closed ?? 0} closed · {block.wins ?? 0}W / {block.losses ?? 0}L ·{' '}
+            {pctRate(block.win_rate)} win
+          </p>
+        </div>
+        <div className="min-w-0">
+          {equity.length > 1 ? (
+            <EquityCurve values={equity} height={96} className="w-full" />
+          ) : (
+            <p className="text-right font-mono text-[11px] text-slate-600">building the curve…</p>
+          )}
+        </div>
+      </div>
 
       {isLoading && !analytics ? (
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
-              className="h-14 animate-pulse rounded-lg border border-white/[0.04] bg-white/[0.03]"
+              className="h-16 animate-pulse rounded-xl border border-white/[0.04] bg-white/[0.03]"
             />
           ))}
         </div>
