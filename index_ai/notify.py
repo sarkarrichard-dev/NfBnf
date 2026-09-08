@@ -112,6 +112,14 @@ def send(text: str) -> None:
     """Fire-and-forget. Returns immediately; the POST runs on a daemon thread."""
     if not enabled():
         return
+    if os.getenv("NOTIFY_TRACE", "").strip():
+        import traceback
+
+        logger.warning(
+            "NOTIFY_TRACE | %s\n%s",
+            text.splitlines()[0] if text else "",
+            "".join(traceback.format_stack()[:-1]),
+        )
     threading.Thread(target=_post, args=(text,), daemon=True).start()
 
 

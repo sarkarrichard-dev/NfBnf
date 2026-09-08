@@ -158,7 +158,6 @@ def eod_due() -> bool:
     this check, so firing on the first post-15:10 cycle would build the report
     and the Telegram summary a trade or two short. Wait out the close; a stuck
     position that hasn't cleared 10 min later no longer blocks it."""
-    from datetime import time as _time
 
     from index_ai.market_clock import is_trading_day, session_times
 
@@ -169,7 +168,12 @@ def eod_due() -> bool:
         return False
     if _state().get("eod_date") == today_ist_date():
         return False
-    if now < _time(15, 20):
+    # Wait for the square-off to actually flatten the book before building the
+    # report + Telegram summary — otherwise day_review sees 0 closed and the
+    # summary never sends. The square-off normally finishes by ~15:15; give it
+    # until market close, then run regardless so a genuinely stuck position
+    # can't block the report forever.
+    if now < session_times()["market_close"]:
         from index_ai.config import settings
         from index_ai.learning import open_trades_for_mode
 
@@ -258,11 +262,22 @@ def run_eod() -> dict[str, Any]:
     except Exception:
         pass
 
+    # Only mark the day done once the report reflects a settled book. If entries
+    # were taken today but the day review still shows 0 closed, the square-off
+    # ran late — leave eod_date unset so the next scan cycle rebuilds it (and
+    # sends the summary) once the positions clear. Give up by 15:45 so a
+    # genuinely stuck position can't force endless re-runs.
+    from datetime import time as _t
+
+    summ = (report.get("day_review") or {}).get("summary") or {}
+    settled = bool(summ.get("closed")) or not summ.get("total") or now_ist().time() >= _t(15, 45)
     st = _state()
-    st["eod_date"] = today
+    if settled:
+        st["eod_date"] = today
     st["last_eod"] = {
         "at": report["generated_at_ist"],
         "brain_trained": bool((report.get("brain") or {}).get("trained")),
+        "settled": bool(settled),
     }
     _save(st)
     return report

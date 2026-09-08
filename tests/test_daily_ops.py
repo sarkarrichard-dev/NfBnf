@@ -74,9 +74,14 @@ def test_eod_due_waits_for_the_square_off_to_finish(monkeypatch):
     open_trades.clear()
     assert daily_ops.eod_due() is True
 
-    # 15:21, still stuck open → fire anyway rather than never
+    # 15:21, square-off ran late and a position is still open → keep waiting
+    # (so the day review isn't built with 0 closed and the summary is sent)
     open_trades.append("stuck")
     monkeypatch.setattr(daily_ops, "now_ist", lambda: datetime(2026, 9, 2, 15, 21, tzinfo=ist))
+    assert daily_ops.eod_due() is False
+
+    # past the 15:30 close, still stuck → fire anyway rather than never
+    monkeypatch.setattr(daily_ops, "now_ist", lambda: datetime(2026, 9, 2, 15, 31, tzinfo=ist))
     assert daily_ops.eod_due() is True
 
 
