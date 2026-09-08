@@ -19,7 +19,7 @@ const SUBTABS = [
  *  via the `?strategy=` handoff below. */
 export function StrategiesPage() {
   const [sub, setSub] = useStickyTab('algo.strategies.sub', 'mine')
-  const [seed, setSeed] = useStickyTab('algo.strategies.seed', 'candle_renko')
+  const [seed, setSeed] = useStickyTab('algo.strategies.seed', 'fvg_scalp')
 
   const openBuilder = (id: string) => {
     setSeed(id)

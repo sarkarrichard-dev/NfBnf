@@ -175,7 +175,7 @@ def live_lane(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_API_SECRET", "s")
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
-    monkeypatch.setenv("CRYPTO_CANDLE_RENKO_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_FVG_SCALP_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_USDINR", "88")
     monkeypatch.setattr(journal, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(journal, "JOURNAL_PATH", tmp_path / "journal.jsonl")

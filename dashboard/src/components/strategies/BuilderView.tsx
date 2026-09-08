@@ -97,8 +97,10 @@ export function BuilderView({ seedId }: { seedId: string }) {
         if (p.max != null && v > p.max) out.push(`${p.label} above ${p.max}`)
       }
     }
-    if (base.id === 'candle_renko' && Number(values.st_period) < Number(values.atr_len) / 3)
-      out.push('Supertrend period looks short vs ATR — expect chop')
+    if (base.id === 'fvg_scalp' && Number(values.session_start_ist) === Number(values.session_end_ist))
+      out.push('Session start and end are the same hour — no entry window')
+    if (base.id === 'fvg_scalp' && Number(values.fvg_min_atr) < 0.1)
+      out.push('Gap-width floor is tiny — most "gaps" will be noise')
     if (Number(values.ratchet_step_pnl_pct) > Number(values.stop_pnl_pct))
       out.push('Ratchet step wider than the initial stop — it will never ratchet')
     return out

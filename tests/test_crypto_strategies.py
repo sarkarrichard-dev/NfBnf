@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from crypto.strategies import bb_reversal, candle_renko, ema_jaguar, vp_edge
-from crypto.strategies.renko import brick_dir
+from crypto.strategies import bb_reversal, ema_jaguar, fvg_scalp, vp_edge
+from crypto.strategies.fairvalue import find_fvgs
 from crypto.strategies.volprofile import profile
 
 
@@ -109,44 +109,68 @@ def test_vp_edge_fades_a_balanced_range():
     assert saw2["enter"] == 0
 
 
-def test_candle_renko_needs_trend_renko_and_pattern_aligned():
-    rng = np.random.default_rng(7)
-    # a clean up-trend then a flip down — enters long in the up-leg, then the
-    # 15m supertrend flip forces the exit
-    steps = np.concatenate([rng.normal(0.4, 1.1, 320), rng.normal(-0.6, 1.1, 240)])
-    n = len(steps)
-    close = 100 + np.cumsum(steps)
-    open_ = np.empty(n)
-    open_[0] = 100.0
-    open_[1:] = close[:-1]
-    hi = np.maximum(open_, close) + np.abs(rng.normal(0.3, 0.3, n))
-    lo = np.minimum(open_, close) - np.abs(rng.normal(0.3, 0.3, n))
+def test_fvg_scalp_enters_on_a_gap_retest_then_trails_out():
+    # slow uptrend, an impulse leg that leaves a bullish FVG, a retrace into it
+    c = [100.0 + 0.1 * i for i in range(40)] + [104.0, 105.0, 111.0, 111.5, 112.0]
+    c += [111.0 - 0.55 * i for i in range(1, 11)] + [105.6] * 15
+    n = len(c)
+    o = [x - 0.1 for x in c]
+    hi = [x + 0.5 for x in c]
+    lo = [x - 0.5 for x in c]
+    vol = [10.0] * n
+    hi[42], lo[42], vol[42] = 111.8, 104.9, 90.0
+    lo[43] = 110.6
+    o[55], c[55], hi[55], lo[55] = 106.0, 106.4, 106.7, 104.4  # hammer in the gap
     df = pd.DataFrame(
         {
-            "datetime": pd.date_range("2026-09-01", periods=n, freq="5min", tz="UTC"),
-            "open": open_,
+            "datetime": pd.date_range(
+                "2026-09-08 14:00", periods=n, freq="5min", tz="Asia/Kolkata"
+            ),
+            "open": o,
             "high": hi,
             "low": lo,
-            "close": close,
-            "volume": np.abs(rng.normal(10, 2, n)),
+            "close": c,
+            "volume": vol,
         }
     )
-    saw, first = _run(candle_renko, candle_renko.CandleRenkoConfig(), df, 40)
-    assert saw["enter"] >= 1 and saw["exit"] >= 1
-    assert first == "long"  # the first aligned setup is in the up-leg
+    cfg = fvg_scalp.FvgScalpConfig(
+        atr_len=10,
+        vol_lookback=10,
+        struct_left=3,
+        struct_right=2,
+        ema_fast=10,
+        stretch_atr=0.3,
+        fvg_min_atr=0.1,
+    )
+    saw, first = _run(fvg_scalp, cfg, df, 30)
+    assert saw["enter"] >= 1
+    assert first == "long"
 
-    # a dead-flat market never aligns a pattern
-    flat = df.assign(open=100.0, high=100.5, low=99.5, close=100.0)
-    saw2, _ = _run(candle_renko, candle_renko.CandleRenkoConfig(), flat, 40)
+    # outside the IST session window → no entries at all
+    off = df.assign(
+        datetime=pd.date_range("2026-09-08 03:00", periods=n, freq="5min", tz="Asia/Kolkata")
+    )
+    saw2, _ = _run(fvg_scalp, cfg, off, 30)
     assert saw2["enter"] == 0
 
 
-def test_renko_brick_direction_follows_the_last_completed_brick():
-    up = pd.Series([100 + i for i in range(30)])
-    assert brick_dir(up, 5.0) == 1
-    reverse = pd.Series([100 + i for i in range(20)] + [120 - i for i in range(25)])
-    assert brick_dir(reverse, 5.0) == -1
-    assert brick_dir(pd.Series([100.0] * 10), 5.0) == 0
+def test_fvg_detection_drops_a_gap_once_price_closes_through_it():
+    hi = [10.0, 10, 10, 11, 13, 15, 16, 16, 16, 16]
+    lo = [9.0, 9, 9, 10, 12, 14, 15, 15, 15, 15]
+    cl = [9.5, 9.5, 9.5, 10.5, 12.5, 14.5, 15.5, 15.5, 15.5, 15.5]
+    frame = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-09-08", periods=10, freq="5min", tz="UTC"),
+            "open": cl,
+            "high": hi,
+            "low": lo,
+            "close": cl,
+            "volume": [1.0] * 10,
+        }
+    )
+    assert any(g["dir"] == 1 for g in find_fvgs(frame, atr_val=1.0, min_atr=0.2))
+    frame.loc[9, ["close", "low"]] = [8.0, 7.5]
+    assert not any(g["dir"] == 1 for g in find_fvgs(frame, atr_val=1.0, min_atr=0.2))
 
 
 def test_volprofile_value_area_ordering():

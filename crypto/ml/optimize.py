@@ -57,11 +57,11 @@ SEARCH_SPACE: dict[str, dict[str, list]] = {
         "value_area_pct": [0.6, 0.7, 0.8],
         "edge_buffer_pct": [0.3, 0.6, 1.0],
     },
-    "candle_renko": {
-        "atr_len": [10, 14, 20],
-        "renko_atr_mult": [0.5, 1.0, 2.0],
-        "st_period": [7, 10, 14],
-        "st_mult": [2.0, 3.0, 4.0],
+    "fvg_scalp": {
+        "fvg_min_atr": [0.15, 0.25, 0.4],
+        "impulse_atr_mult": [1.0, 1.2, 1.5],
+        "impulse_vol_mult": [1.0, 1.3, 1.6],
+        "stretch_atr": [1.0, 1.5, 2.5],
     },
 }
 
@@ -202,10 +202,10 @@ def optimize_one(name: str, *, frames: dict[str, pd.DataFrame] | None = None,
             "unstable_neighbours": len(flips)}
 
 
-# candle_renko's replay is ~3× heavier per bar (15m resample + Supertrend), so
-# it gets a smaller nightly search — its tuner has never found an eligible combo
-# anyway. A manual optimize_one() still uses the full MAX_COMBOS.
-_NIGHTLY_COMBOS = {"candle_renko": 10}
+# fvg_scalp's replay is ~3× heavier per bar (15m resample + Supertrend + FVG
+# scan), so it gets a smaller nightly search. A manual optimize_one() still uses
+# the full MAX_COMBOS.
+_NIGHTLY_COMBOS = {"fvg_scalp": 12}
 
 
 def retune_all(*, days: int = TUNE_DAYS) -> dict[str, Any]:

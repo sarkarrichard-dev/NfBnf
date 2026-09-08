@@ -65,7 +65,7 @@ export function MarketplaceView({
 
         <button
           type="button"
-          onClick={() => onBuild('candle_renko')}
+          onClick={() => onBuild('fvg_scalp')}
           className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--hair)] text-slate-400 transition-colors hover:border-[var(--acc)] hover:text-[var(--acc)]"
         >
           <span className="text-2xl leading-none">+</span>

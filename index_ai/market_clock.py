@@ -138,6 +138,23 @@ def is_session_active(when: datetime | None = None) -> bool:
     return times["market_open"] <= t < times["market_close"]
 
 
+def seconds_to_next_session_open(when: datetime | None = None) -> float:
+    """Seconds from ``when`` until the next trading-day market open (9:15 IST by
+    default). Lets the scanner sleep through the closed hours instead of waking
+    every cycle all night. Returns 0 if a session is already active."""
+    dt = when or now_ist()
+    if is_session_active(dt):
+        return 0.0
+    mo = session_times()["market_open"]
+    probe = dt
+    for _ in range(9):  # today + up to a long weekend / holiday run
+        if is_trading_day(probe) and probe.time() < mo:
+            nxt = probe.replace(hour=mo.hour, minute=mo.minute, second=0, microsecond=0)
+            return max(0.0, (nxt - dt).total_seconds())
+        probe = (probe + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return 12 * 3600.0  # unreachable in practice
+
+
 def is_market_open(when: datetime | None = None) -> bool:
     """Alias for session active (charts, scanner cycles)."""
     return is_session_active(when)

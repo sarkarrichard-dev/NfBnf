@@ -79,7 +79,7 @@ class CryptoSettings:
     max_concurrent: int
     paper_bankroll_usd: float
     # lanes — the section runs when any strategy is enabled. ny_n_break,
-    # ichimoku and candle_renko default on. The 3 video strategies
+    # ichimoku and fvg_scalp default on. The 3 video strategies
     # (bb_reversal / ema_jaguar / vp_edge) default off: they turn on only after
     # crypto/ml/optimize.py shows a stable positive walk-forward net (per
     # crypto/strategies/RESULTS.md).
@@ -88,7 +88,7 @@ class CryptoSettings:
     bb_reversal_enabled: bool
     ema_jaguar_enabled: bool
     vp_edge_enabled: bool
-    candle_renko_enabled: bool
+    fvg_scalp_enabled: bool
     # 6 PM (NY N-Break) session window, IST, 24h "HH:MM"
     ny_start: str
     ny_end: str
@@ -139,7 +139,7 @@ def crypto_settings() -> CryptoSettings:
         bb_reversal_enabled=_b("CRYPTO_BB_REVERSAL_ENABLED", False),
         ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
         vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
-        candle_renko_enabled=_b("CRYPTO_CANDLE_RENKO_ENABLED", True),
+        fvg_scalp_enabled=_b("CRYPTO_FVG_SCALP_ENABLED", True),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
@@ -166,7 +166,7 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_BB_REVERSAL_ENABLED",
     "CRYPTO_EMA_JAGUAR_ENABLED",
     "CRYPTO_VP_EDGE_ENABLED",
-    "CRYPTO_CANDLE_RENKO_ENABLED",
+    "CRYPTO_FVG_SCALP_ENABLED",
     "CRYPTO_DEPLOY_USD",
     "CRYPTO_LEVERAGE",
     "CRYPTO_MAX_CONCURRENT",
