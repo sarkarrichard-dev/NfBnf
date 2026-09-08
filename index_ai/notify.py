@@ -1,13 +1,17 @@
-"""Optional Telegram push for trade entries and exits.
+"""Optional Telegram push for trade entries, exits, the day recap and the
+pre-open brief.
 
 No-op unless ``TELEGRAM_BOT_TOKEN`` and ``TELEGRAM_CHAT_ID`` are set in ``.env``.
-Best effort: the send runs on a daemon thread so it never blocks the scanner
-loop, and any failure is swallowed — a missing alert must never stall or break
-a trade. One httpx POST, no SDK (httpx is already a dependency).
+Best effort by design: every send runs on a daemon thread so it can never stall
+the scanner loop, and every failure is swallowed and logged — a missing alert
+must never break a trade. One ``httpx`` POST, no SDK.
 
-Get the chat id: message the bot (or add it to a channel/group), then run
-``python -m index_ai.notify`` — it prints every chat that has talked to the
-bot, and sends a test message if the id is already configured.
+Sends are de-duplicated on the exact message text for a short window, and the
+record is on disk, so a server restart (which makes a lane re-emit its last
+exit) sends once rather than once per restart.
+
+Chat-id setup: message the bot, then run ``python -m index_ai.notify`` — it
+lists every chat the bot can see and sends a test message when the id is set.
 """
 
 from __future__ import annotations
@@ -24,44 +28,12 @@ from index_ai.premium_trail import premium_trail_cfg, premium_trail_enabled
 
 logger = logging.getLogger(__name__)
 
-# Persistent send-dedup: the same message text inside this window is dropped.
-# Survives restarts, so the boot-time re-send storm (a lane re-notifying the
-# last exit on every server restart) sends once, not once per restart.
-_DEDUP_WINDOW_S = 600.0
 
-
-def _dedup_path() -> str:
-    from index_ai.config import MEMORY_DIR
-
-    return str(MEMORY_DIR / ".notify_dedup.json")
-
-
-def _dedup_seen(text: str) -> bool:
-    """True if this exact text was already sent inside the window. Records it."""
-    now = time.time()
-    path = _dedup_path()
-    h = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-    try:
-        with open(path, encoding="utf-8") as fh:
-            stamps = json.loads(fh.read())
-    except (OSError, ValueError):
-        stamps = {}
-    if now - float(stamps.get(h, 0) or 0) < _DEDUP_WINDOW_S:
-        return True
-    stamps[h] = now
-    stamps = {k: v for k, v in stamps.items() if now - float(v or 0) < 86_400}
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps(stamps))
-        os.replace(tmp, path)
-    except OSError:
-        pass
-    return False
+# ─────────────────────────────  configuration  ──────────────────────────────
 
 
 def _config() -> tuple[str, str] | None:
+    """``(token, chat_id)`` when both are set in the environment, else None."""
     tok = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     return (tok, chat) if tok and chat else None
@@ -71,19 +43,75 @@ def enabled() -> bool:
     return _config() is not None
 
 
+# ───────────────────────  restart-safe send de-dup  ─────────────────────────
+
+_DEDUP_WINDOW_S = 600.0
+_STORE_TTL_S = 86_400  # forget a stamp after a day so the file can't grow forever
+
+
+def _dedup_path() -> str:
+    """Path of the send-dedup stamp file. A function (not a constant) so tests
+    can point it at a tmp dir."""
+    from index_ai.config import MEMORY_DIR
+
+    return str(MEMORY_DIR / ".notify_dedup.json")
+
+
+def _seen_recently(key: str, window_s: float, path: str) -> bool:
+    """True if ``key`` was stamped in ``path`` within ``window_s``. Records the
+    key (and prunes stamps older than a day) as a side effect. Any I/O error
+    fails open — a lost stamp means a possible duplicate, never a missed send.
+    Shared by :func:`_dedup_seen` here and ``crypto.notify.alert``."""
+    now = time.time()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            stamps: dict[str, float] = json.load(fh)
+    except (OSError, ValueError):
+        stamps = {}
+
+    if now - float(stamps.get(key) or 0) < window_s:
+        return True
+
+    stamps[key] = now
+    stamps = {k: v for k, v in stamps.items() if now - float(v or 0) < _STORE_TTL_S}
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(stamps, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return False
+
+
+def _dedup_seen(text: str) -> bool:
+    """True if this exact message text was already sent inside the window."""
+    key = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    return _seen_recently(key, _DEDUP_WINDOW_S, _dedup_path())
+
+
+# ────────────────────────────────  transport  ──────────────────────────────
+
+_TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+
+
 def _post(text: str) -> bool:
+    """Send one message synchronously. Returns True only on a 200 from Telegram.
+    Drops duplicates and unconfigured sends. Never raises."""
     cfg = _config()
     if not cfg:
         return False
     if _dedup_seen(text):
         logger.info("Telegram send skipped (duplicate within %.0fs): %.80s", _DEDUP_WINDOW_S, text)
         return False
-    tok, chat = cfg
+
+    token, chat = cfg
     try:
         import httpx
 
         resp = httpx.post(
-            f"https://api.telegram.org/bot{tok}/sendMessage",
+            _TELEGRAM_API.format(token=token),
             json={
                 "chat_id": chat,
                 "text": text,
@@ -92,24 +120,26 @@ def _post(text: str) -> bool:
             },
             timeout=10,
         )
-        if resp.status_code != 200:
-            # Telegram returns {"ok": false, "description": "..."} — surface it
-            # (HTML parse errors, chat-not-found, bot removed) instead of a
-            # silent drop. The token is only ever in the URL, never logged here.
-            try:
-                why = resp.json().get("description") or resp.text[:200]
-            except Exception:
-                why = f"HTTP {resp.status_code}"
-            logger.warning("Telegram send failed: %s | text=%.120s", why, text)
-            return False
-        return True
-    except Exception as exc:
+    except Exception as exc:  # network, DNS, timeout — log and move on
         logger.warning("Telegram send error: %s", exc)
         return False
 
+    if resp.status_code == 200:
+        return True
+
+    # Surface Telegram's own reason (HTML parse error, chat-not-found, bot
+    # kicked) rather than dropping it silently. The token lives only in the URL,
+    # which is never logged here.
+    try:
+        why = resp.json().get("description") or resp.text[:200]
+    except Exception:
+        why = f"HTTP {resp.status_code}"
+    logger.warning("Telegram send failed: %s | text=%.120s", why, text)
+    return False
+
 
 def send(text: str) -> None:
-    """Fire-and-forget. Returns immediately; the POST runs on a daemon thread."""
+    """Fire-and-forget: returns at once, the POST runs on a daemon thread."""
     if not enabled():
         return
     if os.getenv("NOTIFY_TRACE", "").strip():
@@ -123,11 +153,19 @@ def send(text: str) -> None:
     threading.Thread(target=_post, args=(text,), daemon=True).start()
 
 
-_OPT = {"CALL": "CE", "CE": "CE", "PUT": "PE", "PE": "PE"}
+# ──────────────────────────  formatting primitives  ────────────────────────
+
+_GREEN, _RED, _WHITE = "\U0001f7e2", "\U0001f534", "⚪"
+_OPT_TYPE = {"CALL": "CE", "CE": "CE", "PUT": "PE", "PE": "PE"}
+
+
+def mode_tag(mode: str | None) -> str:
+    """Marks LIVE orders in a message header; paper (the default) is unmarked."""
+    return " · LIVE" if str(mode or "").upper().startswith("LIVE") else ""
 
 
 def _cepe(value: Any) -> str:
-    return _OPT.get(str(value or "").upper(), "")
+    return _OPT_TYPE.get(str(value or "").upper(), "")
 
 
 def _rupees(value: Any) -> str:
@@ -144,15 +182,26 @@ def _strike(value: Any) -> str:
         return "?"
 
 
-def _paper(mode: str | None) -> str:
-    return "" if str(mode or "").upper().startswith("LIVE") else " · paper"
+def _lvl(value: Any) -> str:
+    try:
+        return f"{float(value):,.0f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _signed_rupees_0(value: float) -> str:
+    """``+₹1,234`` / ``−₹1,234`` — whole rupees, explicit sign, unicode minus."""
+    return f"{'+' if value >= 0 else '−'}₹{abs(value):,.0f}"
+
+
+# ───────────────────────  which leg the trade is about  ─────────────────────
 
 
 def _primary_leg(
     option: dict[str, Any], action: str, *, leg_exit_ltps: list[float] | None = None
 ) -> tuple[str, str, Any, Any, Any]:
-    """The leg the trade is really about — the short leg of a spread, else the
-    single option. Returns (side, CE/PE, strike, entry_px, exit_px)."""
+    """The leg the trade is really about — the short leg of a spread, otherwise
+    the single option. Returns ``(side, CE/PE, strike, entry_px, exit_px)``."""
     legs = option.get("legs") or []
     if legs:
         i = next(
@@ -169,6 +218,7 @@ def _primary_leg(
         if exit_px is None and leg_exit_ltps and i < len(leg_exit_ltps):
             exit_px = leg_exit_ltps[i]
         return side, _cepe(leg.get("option_type")), leg.get("strike"), leg.get("entry_ltp"), exit_px
+
     side = "SELL" if str(action or "").upper().startswith("SELL") else "BUY"
     return (
         side,
@@ -180,8 +230,8 @@ def _primary_leg(
 
 
 def _sl_and_target(instrument: str, side: str, entry: Any) -> tuple[float | None, float | None]:
-    """Stop-loss price and the price where the trailing-profit rule arms, from
-    the premium-trail model (None for an index without measured params)."""
+    """``(stop_loss_px, first_target_px)`` from the premium-trail model, or
+    ``(None, None)`` for an instrument with no measured params."""
     try:
         e = float(entry)
     except (TypeError, ValueError):
@@ -190,25 +240,27 @@ def _sl_and_target(instrument: str, side: str, entry: Any) -> tuple[float | None
         return None, None
     cfg = premium_trail_cfg(instrument)
     hard, pct = float(cfg["hard_stop_pts"]), float(cfg["first_target_pct"])
-    if side == "SELL":  # short — loss as the premium rises, profit as it falls
+    if side == "SELL":  # short: loss as the premium rises, profit as it falls
         return e + hard, e * (1 - pct)
-    # long — a hard stop wider than the premium just means the whole premium is
-    # at risk (the option can only fall to zero), so floor the shown level at 0
+    # long: a stop wider than the premium just means the whole premium is at
+    # risk (an option floors at zero), so never show a negative stop level
     return max(0.0, e - hard), e * (1 + pct)
+
+
+# ───────────────────────────  index message builders  ──────────────────────
 
 
 def trade_opened(*, instrument: str, action: str, mode: str | None, option: dict[str, Any]) -> None:
     side, cepe, strike, entry, _ = _primary_leg(option, action)
     lines = [
-        f"\U0001f7e2 <b>ENTRY</b>{_paper(mode)} — {instrument}",
+        f"{_GREEN} <b>ENTRY</b>{mode_tag(mode)} — {instrument}",
         f"{side} {cepe} {_strike(strike)} @ {_rupees(entry)}",
     ]
     sl, tgt = _sl_and_target(instrument, side, entry)
     if sl is not None:
         lines.append(f"SL {_rupees(sl)} · trailing profit at {_rupees(tgt)}")
-    pivot_label = option.get("pivot_target_label")
-    if pivot_label:
-        lines.append(f"target ~{pivot_label}")
+    if option.get("pivot_target_label"):
+        lines.append(f"target ~{option['pivot_target_label']}")
     send("\n".join(lines))
 
 
@@ -225,44 +277,47 @@ def trade_closed(
 ) -> None:
     from index_ai.day_review import _bucket_exit
 
-    side, cepe, strike, _, exit_px = _primary_leg(option, action, leg_exit_ltps=leg_exit_ltps)
+    _, cepe, strike, _, exit_px = _primary_leg(option, action, leg_exit_ltps=leg_exit_ltps)
     if exit_px is None:
         exit_px = exit_premium
     try:
         p = float(pnl)
     except (TypeError, ValueError):
         p = 0.0
-    mark = "\U0001f7e2" if p > 0 else "\U0001f534" if p < 0 else "⚪"
+
+    mark = _GREEN if p > 0 else _RED if p < 0 else _WHITE
     word = "Profit" if p > 0 else "Loss" if p < 0 else "Flat"
     send(
-        f"{mark} <b>EXIT</b>{_paper(mode)} — {instrument}\n"
+        f"{mark} <b>EXIT</b>{mode_tag(mode)} — {instrument}\n"
         f"{cepe} {_strike(strike)} exit @ {_rupees(exit_px)}\n"
-        f"{word} {'+' if p >= 0 else '−'}₹{abs(p):,.0f} · {_bucket_exit(reason)}"
+        f"{word} {_signed_rupees_0(p)} · {_bucket_exit(reason)}"
     )
 
 
 def day_summary(summary: dict[str, Any] | None) -> None:
+    """The index end-of-day recap. Sends even with nothing closed if a book was
+    left open at the bell; stays silent when nothing closed and nothing is open."""
     if not summary:
         return
     opens = summary.get("open_trades") or []
     if not summary.get("closed") and not opens:
         return
+
     net = float(summary.get("net_rupees") or 0)
     wr = ""
     if summary.get("win_rate") is not None:
         wr = f" ({float(summary['win_rate']) * 100:.0f}%)"
+
     lines = [
         f"\U0001f4ca <b>DAY SUMMARY</b> — {summary.get('date', '')}",
         f"{summary.get('closed')} trades · {summary.get('wins', 0)}W / {summary.get('losses', 0)}L{wr}",
-        f"Net {'+' if net >= 0 else '−'}₹{abs(net):,.0f}",
+        f"Net {_signed_rupees_0(net)}",
     ]
+
     by = summary.get("by_instrument") or {}
     if by:
         lines.append(
-            " · ".join(
-                f"{k} {'+' if (v.get('net_rupees') or 0) >= 0 else '−'}₹{abs(v.get('net_rupees') or 0):,.0f}"
-                for k, v in by.items()
-            )
+            " · ".join(f"{k} {_signed_rupees_0(v.get('net_rupees') or 0)}" for k, v in by.items())
         )
     ends = summary.get("how_trades_ended") or {}
     if ends:
@@ -278,36 +333,32 @@ def day_summary(summary: dict[str, Any] | None) -> None:
     send("\n".join(lines))
 
 
-def _lvl(v: Any) -> str:
-    try:
-        return f"{float(v):,.0f}"
-    except (TypeError, ValueError):
-        return "—"
-
-
 def pre_open(brief: dict[str, Any] | None) -> None:
-    """9:20 IST read: the CPR pivot zone, OI lean and planned action per index,
+    """The ~9:20 IST read: per index the CPR zone, OI lean and planned action,
     plus the day's sentiment (India VIX + FII index-futures positioning)."""
     if not brief:
         return
     from index_ai.market_clock import today_ist_date
 
     lines = [f"\U0001f514 <b>PRE-OPEN</b> — {today_ist_date()}"]
-    for key, s in (brief.get("index_snapshots") or {}).items():
-        if not isinstance(s, dict) or s.get("error"):
+    for key, snap in (brief.get("index_snapshots") or {}).items():
+        if not isinstance(snap, dict) or snap.get("error"):
             continue
-        cpr = s.get("cpr") or {}
+        cpr = snap.get("cpr") or {}
         piv, bc, tc = cpr.get("pivot"), cpr.get("bc"), cpr.get("tc")
-        cpr_txt = f"pivot {_lvl(piv)} ({_lvl(bc)}–{_lvl(tc)})" if piv is not None else "pivot —"
-        bits = [cpr_txt, str(s.get("cpr_regime") or "—").replace("_", " ").lower()]
-        oi = s.get("oi") or {}
+        bits = [
+            f"pivot {_lvl(piv)} ({_lvl(bc)}–{_lvl(tc)})" if piv is not None else "pivot —",
+            str(snap.get("cpr_regime") or "—").replace("_", " ").lower(),
+        ]
+        oi = snap.get("oi") or {}
         if oi.get("pcr") is not None:
             bits.append(f"PCR {float(oi['pcr']):.2f}")
         if oi.get("bias"):
             bits.append(str(oi["bias"]).replace("_", " "))
-        action = str(s.get("action") or "NO_TRADE")
-        conf = s.get("confidence")
-        plan = action if action != "NO_TRADE" else "no clear entry"
+
+        action = str(snap.get("action") or "NO_TRADE")
+        conf = snap.get("confidence")
+        plan = "no clear entry" if action == "NO_TRADE" else action
         if action != "NO_TRADE" and conf is not None:
             plan += f" {float(conf):.0%}"
         lines.append(f"<b>{key}</b>  " + " · ".join(bits) + f"\n  → {plan}")
@@ -319,24 +370,27 @@ def pre_open(brief: dict[str, Any] | None) -> None:
     except Exception:
         c = {}
     vix, poi = c.get("vix") or {}, c.get("participant_oi") or {}
-    sent = []
+    sentiment = []
     if vix.get("last") is not None:
         chg = f", {float(vix['change_pct']):+.1f}%" if vix.get("change_pct") is not None else ""
-        sent.append(f"VIX {float(vix['last']):.1f} ({vix.get('regime', '?')}{chg})")
+        sentiment.append(f"VIX {float(vix['last']):.1f} ({vix.get('regime', '?')}{chg})")
     fut = poi.get("fii_index_fut_net")
     if fut is not None:
-        sent.append(
+        sentiment.append(
             f"FII net {'short' if fut < 0 else 'long'} {abs(int(fut)) / 1e5:.1f}L index futures"
         )
-    if sent:
-        lines.append("\n<b>Sentiment</b>  " + " · ".join(sent))
+    if sentiment:
+        lines.append("\n<b>Sentiment</b>  " + " · ".join(sentiment))
     lines.append("First entry 9:20 IST.")
     send("\n".join(lines))
 
 
+# ────────────────────────────  chat-id setup helper  ───────────────────────
+
+
 def _chats_from_updates(result: list[dict[str, Any]]) -> dict[str, str]:
     """Every chat seen in any update kind (message, channel_post, my_chat_member,
-    service messages from being added to a group, …), found by walking the tree."""
+    a service message from being added to a group…), by walking the JSON tree."""
     out: dict[str, str] = {}
 
     def walk(obj: Any) -> None:
@@ -356,50 +410,48 @@ def _chats_from_updates(result: list[dict[str, Any]]) -> dict[str, str]:
 
 
 if __name__ == "__main__":  # setup helper / self-check
-    # run standalone, nothing has loaded .env yet (the server does it at startup)
     from dotenv import load_dotenv
 
     from index_ai.config import ENV_PATH
 
     load_dotenv(ENV_PATH, override=True)
 
-    tok = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    if not tok:
+    _tok = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not _tok:
         print("TELEGRAM_BOT_TOKEN not set in .env — nothing to do.")
         raise SystemExit(0)
+
     import httpx
 
-    me = httpx.get(f"https://api.telegram.org/bot{tok}/getMe", timeout=10).json()
-    if not me.get("ok"):
-        print(f"token rejected by Telegram: {me.get('description')}")
+    _me = httpx.get(f"https://api.telegram.org/bot{_tok}/getMe", timeout=10).json()
+    if not _me.get("ok"):
+        print(f"token rejected by Telegram: {_me.get('description')}")
         raise SystemExit(1)
-    print(f"bot: @{me['result'].get('username')}")
+    _bot = _me["result"].get("username")
+    print(f"bot: @{_bot}")
 
-    data = httpx.get(
-        f"https://api.telegram.org/bot{tok}/getUpdates",
+    _data = httpx.get(
+        f"https://api.telegram.org/bot{_tok}/getUpdates",
         params={"allowed_updates": '["message","channel_post","my_chat_member"]', "timeout": 0},
         timeout=15,
     ).json()
-    if not data.get("ok"):
-        print(f"getUpdates failed: {data.get('description')}")
+    if not _data.get("ok"):
+        print(f"getUpdates failed: {_data.get('description')}")
         print("(a 409 means a webhook is set — run deleteWebhook first)")
         raise SystemExit(1)
 
-    seen = _chats_from_updates(data.get("result", []))
-    if seen:
+    _seen = _chats_from_updates(_data.get("result", []))
+    if _seen:
         print("\nChats this bot can see (put one id in TELEGRAM_CHAT_ID):")
-        for cid, label in seen.items():
-            print(f"  {cid}   {label}")
+        for _cid, _label in _seen.items():
+            print(f"  {_cid}   {_label}")
         print("\nGroup / supergroup ids are negative — that's expected.")
     else:
         print(
             "\nNo chats found. Telegram only shows a group message to a bot when either\n"
-            "  • the bot's group privacy is OFF  (BotFather → /setprivacy → Disable), or\n"
-            "  • the message is a command addressed to it.\n"
-            "Do this: in the group, send  /start@"
-            + str(me["result"].get("username"))
-            + "  (or any message after disabling privacy), then re-run this."
+            "  - the bot's group privacy is OFF  (BotFather -> /setprivacy -> Disable), or\n"
+            "  - the message is a command addressed to it.\n"
+            f"In the group, send  /start@{_bot}  (or any message once privacy is off), then re-run."
         )
     if enabled():
-        ok = _post("✅ Algo BNF notifications are wired up.")
-        print(f"\ntest message sent: {ok}")
+        print(f"\ntest message sent: {_post('Algo BNF notifications are wired up.')}")
