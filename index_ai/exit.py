@@ -295,6 +295,22 @@ def close_open_trade(
         leg_exit_ltps=leg_exit_ltps,
     )
     learned = record_trade_outcome(trade_id, pnl, note=note)
+    if learned.get("_transitioned"):
+        try:
+            from index_ai.notify import trade_closed
+
+            trade_closed(
+                instrument=str(trade.get("instrument") or option.get("instrument") or ""),
+                action=str(trade.get("action") or option.get("structure") or ""),
+                mode=mode,
+                option=option,
+                pnl=pnl,
+                reason=reason,
+                exit_premium=resolved_exit_ltp,
+                trade_id=trade_id,
+            )
+        except Exception:
+            pass
     return {
         "status": "CLOSED" if learned.get("_transitioned") else "ALREADY_CLOSED",
         "trade_id": trade_id,

@@ -476,6 +476,12 @@ async def _run_pre_open_brief_if_due(client: DhanClient, cfg: AppSettings) -> No
         confidence_bump=brief.get("confidence_bump"),
         notes=brief.get("notes"),
     )
+    try:  # one push per IST day — notify.pre_open de-dups on the date itself
+        from index_ai.notify import pre_open
+
+        pre_open(brief)
+    except Exception:
+        pass
 
 
 async def _scan_index(
