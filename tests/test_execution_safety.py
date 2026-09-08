@@ -130,6 +130,8 @@ def test_duplicate_open_position_detected() -> None:
         assert validate_open_position("NIFTY", "PAPER", action="SELL_BEAR_CALL_SPREAD").ok
         # a different instrument is always free
         assert validate_open_position("BANKNIFTY", "PAPER", action="BUY_CALL").ok
+        # unknown action must fail safe — block on any open position, not skip
+        assert not validate_open_position("NIFTY", "PAPER", action="WEIRD_ACTION").ok
     finally:
         with connect() as db:
             db.execute("DELETE FROM trades WHERE id = ?", (tid,))
@@ -157,6 +159,30 @@ def test_buy_liquidity_gate() -> None:
     assert validate_buy_liquidity(dead, "BUY_CALL").code == "dead_strike"
     # empty snapshot (no chain OI at all) must not block
     assert validate_buy_liquidity({"option_type": "CALL"}, "BUY_CALL").ok
+    # malformed chain totals must not throw — return ok, not an exception
+    assert validate_buy_liquidity(
+        {"option_type": "CALL", "oi": [1], "total_call_oi": "x,y", "chain_bias": "balanced"},
+        "BUY_CALL",
+    ).ok
+
+
+def test_sell_lane_floor_can_reach_the_gate() -> None:
+    """A plain credit setup must be able to emit below the old 0.58 base so the
+    0.45 sell gate actually binds (review finding #1)."""
+    from index_ai.strategies.sell_strategy import _credit_confidence
+
+    class _R:
+        width_class = "NARROW"
+        day_bias = "SIDEWAYS"
+        virgin_cpr = False
+
+    plain = _credit_confidence(_R(), ema_cross=False, strategy_mode="", volume_ratio=1.0)
+    assert plain <= 0.50
+    # mode-specific setups still floor higher
+    assert (
+        _credit_confidence(_R(), ema_cross=False, strategy_mode="cpr_trend", volume_ratio=1.0)
+        >= 0.58
+    )
 
 
 def test_full_plan_validation_passes_clean_credit(monkeypatch) -> None:

@@ -51,9 +51,9 @@ class StrategyParams:
     enable_credit_strategies: bool = True
     credit_wing_strikes: int = 2
     credit_short_strike_steps: int = 2
-    credit_min_confidence: float = 0.58
-    # Entry gate for the sell lane — separate from credit_min_confidence (which is
-    # the *emitted* signal-confidence base). Take any sell setup at/above this.
+    # The sell lane's take-the-trade bar: the floor for a plain credit setup's
+    # emitted confidence *and* the execution gate. Mode-specific rules in
+    # sell_strategy raise it where more confirmation is wanted.
     credit_confidence_gate: float = 0.45
     credit_min_volume_ratio: float = 0.85
     credit_volume_lookback_bars: int = 20
@@ -141,7 +141,6 @@ def get_strategy_params() -> StrategyParams:
         enable_credit_strategies=_bool("ENABLE_CREDIT_STRATEGIES", True),
         credit_wing_strikes=_int("CREDIT_WING_STRIKES", 2),
         credit_short_strike_steps=_int("CREDIT_SHORT_STRIKE_STEPS", 2),
-        credit_min_confidence=_float("CPR_CREDIT_MIN_CONFIDENCE", 0.58),
         credit_confidence_gate=_float("CPR_CREDIT_CONFIDENCE_GATE", 0.45),
         credit_min_volume_ratio=_float("CREDIT_MIN_VOLUME_RATIO", 0.85),
         credit_volume_lookback_bars=_int("CREDIT_VOLUME_LOOKBACK_BARS", 20),
@@ -242,7 +241,6 @@ def strategy_tuning_summary() -> dict[str, object]:
         ),
         "credit_wing_strikes": p.credit_wing_strikes,
         "credit_short_strike_steps": p.credit_short_strike_steps,
-        "credit_min_confidence": p.credit_min_confidence,
         "credit_min_volume_ratio": p.credit_min_volume_ratio,
         "credit_volume_lookback_bars": p.credit_volume_lookback_bars,
         "credit_min_reward_to_risk": p.credit_min_reward_to_risk,
@@ -313,7 +311,6 @@ def strategy_tuning_summary() -> dict[str, object]:
             "ENABLE_CREDIT_STRATEGIES",
             "CPR_NARROW_WIDTH_PCT",
             "CPR_WIDE_WIDTH_PCT",
-            "CPR_CREDIT_MIN_CONFIDENCE",
             "CPR_CREDIT_CONFIDENCE_GATE",
             "CREDIT_MIN_VOLUME_RATIO",
             "CREDIT_VOLUME_LOOKBACK_BARS",

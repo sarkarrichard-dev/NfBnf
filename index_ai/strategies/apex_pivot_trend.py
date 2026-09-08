@@ -67,7 +67,7 @@ def apex_pivot_trend_signal(
     iv = candle_interval_minutes()
     if close > r1 and st_dir == 1:
         gap = min(1.0, (close - r1) / max(close * 0.003, 1.0))
-        conf = round(0.58 + gap * 0.12, 3)
+        conf = round(p.credit_confidence_gate + gap * 0.12, 3)
         return copy_signal(
             base,
             action="SELL_ATM_PUT",
@@ -81,7 +81,7 @@ def apex_pivot_trend_signal(
 
     if close < s1 and st_dir == -1:
         gap = min(1.0, (s1 - close) / max(close * 0.003, 1.0))
-        conf = round(0.58 + gap * 0.12, 3)
+        conf = round(p.credit_confidence_gate + gap * 0.12, 3)
         return copy_signal(
             base,
             action="SELL_ATM_CALL",

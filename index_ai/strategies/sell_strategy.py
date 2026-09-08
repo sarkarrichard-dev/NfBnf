@@ -32,7 +32,9 @@ def _credit_confidence(
     volume_ratio: float = 1.0,
 ) -> float:
     params = get_strategy_params()
-    base = params.credit_min_confidence
+    # Floor for a plain credit setup — the sell lane's take-the-trade bar. Mode-
+    # specific overrides below raise it where more confirmation is wanted.
+    base = params.credit_confidence_gate
     if ema_cross or strategy_mode == "ema_cross":
         base = max(base, 0.60)
     if strategy_mode == "cpr_sideways":
@@ -92,9 +94,7 @@ def evaluate_sell_signal(
     price = float(row["close"])
     ema_fast = float(row["ema_fast"])
     ema_slow = float(row["ema_slow"])
-    cross = cross or analyze_ema_cross(
-        df, fast=cfg.ema_fast_period, slow=cfg.ema_slow_period
-    )
+    cross = cross or analyze_ema_cross(df, fast=cfg.ema_fast_period, slow=cfg.ema_slow_period)
 
     base = dict(
         price=price,
@@ -187,9 +187,7 @@ def evaluate_sell_signal(
 
     vol_note = ""
     if vol_stats.get("ready"):
-        vol_note = (
-            f" Vol {vol_stats['last_bar_volume']:,} ({vol_stats['ratio']:.2f}x avg)."
-        )
+        vol_note = f" Vol {vol_stats['last_bar_volume']:,} ({vol_stats['ratio']:.2f}x avg)."
 
     return StrategySignal(
         action=action,

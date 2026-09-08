@@ -355,11 +355,12 @@ def validate_buy_liquidity(option: dict[str, Any], action: str) -> SafetyCheck:
     try:
         leg_oi = int(option.get("oi") or 0)
         leg_vol = int(option.get("volume") or 0)
+        chain_oi_total = int(option.get("total_call_oi") or 0) + int(
+            option.get("total_put_oi") or 0
+        )
     except (TypeError, ValueError):
-        leg_oi = leg_vol = 0
-    chain_has_oi = (
-        int(option.get("total_call_oi") or 0) + int(option.get("total_put_oi") or 0)
-    ) > 0
+        leg_oi = leg_vol = chain_oi_total = 0
+    chain_has_oi = chain_oi_total > 0
 
     if p.buy_min_leg_oi > 0 and chain_has_oi and leg_oi < p.buy_min_leg_oi:
         return SafetyCheck(
@@ -400,19 +401,16 @@ def validate_open_position(
     the same index at once; two buys (or two sells) cannot. Pass ``action=None``
     for the old any-position-blocks behaviour."""
     normalized = str(mode or "PAPER").upper()
-    lane = None
-    if action:
-        from index_ai.strategies.strategy_router import trade_lane
+    from index_ai.strategies.strategy_router import trade_lane
 
-        lane = trade_lane(action)
+    lane = trade_lane(action) if action else None
+    if lane == "none":  # unknown action — fail safe, block on any open position
+        lane = None
     for trade in open_trades_for_mode(normalized):
         if str(trade.get("instrument") or "") != instrument_key or trade.get("pnl") is not None:
             continue
-        if lane is not None:
-            from index_ai.strategies.strategy_router import trade_lane
-
-            if trade_lane(str(trade.get("action") or "")) != lane:
-                continue
+        if lane is not None and trade_lane(str(trade.get("action") or "")) != lane:
+            continue
         tag = f" {lane}" if lane else ""
         return SafetyCheck(
             False,
