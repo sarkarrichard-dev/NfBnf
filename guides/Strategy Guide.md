@@ -86,7 +86,10 @@ Set in `.env` (see `.env.example`; **restart the server** after edits). The dash
 | `CPR_WIDE_WIDTH_PCT` | `0.75` | At or above → sideways bias |
 | `CREDIT_SHORT_STRIKE_STEPS` | `2` | Short leg distance from ATM (× strike step) |
 | `CREDIT_WING_STRIKES` | `2` | Hedge wing width (× strike step) |
-| `CPR_CREDIT_MIN_CONFIDENCE` | `0.58` | Base confidence for credit entries |
+| `CPR_CREDIT_CONFIDENCE_GATE` | `0.45` | Sell-lane floor — emitted confidence base *and* entry gate (mode rules raise it) |
+| `BUY_MIN_LEG_OI` | `0` | Min OI on the chosen buy leg (0 = off) |
+| `BUY_MIN_LEG_VOLUME` | `0` | Min volume on the chosen buy leg (0 = off) |
+| `BUY_BLOCK_CONTRA_OI` | `true` | Skip a buy when the ATM OI bias fights the direction |
 | `REQUIRE_SUPERTREND_ALIGN` | `true` | Block buys against Supertrend |
 | `REQUIRE_BREAKOUT_TAG` | `false` | Require Break Res/Sup for buys |
 
