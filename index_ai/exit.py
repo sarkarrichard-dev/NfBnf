@@ -160,7 +160,7 @@ def close_open_trade(
 
     # Guard against a stale `trade` dict (a cached in-memory copy, a row already
     # closed by another path, a phantom id): the row must exist and still be
-    # open in the DB right now, or we do nothing — no journal write, no Telegram.
+    # open in the DB right now, or we do nothing — no journal write, no downstream side effects.
     from index_ai.learning import connect
 
     with connect() as _db:
@@ -295,22 +295,6 @@ def close_open_trade(
         leg_exit_ltps=leg_exit_ltps,
     )
     learned = record_trade_outcome(trade_id, pnl, note=note)
-    if learned.get("_transitioned"):
-        try:
-            from index_ai.notify import trade_closed
-
-            trade_closed(
-                instrument=str(trade.get("instrument") or option.get("instrument") or ""),
-                action=str(trade.get("action") or option.get("structure") or ""),
-                mode=mode,
-                option=option,
-                pnl=pnl,
-                reason=reason,
-                exit_premium=resolved_exit_ltp,
-                leg_exit_ltps=leg_exit_ltps,
-            )
-        except Exception:
-            pass
     return {
         "status": "CLOSED" if learned.get("_transitioned") else "ALREADY_CLOSED",
         "trade_id": trade_id,

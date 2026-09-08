@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -249,38 +249,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     crypto_nightly_task = asyncio.create_task(_crypto_nightly_loop())
 
-    async def _crypto_day_summary_loop() -> None:
-        """Crypto end-of-day Telegram summary at 23:58 IST, once per IST day.
-        Separate from the nightly ML maintenance so the recap lands on the day
-        it covers. Lists any still-open positions. Opt-in, never fatal."""
-        try:
-            from crypto.config import CRYPTO_MEMORY
-            from crypto.day_review import send_day_summary
-            from crypto.lanes import enabled as crypto_enabled
-        except Exception:
-            return
-        ist = ZoneInfo("Asia/Kolkata")
-        _clog = logging.getLogger("crypto.lanes")
-        mark = CRYPTO_MEMORY / "crypto_day_summary.txt"
-        while True:
-            now = datetime.now(ist)
-            target = now.replace(hour=23, minute=58, second=0, microsecond=0)
-            if now >= target:
-                target += timedelta(days=1)
-            await asyncio.sleep(max(30.0, (target - now).total_seconds()))
-            try:
-                day = datetime.now(ist).date().isoformat()
-                done = mark.read_text(encoding="utf-8").strip() if mark.is_file() else ""
-                if crypto_enabled() and done != day:
-                    r = await asyncio.to_thread(send_day_summary)
-                    _clog.info("crypto day summary %s: %s", day, r)
-                    mark.parent.mkdir(parents=True, exist_ok=True)
-                    mark.write_text(day, encoding="utf-8")
-            except Exception:
-                _clog.warning("crypto day summary loop error", exc_info=True)
-
-    crypto_day_summary_task = asyncio.create_task(_crypto_day_summary_loop())
-
     async def _warm() -> None:
         """Spin up the thread pool and touch the modules the first UI action needs.
 
@@ -344,7 +312,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     warm_task.cancel()
     crypto_task.cancel()
     crypto_nightly_task.cancel()
-    crypto_day_summary_task.cancel()
     eod_catch_up_task.cancel()
     for task in (
         renew_task,
@@ -354,7 +321,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         warm_task,
         crypto_task,
         crypto_nightly_task,
-        crypto_day_summary_task,
         eod_catch_up_task,
     ):
         try:
@@ -1617,19 +1583,15 @@ def configure_server_logging() -> Path:
         lg = logging.getLogger(name)
         lg.handlers = []
         lg.propagate = True
-    # httpx logs every request URL at INFO — for the Telegram API that URL
-    # carries the bot token, which would then be written to server.log (and the
-    # S3 backup) on every send. Quiet the HTTP client loggers.
     _quiet_http_loggers()
     return log_path
 
 
 def _quiet_http_loggers() -> None:
-    """httpx logs every request URL at INFO; the Telegram API URL carries the bot
-    token. On the run() path that INFO line lands in memory/server.log (and its
-    backup); on the uvicorn path there's no such file handler today, but a cloud
-    log shipper attaching a root handler would capture it. Belt and braces —
-    called from both start paths (run() and lifespan())."""
+    """httpx logs every outbound request URL at INFO — one line per Dhan/Delta
+    call, which floods server.log and could carry a query-string credential into
+    it (and its backup). Keep the HTTP client loggers at WARNING. Called from
+    both start paths — run() and lifespan()."""
     for name in ("httpx", "httpcore", "hpack", "h11"):
         logging.getLogger(name).setLevel(logging.WARNING)
 

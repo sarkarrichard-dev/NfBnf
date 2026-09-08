@@ -67,15 +67,7 @@ def live_gate(settings: CryptoSettings | None = None) -> tuple[bool, str]:
     tripped, why = kill_switch(s)
     if tripped:
         disarm_crypto_live()
-        try:
-            from crypto import notify
-
-            notify.alert(
-                f"\U0001f6d1 <b>CRYPTO KILL SWITCH</b> — live disarmed\n{why}",
-                key="kill_switch", gap_s=3600,
-            )
-        except Exception:
-            pass
+        logger.error("crypto KILL SWITCH — live disarmed: %s", why)
         return False, f"kill switch: {why}"
     return True, ""
 
@@ -243,15 +235,6 @@ def reconcile(client: DeltaClient) -> list[str]:
             issues.append(f"Delta holds {sym} but no local paper/live position tracks it")
     if issues:
         logger.error("crypto reconcile mismatch: %s", " | ".join(issues))
-        try:
-            from crypto import notify
-
-            notify.alert(
-                "⚠️ <b>CRYPTO RECONCILE</b>\n" + "\n".join(issues),
-                key="reconcile", gap_s=3600,
-            )
-        except Exception:
-            pass
     return issues
 
 

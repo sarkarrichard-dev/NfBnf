@@ -15,7 +15,7 @@ from typing import Any
 
 import pandas as pd
 
-from crypto import charges, executor, journal, notify
+from crypto import charges, executor, journal
 from crypto.charges import round_trip_cost_usd
 from crypto.config import crypto_settings
 from crypto.delta import market_data, products
@@ -30,17 +30,6 @@ from crypto.strategies.trailing import TrailConfig, bracket_stop_price
 logger = logging.getLogger(__name__)
 
 _ICHI_DAYS = {"15m": 4, "30m": 8, "1h": 15, "2h": 25, "4h": 45, "6h": 60, "1d": 260}
-
-def _alert(text: str, *, key: str | None = None, min_gap_s: float = 600.0) -> None:
-    """Fire-and-forget Telegram, deduped per key (on disk, survives restarts) so
-    a stuck-state loop can't send an alert every 60 s."""
-    try:
-        if key is None:
-            notify.send(text)
-        else:
-            notify.alert(text, key=key, gap_s=min_gap_s)
-    except Exception:
-        pass
 
 
 def enabled() -> bool:
@@ -303,7 +292,6 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         journal.save_state(st)  # persist the close BEFORE journalling it
                         if not _already_journalled(row["exit_id"]):
                             journal.journal(row)
-                            notify.closed(row)
                         open_slots = max(0, open_slots - 1)
                         ev.update(pnl_usd=row["pnl_usd"], pnl_inr=row["pnl_inr"])
             except Exception as exc:
@@ -371,11 +359,6 @@ def _live_close(client, contract, pos: dict, ev: dict) -> bool:
             ev["exit_price_source"] = "estimate"
             return True
         logger.error("LIVE EXIT FAILED for %s %s (Delta: %s): %s", sym, pos.get("side"), state, exc)
-        _alert(
-            f"\U0001f534 <b>CRYPTO LIVE EXIT FAILED</b> — {sym} {str(pos.get('side')).upper()} "
-            f"still open ({state})\n{exc}",
-            key=f"exitfail:{sym}:{pos.get('strategy')}",
-        )
         return False
 
 
@@ -403,11 +386,9 @@ def _reap_exchange_close(client, slot: dict, strat: str, sym: str, fx: float, ev
         slot["position"] = None
         if not _already_journalled(row["exit_id"]):
             journal.journal(row)
-            notify.closed(row)
-        _alert(
-            f"ℹ️ <b>CRYPTO</b> — {sym} {pos.get('side','').upper()} closed on the "
-            f"exchange (bracket stop / manual). Journalled at ~{close_ev['price']}.",
-            key=f"reap:{sym}:{strat}",
+        logger.info(
+            "crypto: %s %s closed on the exchange (bracket/manual), journalled at ~%s",
+            sym, str(pos.get("side")).upper(), close_ev["price"],
         )
     return True
 
@@ -457,8 +438,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
             )
         except Exception as exc:
             new_state["position"] = None  # order failed → we are flat, record nothing
-            logger.error("crypto live entry failed: %s", exc)
-            _alert(f"\U0001f534 <b>CRYPTO LIVE ENTRY FAILED</b> — {sym} {side.upper()}\n{exc}")
+            logger.error("crypto live entry FAILED for %s %s: %s", sym, side.upper(), exc)
             ev.update(event="live_rejected", reason=str(exc))
             return
         # THE ORDER IS LIVE. The position MUST be recorded from here — the fill
@@ -490,7 +470,6 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
     slot["position"] = pos
     ev.update(size=fill_size, margin_usd=pos["margin_total_usd"], notional_usd=pos["notional_usd"],
               mode=pos["mode"])
-    notify.opened(pos)
 
 
 def _known_strategies() -> set[str]:
@@ -523,10 +502,6 @@ def _prune_removed_strategies(st, enabled, client, fx, now_utc, events) -> None:
             )
             if row and not _already_journalled(row["exit_id"]):
                 journal.journal(row)
-                try:
-                    notify.closed(row)
-                except Exception:
-                    pass
                 events.append({"strategy": strat, "asset": sym, "event": "exit",
                                "reason": "strategy removed"})
         st.pop(key, None)

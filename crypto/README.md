@@ -2,8 +2,8 @@
 
 A **separate section** of the platform: its own broker (Delta Exchange India),
 its own `.env` keys (`DELTA_*` / `CRYPTO_*`), its own journals
-(`memory/crypto_*`). Shares only the Telegram helper and the `.env` writer with
-the index code.
+(`memory/crypto_*`). Shares only the `.env` writer and `market_clock` with the
+index code.
 
 **Status: paper by default, live available.** All four phases are built. The
 section runs whenever a strategy is enabled (`CRYPTO_NY_NBREAK_ENABLED` /
@@ -38,7 +38,6 @@ crypto/
   sizing.py          $-deploy + leverage -> whole contracts
   charges.py         Delta fee + GST + MEASURED half-spread (samples the l2 book)
   journal.py         memory/crypto_journal.jsonl + crypto_state.json
-  notify.py          crypto Telegram messages (USD + INR)
   strategies/
     ny_n_break.py    the "6 PM" strategy, ported from ny_n_break.pine
     ichimoku.py      TK-cross entry + cloud-reentry exit (reuses index_ai math)
