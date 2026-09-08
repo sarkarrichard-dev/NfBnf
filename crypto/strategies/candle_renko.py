@@ -25,12 +25,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
-from crypto.strategies.indicators import atr
+from crypto.strategies.indicators import atr_last, supertrend_dir
 from crypto.strategies.renko import brick_dir
 from crypto.strategies.trailing import TrailConfig, update_and_check
-from index_ai.strategies.supertrend import supertrend_snapshot
 
 
 @dataclass(frozen=True)
@@ -47,17 +47,43 @@ def _blank_state() -> dict[str, Any]:
 
 
 def _resample_15m(c5: pd.DataFrame) -> pd.DataFrame:
-    g = c5.set_index(pd.to_datetime(c5["datetime"]))
-    out = pd.DataFrame(
+    """5m OHLCV → 15m, numpy segment-reduce (pandas ``.resample`` is ~50× slower
+    here and this runs once per replayed bar)."""
+    idx = pd.DatetimeIndex(pd.to_datetime(c5["datetime"]))
+    o, h, low, c, v = (
+        c5[k].to_numpy(float) for k in ("open", "high", "low", "close", "volume")
+    )
+    b = idx.floor("15min")  # 15-min bucket per bar
+    starts = np.concatenate(([0], np.flatnonzero(b.to_numpy()[1:] != b.to_numpy()[:-1]) + 1))
+    dt = idx.to_numpy()
+    ends = np.concatenate((starts[1:], [len(dt)])) - 1
+    return pd.DataFrame(
         {
-            "open": g["open"].resample("15min").first(),
-            "high": g["high"].resample("15min").max(),
-            "low": g["low"].resample("15min").min(),
-            "close": g["close"].resample("15min").last(),
-            "volume": g["volume"].resample("15min").sum(),
+            "datetime": dt[starts],
+            "open": o[starts],
+            "high": np.maximum.reduceat(h, starts),
+            "low": np.minimum.reduceat(low, starts),
+            "close": c[ends],
+            "volume": np.add.reduceat(v, starts),
         }
-    ).dropna()
-    return out.reset_index(names="datetime")
+    )
+
+
+def _trend_dir(c5: pd.DataFrame, cfg: CandleRenkoConfig, st: dict[str, Any]) -> int:
+    """15m Supertrend direction (+1/-1/0), cached in ``st`` per 15-minute bucket.
+
+    The 15m frame and its Supertrend only change when a new 15m bar closes, so
+    within a bucket (three 5m bars) the answer is reused — this is the hot path
+    when the walk-forward optimiser replays thousands of sliding windows."""
+    bucket = (
+        f"{pd.Timestamp(c5['datetime'].iloc[-1]).floor('15min')}"
+        f"|{cfg.st_period}|{cfg.st_mult}"
+    )
+    if st.get("_trend_bucket") == bucket:
+        return int(st.get("_trend_dir") or 0)
+    d = supertrend_dir(_resample_15m(c5), cfg.st_period, cfg.st_mult)
+    st["_trend_bucket"], st["_trend_dir"] = bucket, d
+    return d
 
 
 def _pattern(c5: pd.DataFrame) -> int:
@@ -101,9 +127,7 @@ def step(
     price = float(c5["close"].iloc[-1])
     ts = str(c5["datetime"].iloc[-1])
 
-    c15 = _resample_15m(c5)
-    snap = supertrend_snapshot(c15, period=cfg.st_period, multiplier=cfg.st_mult)
-    trend = snap["direction"] if snap["ready"] else 0
+    trend = _trend_dir(c5, cfg, st)
 
     pos = st["position"]
     if pos:
@@ -124,7 +148,7 @@ def step(
         ev.update(event="wait", reason="15m supertrend warming up")
         return st, ev
 
-    brick = cfg.renko_atr_mult * float(atr(c5, cfg.atr_len).iloc[-1])
+    brick = cfg.renko_atr_mult * atr_last(c5, cfg.atr_len)
     renko = brick_dir(c5["close"], brick)
     pat = _pattern(c5)
 
