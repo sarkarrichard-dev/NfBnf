@@ -25,6 +25,8 @@ export type LogRow = {
   avg_entry?: number | null
   avg_exit?: number | null
   mark_price?: number | null
+  /** Price quote currency for this leg — 'INR' (index, default) or 'USD' (crypto perps). */
+  quote_ccy?: 'INR' | 'USD'
   leg_mtm?: number | null
   leg_pnl?: number | null
   spread_pnl?: number | null

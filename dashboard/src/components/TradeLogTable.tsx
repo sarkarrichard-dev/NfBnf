@@ -174,13 +174,20 @@ function LegRow({ row }: { row: LogRow }) {
           ? Number(row.display_pnl)
           : null
 
+  const px = (v?: number | null) =>
+    row.quote_ccy === 'USD'
+      ? v == null || Number.isNaN(Number(v))
+        ? '—'
+        : `$${Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+      : formatPrice(v)
+
   const mark =
     row.is_open && row.mark_price != null
-      ? `${formatPrice(row.mark_price)} live`
+      ? `${px(row.mark_price)} live`
       : row.avg_exit != null
-        ? formatPrice(row.avg_exit)
+        ? px(row.avg_exit)
         : row.mark_price != null
-          ? formatPrice(row.mark_price)
+          ? px(row.mark_price)
           : '—'
 
   return (
@@ -207,7 +214,7 @@ function LegRow({ row }: { row: LogRow }) {
       <td className="px-2 py-2 tabular-nums">{row.strike ?? '—'}</td>
       <td className="px-2 py-2">{row.option_type || '—'}</td>
       <td className="px-2 py-2 text-right tabular-nums">{row.quantity ?? '—'}</td>
-      <td className="px-2 py-2 text-right tabular-nums">{formatPrice(row.avg_entry)}</td>
+      <td className="px-2 py-2 text-right tabular-nums">{px(row.avg_entry)}</td>
       <td className="px-2 py-2 text-right tabular-nums">{mark}</td>
       <td className={cn('px-2 py-2 text-right tabular-nums font-semibold', pnlClass(mtm))}>
         {mtm != null ? money(mtm) : '—'}
