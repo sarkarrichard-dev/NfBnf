@@ -368,15 +368,21 @@ app = FastAPI(title="Index Options AI", version="0.2.0", lifespan=lifespan)
 
 # The API has no auth and can arm live orders. It's bound to 127.0.0.1, but a
 # web page in the operator's browser can still reach it by rebinding a hostname
-# it controls to 127.0.0.1 (DNS-rebinding). A Host-header allowlist closes that:
-# the browser sends the attacker's Host, which isn't in the list, so the request
-# is rejected before it hits a handler. Real auth still needs adding before this
-# leaves localhost (see the cloud-migration security baseline).
+# it controls to 127.0.0.1 (DNS-rebinding). A Host-header allowlist closes that
+# vector: the browser sends the attacker's Host, which isn't in the list, so the
+# request is rejected before it hits a handler. Necessary, not sufficient — real
+# auth still needs adding before this leaves localhost (cloud security baseline).
+# ALLOWED_HOSTS is env-driven so a reverse proxy / container health probe in the
+# cloud shape can widen it without a code change.
 from starlette.middleware.trustedhost import TrustedHostMiddleware  # noqa: E402
 
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["localhost", "127.0.0.1", "testserver"],
+    allowed_hosts=[
+        h.strip()
+        for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,::1,testserver").split(",")
+        if h.strip()
+    ],
 )
 
 # Crypto section (Delta Exchange) — separate lane, its own /api/crypto surface.
@@ -1620,9 +1626,10 @@ def configure_server_logging() -> Path:
 
 def _quiet_http_loggers() -> None:
     """httpx logs every request URL at INFO; the Telegram API URL carries the bot
-    token, so an unquieted logger writes it into server.log on every send. Called
-    from both start paths — `python -m index_ai.server` (run()) and
-    `uvicorn index_ai.server:app` (lifespan)."""
+    token. On the run() path that INFO line lands in memory/server.log (and its
+    backup); on the uvicorn path there's no such file handler today, but a cloud
+    log shipper attaching a root handler would capture it. Belt and braces —
+    called from both start paths (run() and lifespan())."""
     for name in ("httpx", "httpcore", "hpack", "h11"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
