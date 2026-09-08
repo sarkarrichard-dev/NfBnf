@@ -3,8 +3,15 @@ import { cn } from '../../lib/cn'
 import { fx } from '../../lib/theme'
 import { money, pctRate, pnlClass, tradesForPeriod } from '../../lib/pnl'
 import { PeriodBar } from '../PeriodBar'
+import { SourceToggle, useTradeSource } from '../SourceToggle'
 import { EquityCurve } from '../charts/EquityCurve'
 import { PnlCalendar } from '../charts/PnlCalendar'
+import { useCryptoJournal } from '../../hooks/useCryptoJournal'
+import {
+  dailySeriesFromTrades,
+  mergeDailySeries,
+  type DailyPoint,
+} from '../../lib/cryptoRows'
 import type {
   AnalyticsResponse,
   DateRange,
@@ -61,10 +68,18 @@ export function ReportsPage({
 }) {
   const [period, setPeriod] = useState<PeriodKey>('all')
   const [range, setRange] = useState<DateRange>({ from: '', to: '' })
+  const [source, setSource] = useTradeSource()
+  const crypto = useCryptoJournal(source !== 'index')
+
+  const allTrades = useMemo<TradeRow[]>(() => {
+    if (source === 'index') return trades
+    if (source === 'crypto') return crypto.trades
+    return [...trades, ...crypto.trades]
+  }, [source, trades, crypto.trades])
 
   const scoped = useMemo(
-    () => tradesForPeriod(trades, period, range).filter((t) => t.pnl != null),
-    [trades, period, range],
+    () => tradesForPeriod(allTrades, period, range).filter((t) => t.pnl != null),
+    [allTrades, period, range],
   )
 
   const m = useMemo(() => {
@@ -92,12 +107,18 @@ export function ReportsPage({
     }
   }, [scoped])
 
+  const daily = useMemo<DailyPoint[]>(() => {
+    const index = analytics?.daily_series ?? []
+    if (source === 'index') return index
+    const cryptoDaily = dailySeriesFromTrades(crypto.trades)
+    return source === 'crypto' ? cryptoDaily : mergeDailySeries(index, cryptoDaily)
+  }, [source, analytics?.daily_series, crypto.trades])
+
   const equity = useMemo(() => {
-    const daily = analytics?.daily_series
-    if (!daily?.length) return []
+    if (!daily.length) return []
     let running = 0
     return [...daily].reverse().map((d) => (running += Number(d.pnl_rupees) || 0))
-  }, [analytics?.daily_series])
+  }, [daily])
 
   const dist = useMemo(() => {
     const pnls = scoped.map((t) => Number(t.pnl) || 0)
@@ -133,12 +154,15 @@ export function ReportsPage({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <PeriodBar
-          period={period}
-          onPeriodChange={setPeriod}
-          range={range}
-          onRangeChange={setRange}
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <PeriodBar
+            period={period}
+            onPeriodChange={setPeriod}
+            range={range}
+            onRangeChange={setRange}
+          />
+          <SourceToggle value={source} onChange={setSource} />
+        </div>
         <span className="text-[11px] text-slate-500">
           {m.count} closed trade{m.count === 1 ? '' : 's'} in range
         </span>
@@ -168,7 +192,7 @@ export function ReportsPage({
           )}
         </Panel>
         <Panel title="P&L calendar" hint="by IST day">
-          <PnlCalendar days={analytics?.daily_series ?? []} />
+          <PnlCalendar days={daily} />
         </Panel>
       </div>
 
@@ -231,8 +255,9 @@ export function ReportsPage({
       </div>
 
       <p className="text-[11px] text-slate-600">
-        Fee drag and P&L-by-exit breakdowns are on the Crypto tab's day review — the
-        index journal stores net P&L only.
+        {source === 'crypto'
+          ? 'Crypto P&L is net of Delta fees, converted to ₹ at the trade’s USD/INR rate. Per-exit and fee-drag breakdowns are on the Crypto tab’s day review.'
+          : 'Fee drag and P&L-by-exit breakdowns are on the Crypto tab’s day review — the index journal stores net P&L only.'}
       </p>
     </div>
   )
