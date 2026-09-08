@@ -6,12 +6,11 @@ type Size = 'sm' | 'md'
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    'bg-[var(--acc)] text-[var(--acc-ink)] border-[var(--acc)] ' +
-    'hover:bg-[var(--acc-strong)] hover:border-[var(--acc-strong)] ' +
-    'active:brightness-90 shadow-[0_0_14px_-3px_var(--acc)] active:shadow-none',
+    'bg-[var(--acc-strong)] text-white border-[var(--acc-strong)] ' +
+    'hover:brightness-110 active:brightness-95',
   secondary:
-    'bg-white/[0.05] text-slate-100 border-white/15 hover:bg-white/[0.1] ' +
-    'hover:border-white/25 active:bg-white/[0.03]',
+    'bg-white/[0.04] text-slate-100 border-[var(--hair)] hover:bg-white/[0.08] ' +
+    'hover:border-white/20 active:bg-white/[0.03]',
   danger:
     'bg-[var(--armed)]/15 text-rose-100 border-[var(--armed)]/60 ' +
     'hover:bg-[var(--armed)]/25 active:bg-[var(--armed)]/35',
@@ -60,11 +59,11 @@ export function Button({
       disabled={disabled || pending}
       aria-busy={pending || undefined}
       className={cn(
-        'inline-flex select-none items-center justify-center rounded-md border font-medium',
-        'transition-[transform,background-color,border-color,box-shadow] duration-100 ease-out',
+        'inline-flex select-none items-center justify-center rounded-lg border font-semibold',
+        'transition-[transform,background-color,border-color,filter] duration-100 ease-out',
         'active:scale-[0.97] motion-reduce:active:scale-100 motion-reduce:transition-none',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--acc)]/70',
-        'focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0d14]',
+        'focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ground)]',
         // Visibly disabled on a near-black ground: dim alone reads as "gone", so
         // also flatten the fill and switch the cursor.
         'disabled:pointer-events-none disabled:opacity-55 disabled:saturate-50 disabled:cursor-not-allowed',
@@ -107,7 +106,7 @@ export function ToggleButton({
       variant="ghost"
       className={cn(
         'rounded border-0',
-        active && 'bg-cyan-500/15 text-cyan-200 hover:bg-cyan-500/20',
+        active && 'bg-[var(--acc-soft)] text-[var(--acc)] hover:brightness-110',
         className,
       )}
       aria-pressed={active}

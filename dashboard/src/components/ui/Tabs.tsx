@@ -37,11 +37,11 @@ export function Tabs({
             className={cn(
               'relative -mb-px inline-flex select-none items-center gap-2 rounded-t-md border-b-2 px-3.5 py-2',
               'text-sm font-medium transition-[color,border-color,background-color] duration-100',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/70',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--acc)]/70',
               'active:bg-white/[0.04] motion-reduce:transition-none',
               active
-                ? 'border-cyan-400 text-slate-100'
-                : 'border-transparent text-slate-500 hover:border-slate-700 hover:text-slate-300',
+                ? 'border-[var(--acc)] text-slate-50'
+                : 'border-transparent text-slate-500 hover:border-[var(--hair)] hover:text-slate-300',
             )}
           >
             {t.label}
@@ -49,7 +49,9 @@ export function Tabs({
               <span
                 className={cn(
                   'rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
-                  active ? 'bg-cyan-500/20 text-cyan-200' : 'bg-slate-800 text-slate-400',
+                  active
+                    ? 'bg-[var(--acc-soft)] text-[var(--acc)]'
+                    : 'bg-slate-800 text-slate-400',
                 )}
               >
                 {t.badge}
