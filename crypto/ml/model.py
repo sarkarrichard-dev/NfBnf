@@ -212,10 +212,19 @@ def score(trade_like: dict[str, Any]) -> dict[str, Any]:
 def status() -> dict[str, Any]:
     m = load_meta()
     wf = m.get("walk_forward") or {}
+    # "rows" is progress toward MIN_ROWS — the count of usable journal rows so
+    # far, not just what the last (possibly never-run) training saw. Before the
+    # first successful train, load_meta() has rows=0 even though the journal is
+    # filling up, which read as "no trades taken" on the dashboard.
+    try:
+        ds = build_dataset()
+        collected, collected_live = ds["total_rows"], ds["live_rows"]
+    except Exception:
+        collected = collected_live = 0
     return {
         "trained_at": m.get("trained_at"),
-        "rows": m.get("rows", 0),
-        "live_rows": m.get("live_rows", 0),
+        "rows": max(int(m.get("rows") or 0), collected),
+        "live_rows": max(int(m.get("live_rows") or 0), collected_live),
         "gate_armed": m.get("gate_armed", False),
         "min_win_prob_gate": m.get("min_win_prob_gate", 0.0),
         "oos_delta_usd": wf.get("oos_delta_usd"),
