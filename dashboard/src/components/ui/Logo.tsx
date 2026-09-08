@@ -1,6 +1,6 @@
 import { cn } from '../../lib/cn'
 
-/** The TradeHawk mark — a hawk swept into an upward peak (wings rising = the
+/** The Quant Hawk mark — a hawk swept into an upward peak (wings rising = the
  *  bullish read). Single-colour, inherits `currentColor`, legible down to 16px. */
 export function HawkMark({ className, title }: { className?: string; title?: string }) {
   return (
@@ -27,7 +27,7 @@ export function Logo({ className }: { className?: string }) {
         <HawkMark className="h-[18px] w-[18px]" />
       </span>
       <span className="text-[15px] font-extrabold tracking-[-0.02em] text-slate-50">
-        Trade<span className="text-[var(--acc)]">Hawk</span>
+        Quant <span className="text-[var(--acc)]">Hawk</span>
       </span>
     </span>
   )
