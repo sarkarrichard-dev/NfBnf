@@ -67,6 +67,7 @@ SEARCH_SPACE: dict[str, dict[str, list]] = {
         "slope_lookback": [2, 3, 5],
         "big_candle_atr": [1.5, 2.0, 3.0],
         "stretch_atr": [2.0, 3.0, 4.0],
+        "confluence_atr": [0.0, 1.0, 1.5],
     },
 }
 

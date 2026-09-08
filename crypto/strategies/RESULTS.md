@@ -148,14 +148,35 @@ EV ≈ −$1.8/trade. The EMA-fan + pivot-break filter fires often but the win r
 is the same 5m-friction problem — a pivot break on the 5m frame is more noise
 than signal after the fee (~0.1% round-trip eats a third of the average win).
 
-Auto-tune: `retune_all()` picks it up nightly (`SEARCH_SPACE["ema_pivot"]`).
+## Filter sweep + walk-forward (2026-09-09)
+
+"Can we make it better?" — swept the video's confluence filter over 90 days,
+BTC + ETH:
+
+| variant | trades | net USD | win rate |
+|---|---:|---:|---:|
+| baseline | 172 | −$394 | 18% |
+| `confluence_atr` 1.0 | 82 | **−$125** | **27%** |
+| `min_fan_atr` 0.6 | 139 | −$354 | 16% |
+| confluence 1.0 + fan 0.6 | 26 | −$47 | 23% |
+
+The confluence rule (broken pivot must sit within 1×ATR of the slow EMA) throws
+away the two-thirds of pivot breaks that fire away from the fan — it roughly
+halves the bleed and lifts the hit rate ~9 points. `crypto.lanes._ema_pivot_cfg`
+turns it on operationally. It does **not** turn the strategy positive.
+
+Walk-forward `optimize_one("ema_pivot", days=45)` (BTC + ETH, 12 combos):
+**0 eligible combos, best −$539.** Confirms the enable-gate is not met.
+
+Auto-tune: `retune_all()` picks it up nightly; `SEARCH_SPACE["ema_pivot"]` now
+sweeps `confluence_atr` too.
 
 ## Status
 
 `CRYPTO_EMA_PIVOT_ENABLED` defaults `true` — runs in the **paper** lane as the
 fourth strategy Richard asked for, and it does solve the "not enough trades"
-problem. **Do not arm crypto live**: −$1.8/trade on this measurement. It stays
-paper until the walk-forward OOS net is stably positive across ≥ 2 symbols.
+problem. **Do not arm crypto live**: net-negative on every measurement, and the
+walk-forward gate (stable positive OOS across ≥ 2 symbols) is not met.
 
 The live crypto strategies are now **`ny_n_break`** (6 PM, 24/7),
 **`ichimoku`**, **`fvg_scalp`**, and **`ema_pivot`** (paper only until they

@@ -135,7 +135,11 @@ def _fvg_scalp_cfg(s):
 def _ema_pivot_cfg(s):
     from crypto.strategies.ema_pivot import EmaPivotConfig
 
-    return EmaPivotConfig(**_tuned("ema_pivot"), trail=_trail_cfg(s))
+    # confluence filter on operationally — a 90-day sweep showed it roughly
+    # halves the bleed (−$394 → −$125 on BTC+ETH, win rate 18%→27%). A tuned
+    # combo, if one ever passes the gate, overrides.
+    params = {"confluence_atr": 1.0, **_tuned("ema_pivot")}
+    return EmaPivotConfig(**params, trail=_trail_cfg(s))
 
 
 # name -> builder returning (module, timeframe, days-of-history, cfg)
