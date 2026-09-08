@@ -12,6 +12,12 @@ kinds of support/resistance — **horizontal** (standard daily pivots) and
 - **Trigger:** the last 5m close breaks a standard pivot level (P / R1-R3 /
   S1-S3) it was sitting below/above — a fresh horizontal break in the trend
   direction. Skip if the trigger candle is oversized (retracement risk).
+- **Confluence:** the video's "high-probability" rule — the broken pivot must
+  sit close to the EMA fan (``confluence_atr``), and each level trades once per
+  UTC day (``one_per_level``). The dataclass ships these off so the self-check
+  exercises the base mechanism; ``crypto.lanes`` turns confluence on
+  operationally (a 90-day sweep showed it roughly halves the bleed — but the
+  strategy is still net-negative after costs and stays disabled).
 - **Exit:** the shared P&L trailing engine, a close back through the 9 EMA, or
   price stretched far from the 9 EMA (mean-reversion take-profit).
 
@@ -41,11 +47,16 @@ class EmaPivotConfig:
     atr_len: int = 14
     big_candle_atr: float = 2.0      # skip the entry if the trigger candle's range > this × ATR
     stretch_atr: float = 3.0         # price this far from the 9 EMA → take profit (mean revert)
+    # the video's "high-probability" filter: the broken pivot and the EMA fan
+    # must sit at the same place. 0 = off (any pivot break with a stacked fan).
+    confluence_atr: float = 0.0      # broken pivot within this × ATR of the slow EMA
+    min_fan_atr: float = 0.0         # 9↔21 EMA spread must exceed this × ATR (skip a flat fan)
+    one_per_level: bool = True       # one entry per pivot level per UTC day
     trail: TrailConfig = field(default_factory=TrailConfig)
 
 
 def _blank_state() -> dict[str, Any]:
-    return {"position": None}
+    return {"position": None, "traded_day": None, "traded_levels": []}
 
 
 def _fan(close: pd.Series, cfg: EmaPivotConfig) -> tuple[float, float, float, float, float, float]:
@@ -104,9 +115,14 @@ def step(
     close = c5["close"].astype(float)
     price = float(close.iloc[-1])
     ts = str(c5["datetime"].iloc[-1])
+    utc_day = str(pd.Timestamp(c5["datetime"].iloc[-1]).tz_convert("UTC").date())
     atr_val = atr_last(c5, cfg.atr_len)
     ema_fast_now = float(ema(close, cfg.ema_fast).iloc[-1])
+    ema_slow_now = float(ema(close, cfg.ema_slow).iloc[-1])
     pos = st["position"]
+
+    if st.get("traded_day") != utc_day:  # per-UTC-day level tracking
+        st["traded_day"], st["traded_levels"] = utc_day, []
 
     # ---- manage an open position ----
     if pos:
@@ -150,9 +166,25 @@ def step(
         ev.update(event="wait", reason="downtrend but price is above the daily pivot")
         return st, ev
 
+    # EMA fan must be genuinely separated, not a flat cluster (chop)
+    if cfg.min_fan_atr > 0 and abs(ema_fast_now - ema_slow_now) < cfg.min_fan_atr * atr_val:
+        ev.update(event="wait", reason="EMA fan too tight — chop")
+        return st, ev
+
     brk = _pivot_break(c5, piv, trend)
     if not brk:
         ev.update(event="wait", reason="no pivot break in the trend direction")
+        return st, ev
+
+    lvl_name, lvl = brk
+
+    if cfg.one_per_level and lvl_name in st["traded_levels"]:
+        ev.update(event="wait", reason=f"{lvl_name} already traded today")
+        return st, ev
+
+    # the video's "high-probability" filter: pivot and EMA at the same place
+    if cfg.confluence_atr > 0 and abs(lvl - ema_slow_now) > cfg.confluence_atr * atr_val:
+        ev.update(event="wait", reason="pivot break too far from the EMA fan — low-probability")
         return st, ev
 
     rng = float(c5["high"].iloc[-1] - c5["low"].iloc[-1])
@@ -160,8 +192,8 @@ def step(
         ev.update(event="wait", reason="trigger candle oversized — waiting for a retrace")
         return st, ev
 
-    lvl_name, lvl = brk
     want = "long" if trend == 1 else "short"
+    st["traded_levels"] = [*st["traded_levels"], lvl_name]
     st["position"] = {"side": want, "entry_price": price, "entry_time": ts, "pivot": lvl_name}
     ev.update(
         event="enter",
