@@ -192,7 +192,7 @@ The scanner uses the **plan** from `plan_instrument` (not a bypass). Live orders
 ## Risk (hard-coded)
 
 - Lots per trade: use **Execution mode → Lots per trade** (+/−) on the dashboard (1–10 NSE lots). Saved in `memory/`; applies to new scanner trades and re-syncs open journal quantities. Optional default: `LOTS_PER_TRADE` in `.env`.
-- **Risk scales with lots**: daily loss cap = **₹6,000 × lots** (2 lots → ₹12,000). Credit spread profit/stop targets scale with order quantity automatically.
+- **Risk scales with lots**: daily loss cap = **₹9,000 × lots** (2 lots → ₹18,000). Credit spread profit/stop targets scale with order quantity automatically.
 - Kill switch (**Live only**): **3 consecutive** losing closed trades in one IST day, or daily realized loss hits the scaled cap. A winning trade resets the loss streak. Paper mode is not blocked.
-- ₹6,000 daily loss cap
+- ₹9,000 daily loss cap (per lot)
 - Paper or Live via dashboard toggle
