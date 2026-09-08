@@ -70,6 +70,15 @@ flip. Module `crypto/strategies/candle_renko.py`.
 (pattern + Supertrend + Renko) barely thins the trade count. Structurally the
 worst of the four candidates on raw net.
 
+## Auto-tune — walk-forward, 24 combos, 3 OOS folds, BTC/ETH/SOL
+
+`crypto.ml.optimize.optimize_one("candle_renko", days=90)`:
+`{"stable": false, "eligible": 0, "candidates": 24}`. **Not one combo cleared
+the bar.** Best-scoring combo `atr_len 10 / renko_atr_mult 1.0 / st_period 10 /
+st_mult 4.0` still nets **−$4,691** OOS. `tuned_params("candle_renko")` returns
+`{}`, so the lane runs the dataclass defaults. Identical verdict to the three
+video strategies: the loss is structural 5m-scalp friction, not a tuning miss.
+
 ## Status
 
 **Enabled anyway, at Richard's explicit request (2026-09-08): "make the renko
