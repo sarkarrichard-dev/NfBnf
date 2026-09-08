@@ -42,9 +42,46 @@ def pick_auto_credit(
     ema_bear = aligned == "bear"
     bias = regime.day_bias
 
+    # The intraday tape, independent of the day-old CPR bias. Used to VETO a
+    # credit that fights the way the day is actually moving — CPR read
+    # TRENDING_BULL off a prior-day pivot while price bled down all session, and
+    # a flickering 1m EMA let a bull-put spread through (BANKNIFTY, 2026-09-08,
+    # −₹580). A bearish credit needs the tape not to be UP, and vice versa.
+    _st = (
+        supertrend_snapshot(
+            frame, period=params.supertrend_period, multiplier=params.supertrend_multiplier
+        )
+        if frame is not None
+        else {"direction": 0}
+    )
+    _st_dir = int(_st.get("direction") or 0)
+    _tape = intraday_candle_trend(frame, lookback=15) if frame is not None else "RANGE"
+
+    def _tape_veto(action: str | None) -> str | None:
+        """Reason string if the intraday tape opposes the credit direction, else
+        None. ``intraday_candle_trend`` is already the deliberately-smoothed
+        HH/HL-vs-LH/LL read; the cost of a false veto is one marginal credit
+        skipped (every tested credit config is net-negative — strategy-findings),
+        the cost of a false pass is real rupees the wrong way, so it vetoes on
+        the structure alone rather than waiting for Supertrend to also agree."""
+        if action == "SELL_BULL_PUT_SPREAD" and _tape == "DOWN":
+            return (
+                "AUTO: bull-put credit blocked — 1m structure is DOWN; "
+                "the day is selling off, don't sell puts into it."
+            )
+        if action == "SELL_BEAR_CALL_SPREAD" and _tape == "UP":
+            return (
+                "AUTO: bear-call credit blocked — 1m structure is UP; "
+                "the day is rallying, don't sell calls into it."
+            )
+        return None
+
     def _gate_volume(action: str | None, reason: str, mode: str) -> tuple[str | None, str, str]:
         if not action:
             return action, reason, mode
+        veto = _tape_veto(action)
+        if veto:
+            return None, veto, "conflict"
         ok, stats = volume_confirms(
             frame,
             min_ratio=params.credit_min_volume_ratio,
@@ -113,15 +150,7 @@ def pick_auto_credit(
     # or flat daily CPR bias. Needs all three of EMA alignment + Supertrend +
     # candle structure to agree (plus the volume gate below). It trades the
     # confirmed break, never a range: a merely-flat SIDEWAYS day produces nothing.
-    st = (
-        supertrend_snapshot(
-            frame, period=params.supertrend_period, multiplier=params.supertrend_multiplier
-        )
-        if frame is not None
-        else {"direction": 0}
-    )
-    st_dir = int(st.get("direction") or 0)
-    trend = intraday_candle_trend(frame, lookback=15) if frame is not None else "RANGE"
+    st_dir, trend = _st_dir, _tape
     strong_down = ema_bear and st_dir == -1 and trend == "DOWN"
     strong_up = ema_bull and st_dir == 1 and trend == "UP"
     if params.sell_allow_trend_override:
