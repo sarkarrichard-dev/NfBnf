@@ -60,6 +60,7 @@ def crypto_status() -> dict:
             "paper_bankroll_usd": s.paper_bankroll_usd,
         },
         "session_ist": {"start": s.ny_start, "end": s.ny_end},
+        "nbreak_allround": s.nbreak_allround,
         "ichimoku_tf": s.ichimoku_tf,
         "trailing": {
             "stop_pnl_pct": s.stop_pnl_pct,

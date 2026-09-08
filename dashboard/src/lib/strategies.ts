@@ -64,7 +64,7 @@ export const STRATEGIES: StrategyDef[] = [
     instrument: 'BTC / ETH perp',
     timeframe: '5m entry · 15m exit',
     blurb:
-      'The "6 PM" strategy. Trades only inside the New York session (18:00–23:00 IST). Bias needs price on one side of both EMA25 and VWAP; entry is a closing-basis re-break of the first swing after a retrace — the "N" shape. Exit watches the 15m structure.',
+      'The "6 PM" strategy, now around the clock. Bias needs price on one side of both EMA25 and VWAP; entry is a closing-basis re-break of the first swing after a retrace — the "N" shape. Exit watches the 15m structure or the P&L trail. Still trades the NY hours as before; the window gate is off by default (CRYPTO_NBREAK_ALLROUND).',
     reads:
       'In the NY session, when price closes above both EMA{ema_len} and VWAP, arm on the first swing high; enter long when it re-breaks. Up to {max_trades_per_session} trades/session. Trail the stop {stop_pnl_pct}% on margin.',
     backtest: { window: 'paper since 2026-09', net: 'paper lane', trades: 0, note: 'live paper — no backtest replay (session-scoped)' },

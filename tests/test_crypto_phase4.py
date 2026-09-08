@@ -174,6 +174,7 @@ def live_lane(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_API_KEY", "k")
     monkeypatch.setenv("DELTA_API_SECRET", "s")
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
+    monkeypatch.setenv("CRYPTO_NBREAK_ALLROUND", "false")  # these tests exercise the NY-window gate
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_FVG_SCALP_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_USDINR", "88")
