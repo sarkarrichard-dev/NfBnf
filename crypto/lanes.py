@@ -189,7 +189,7 @@ def scan_crypto_paper(client: DeltaClient | None = None) -> list[dict[str, Any]]
         logger.warning("crypto scan aborted", exc_info=True)
         return [{"event": "error", "where": "scan", "error": str(exc)}]
     finally:
-        if own:  # close the pooled httpx.Client we opened for this cycle
+        if own and client is not None:  # close the pooled httpx.Client we opened
             client.close()
 
 

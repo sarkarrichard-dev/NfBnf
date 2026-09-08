@@ -95,7 +95,15 @@ class DeltaClient:
             transport = (
                 httpx.HTTPTransport(local_address="0.0.0.0") if self._force_ipv4 else None
             )
-            self._http = httpx.Client(transport=transport)
+            # keepalive_expiry well under a typical API-gateway idle timeout: a
+            # pooled connection that's been idle a few seconds is replaced rather
+            # than reused, so a signed POST /v2/orders can't hit a server-closed
+            # socket (which httpx surfaces as a non-retryable RemoteProtocolError
+            # for a mutating call).
+            self._http = httpx.Client(
+                transport=transport,
+                limits=httpx.Limits(keepalive_expiry=10.0),
+            )
         return self._http
 
     def close(self) -> None:
