@@ -60,15 +60,20 @@ flip. Module `crypto/strategies/candle_renko.py`.
 
 | symbol | trades | net USD | win rate |
 |---|---:|---:|---:|
-| BTCUSD | 1233 | **−$2,026** | 22% |
-| ETHUSD | 1217 | **−$570** | 22% |
-| SOLUSD | 1188 | **−$2,619** | 24% |
-| **total** | **3638** | **−$5,215** | 22% |
+| BTCUSD | 1184 | **−$2,904** | 22% |
+| ETHUSD | 1172 | **−$817** | 22% |
+| SOLUSD | 1164 | **−$3,884** | 24% |
+| **total** | **3520** | **−$7,605** | 23% |
 
-~40 trades/day, `avg win $3.24` vs `avg loss −$2.77` — the same ~1:1 payoff at a
-~22% hit rate that sank the three video strategies, and the triple filter
+~40 trades/day, `avg win $4.83` vs `avg loss −$4.21` — the same ~1:1 payoff at a
+~23% hit rate that sank the three video strategies, and the triple filter
 (pattern + Supertrend + Renko) barely thins the trade count. Structurally the
 worst of the four candidates on raw net.
+
+(First measurement on this frame was −$5,215; the 2026-09-08 speed rework
+evaluates the 15m Supertrend once per 15-minute bucket instead of per 5m bar —
+a more stable trend read that lands on a different, slightly worse, trade set.
+Both readings are far below viable; the exact figure changes no decision.)
 
 ## Auto-tune — walk-forward, 24 combos, 3 OOS folds, BTC/ETH/SOL
 

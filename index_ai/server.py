@@ -184,34 +184,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         except Exception:
             return
         _clog = logging.getLogger("crypto.lanes")
-        _last_train_day = ""
         while True:
             try:
                 if crypto_enabled():
                     events = await asyncio.to_thread(scan_crypto_paper)
-                    today = datetime.now(timezone.utc).date().isoformat()
-                    if today != _last_train_day:
-                        _last_train_day = today
-                        try:
-                            from crypto.ml.model import train as _crypto_train
-
-                            r = await asyncio.to_thread(_crypto_train)
-                            _clog.info("crypto ML retrain: %s", r.get("reason") or "trained")
-                        except Exception:
-                            _clog.warning("crypto ML retrain failed", exc_info=True)
-                        try:
-                            from crypto.ml.optimize import retune_all
-
-                            await asyncio.to_thread(retune_all)
-                            _clog.info("crypto strategy auto-tune done")
-                        except Exception:
-                            _clog.warning("crypto strategy auto-tune failed", exc_info=True)
-                        try:
-                            from crypto.day_review import build_crypto_review
-
-                            await asyncio.to_thread(build_crypto_review, refresh=True)
-                        except Exception:
-                            _clog.warning("crypto day review failed", exc_info=True)
                     for e in events:
                         kind = e.get("event", "?")
                         if kind not in ("none", "hold", "wait"):
@@ -224,6 +200,59 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await asyncio.sleep(60)
 
     crypto_task = asyncio.create_task(_crypto_paper_loop())
+
+    async def _crypto_nightly_loop() -> None:
+        """Crypto ML retrain + walk-forward auto-tune + day-review — once per UTC
+        day, on its OWN task so it never blocks the 60s scan loop (the auto-tune
+        can run for many minutes). A disk marker survives restarts so bouncing
+        the server doesn't re-run it. Opt-in, never fatal."""
+        try:
+            from crypto.config import CRYPTO_MEMORY
+            from crypto.lanes import enabled as crypto_enabled
+        except Exception:
+            return
+        _clog = logging.getLogger("crypto.lanes")
+        mark = CRYPTO_MEMORY / "crypto_maint_day.txt"
+        while True:
+            try:
+                today = datetime.now(timezone.utc).date().isoformat()
+                done = ""
+                try:
+                    done = mark.read_text(encoding="utf-8").strip()
+                except OSError:
+                    pass
+                if crypto_enabled() and done != today:
+                    try:
+                        from crypto.ml.model import train as _crypto_train
+
+                        r = await asyncio.to_thread(_crypto_train)
+                        _clog.info("crypto ML retrain: %s", r.get("reason") or "trained")
+                    except Exception:
+                        _clog.warning("crypto ML retrain failed", exc_info=True)
+                    try:
+                        from crypto.ml.optimize import retune_all
+
+                        await asyncio.to_thread(retune_all)
+                        _clog.info("crypto strategy auto-tune done")
+                    except Exception:
+                        _clog.warning("crypto strategy auto-tune failed", exc_info=True)
+                    try:
+                        from crypto.day_review import build_crypto_review
+
+                        await asyncio.to_thread(build_crypto_review, refresh=True)
+                    except Exception:
+                        _clog.warning("crypto day review failed", exc_info=True)
+                    try:
+                        mark.parent.mkdir(parents=True, exist_ok=True)
+                        mark.write_text(today, encoding="utf-8")
+                    except OSError:
+                        pass
+                    _clog.info("crypto nightly maintenance done for %s", today)
+            except Exception:
+                _clog.warning("crypto nightly loop error", exc_info=True)
+            await asyncio.sleep(1800)
+
+    crypto_nightly_task = asyncio.create_task(_crypto_nightly_loop())
 
     async def _warm() -> None:
         """Spin up the thread pool and touch the modules the first UI action needs.
@@ -287,6 +316,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     tick_task.cancel()
     warm_task.cancel()
     crypto_task.cancel()
+    crypto_nightly_task.cancel()
     eod_catch_up_task.cancel()
     for task in (
         renew_task,
@@ -295,6 +325,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         tick_task,
         warm_task,
         crypto_task,
+        crypto_nightly_task,
         eod_catch_up_task,
     ):
         try:

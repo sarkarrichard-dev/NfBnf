@@ -202,11 +202,19 @@ def optimize_one(name: str, *, frames: dict[str, pd.DataFrame] | None = None,
             "unstable_neighbours": len(flips)}
 
 
+# candle_renko's replay is ~3× heavier per bar (15m resample + Supertrend), so
+# it gets a smaller nightly search — its tuner has never found an eligible combo
+# anyway. A manual optimize_one() still uses the full MAX_COMBOS.
+_NIGHTLY_COMBOS = {"candle_renko": 10}
+
+
 def retune_all(*, days: int = TUNE_DAYS) -> dict[str, Any]:
     blob = _load()
     for name in SEARCH_SPACE:
         try:
-            blob[name] = optimize_one(name, days=days)
+            blob[name] = optimize_one(
+                name, days=days, max_combos=_NIGHTLY_COMBOS.get(name, MAX_COMBOS)
+            )
             logger.info("optimize %s: %s", name, blob[name].get("reason")
                         or f"net ${blob[name].get('net_usd')} stable={blob[name].get('stable')}")
         except Exception:

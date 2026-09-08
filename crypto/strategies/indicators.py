@@ -3,6 +3,7 @@ closing-basis swing pivots, and crossover tests. Pure pandas."""
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -58,6 +59,50 @@ def atr(df: pd.DataFrame, length: int) -> pd.Series:
     return tr.ewm(alpha=1.0 / length, adjust=False).mean()
 
 
+def _wilder(x: np.ndarray, alpha: float) -> np.ndarray:
+    out = np.empty_like(x)
+    out[0] = x[0]
+    for i in range(1, len(x)):
+        out[i] = out[i - 1] + alpha * (x[i] - out[i - 1])
+    return out
+
+
+def atr_last(df: pd.DataFrame, length: int) -> float:
+    """Just the final Wilder-ATR value — numpy, no pandas Series build."""
+    if len(df) < 2:
+        return 0.0
+    h, low, c = (df[k].to_numpy(float) for k in ("high", "low", "close"))
+    pc = np.concatenate(([c[0]], c[:-1]))
+    tr = np.maximum(h - low, np.maximum(np.abs(h - pc), np.abs(low - pc)))
+    return float(_wilder(tr, 1.0 / length)[-1])
+
+
+def supertrend_dir(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0) -> int:
+    """Final Supertrend direction: +1 bull, -1 bear, 0 if too little history.
+
+    Same recurrence as ``index_ai.strategies.supertrend.compute_supertrend`` but
+    numpy end-to-end and only the last value — the hot path when a backtest
+    replays this thousands of times."""
+    n = len(df)
+    if n < period + 2:
+        return 0
+    h, low, c = (df[k].to_numpy(float) for k in ("high", "low", "close"))
+    pc = np.concatenate(([c[0]], c[:-1]))
+    tr = np.maximum(h - low, np.maximum(np.abs(h - pc), np.abs(low - pc)))
+    a = _wilder(tr, 1.0 / period)
+    hl2 = (h + low) / 2.0
+    bu, bl = hl2 + multiplier * a, hl2 - multiplier * a
+    fu, fl, direction = bu[0], bl[0], 1
+    for i in range(1, n):
+        fu = bu[i] if (bu[i] < fu or c[i - 1] > fu) else fu
+        fl = bl[i] if (bl[i] > fl or c[i - 1] < fl) else fl
+        if direction == 1:
+            direction = -1 if c[i] < fl else 1
+        else:
+            direction = 1 if c[i] > fu else -1
+    return direction
+
+
 def cross_dir(a: pd.Series, b: pd.Series) -> int:
     """+1 if ``a`` closed the last bar crossing above ``b``, -1 if below, else 0."""
     if len(a) < 2 or len(b) < 2:
@@ -108,4 +153,11 @@ if __name__ == "__main__":  # self-check
     assert cross_dir(pd.Series([1.0, 1.5]), pd.Series([2.0, 2.0])) == 0
     a = atr(df, 3)
     assert a.iloc[-1] > 0 and len(a) == 10
+    assert abs(atr_last(df, 3) - float(a.iloc[-1])) < 1e-9  # numpy path matches pandas
+    up_df = pd.DataFrame({"high": range(2, 40), "low": range(0, 38),
+                          "close": range(1, 39)})
+    dn_df = up_df.iloc[::-1].reset_index(drop=True)
+    assert supertrend_dir(up_df, 10, 3.0) == 1
+    assert supertrend_dir(dn_df, 10, 3.0) == -1
+    assert supertrend_dir(up_df.head(5), 10, 3.0) == 0  # not enough bars
     print("crypto.strategies.indicators self-check ok")

@@ -16,10 +16,10 @@ def brick_dir(close: pd.Series, brick: float) -> int:
     bricks whenever price has travelled at least one brick from it."""
     if brick <= 0 or len(close) < 2:
         return 0
-    s = close.astype(float)
-    anchor = float(s.iloc[0])
+    s = close.to_numpy(dtype=float) if hasattr(close, "to_numpy") else [float(x) for x in close]
+    anchor = float(s[0])
     d = 0
-    for px in s.iloc[1:]:
+    for px in s[1:]:
         move = px - anchor
         n = int(abs(move) // brick)
         if n >= 1:
