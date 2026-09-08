@@ -153,33 +153,18 @@ def _log_observation(key: str, book: Any, spot: float, rows: Any) -> None:
 
 
 def eod_due() -> bool:
-    """After the square-off, once per trading day — and only once every position
-    is actually closed. The square-off runs *later* in the same scan cycle as
-    this check, so firing on the first post-15:10 cycle would build the report
-    and the Telegram summary a trade or two short. Wait out the close; a stuck
-    position that hasn't cleared 10 min later no longer blocks it."""
+    """At Indian market close (15:30 IST), once per trading day. The summary
+    goes out at the close whether or not the book is flat — if the square-off
+    left anything open it is listed in the message (day_review carries
+    ``open_trades``)."""
 
     from index_ai.market_clock import is_trading_day, session_times
 
     if not is_trading_day():
         return False
-    now = now_ist().time()
-    if now < session_times()["square_off"]:
+    if now_ist().time() < session_times()["market_close"]:
         return False
-    if _state().get("eod_date") == today_ist_date():
-        return False
-    # Wait for the square-off to actually flatten the book before building the
-    # report + Telegram summary — otherwise day_review sees 0 closed and the
-    # summary never sends. The square-off normally finishes by ~15:15; give it
-    # until market close, then run regardless so a genuinely stuck position
-    # can't block the report forever.
-    if now < session_times()["market_close"]:
-        from index_ai.config import settings
-        from index_ai.learning import open_trades_for_mode
-
-        if open_trades_for_mode(settings().risk.trading_mode):
-            return False
-    return True
+    return _state().get("eod_date") != today_ist_date()
 
 
 def run_eod() -> dict[str, Any]:
@@ -262,22 +247,15 @@ def run_eod() -> dict[str, Any]:
     except Exception:
         pass
 
-    # Only mark the day done once the report reflects a settled book. If entries
-    # were taken today but the day review still shows 0 closed, the square-off
-    # ran late — leave eod_date unset so the next scan cycle rebuilds it (and
-    # sends the summary) once the positions clear. Give up by 15:45 so a
-    # genuinely stuck position can't force endless re-runs.
-    from datetime import time as _t
-
+    # Runs at the close now, so it's a one-shot — stamp the day and never rebuild
+    # it. Anything the square-off left open is in the summary as `open_trades`.
     summ = (report.get("day_review") or {}).get("summary") or {}
-    settled = bool(summ.get("closed")) or not summ.get("total") or now_ist().time() >= _t(15, 45)
     st = _state()
-    if settled:
-        st["eod_date"] = today
+    st["eod_date"] = today
     st["last_eod"] = {
         "at": report["generated_at_ist"],
         "brain_trained": bool((report.get("brain") or {}).get("trained")),
-        "settled": bool(settled),
+        "open_at_close": int(summ.get("open") or 0),
     }
     _save(st)
     return report

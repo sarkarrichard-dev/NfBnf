@@ -90,6 +90,34 @@ def test_empty_day(monkeypatch):
     assert out["review"]["narrative"].startswith("No crypto trades")
 
 
+def test_day_summary_lists_open_positions(monkeypatch):
+    monkeypatch.setattr(dr, "_today_rows", lambda: [])
+    monkeypatch.setattr(
+        dr,
+        "load_state",
+        lambda: {
+            "fvg_scalp:BTCUSD": {
+                "position": {
+                    "asset": "BTCUSD",
+                    "strategy": "fvg_scalp",
+                    "side": "long",
+                    "entry_price": 63000.0,
+                }
+            },
+            "ichimoku:ETHUSD": {"position": None},
+            "_ny": {"active": None},  # non-":" and no position → ignored
+        },
+    )
+    sent: list[str] = []
+    from crypto import notify
+
+    monkeypatch.setattr(notify, "send", sent.append)
+
+    r = dr.send_day_summary()
+    assert r["closed"] == 0 and r["open"] == 1
+    assert sent and "still open" in sent[0] and "BTCUSD" in sent[0]
+
+
 def test_endpoint_shape():
     from fastapi.testclient import TestClient
 

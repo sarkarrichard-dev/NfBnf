@@ -83,19 +83,37 @@ def closed(row: dict[str, Any]) -> None:
     )
 
 
-def day_summary(day: str, rows: list[dict[str, Any]]) -> None:
-    if not rows:
+def day_summary(
+    day: str,
+    rows: list[dict[str, Any]],
+    open_positions: list[dict[str, Any]] | None = None,
+) -> None:
+    """Crypto end-of-day recap (23:58 IST). Sends even with no closed trades if
+    positions are still open, and lists them."""
+    open_positions = open_positions or []
+    if not rows and not open_positions:
         return
-    net_usd = sum(float(r.get("pnl_usd") or 0.0) for r in rows)
-    net_inr = sum(float(r.get("pnl_inr") or 0.0) for r in rows)
-    wins = sum(1 for r in rows if float(r.get("pnl_usd") or 0) > 0)
-    losses = sum(1 for r in rows if float(r.get("pnl_usd") or 0) < 0)
-    sign = "+" if net_usd >= 0 else "−"
-    send(
-        f"\U0001f4ca <b>CRYPTO DAY</b> — {day}\n"
-        f"{len(rows)} trades · {wins}W / {losses}L\n"
-        f"Net {sign}{_usd(abs(net_usd))} ({sign}{_inr(abs(net_inr))})"
-    )
+    lines = [f"\U0001f4ca <b>CRYPTO DAY</b> — {day}"]
+    if rows:
+        net_usd = sum(float(r.get("pnl_usd") or 0.0) for r in rows)
+        net_inr = sum(float(r.get("pnl_inr") or 0.0) for r in rows)
+        wins = sum(1 for r in rows if float(r.get("pnl_usd") or 0) > 0)
+        losses = sum(1 for r in rows if float(r.get("pnl_usd") or 0) < 0)
+        sign = "+" if net_usd >= 0 else "−"
+        lines.append(f"{len(rows)} trades · {wins}W / {losses}L")
+        lines.append(f"Net {sign}{_usd(abs(net_usd))} ({sign}{_inr(abs(net_inr))})")
+    else:
+        lines.append("No closed trades.")
+    if open_positions:
+        lines.append(
+            f"⚠️ {len(open_positions)} still open: "
+            + " · ".join(
+                f"{p.get('asset') or '?'} {p.get('strategy') or ''} "
+                f"{p.get('side') or ''} @ {_usd(float(p.get('entry_price') or 0))}".strip()
+                for p in open_positions
+            )
+        )
+    send("\n".join(lines))
 
 
 if __name__ == "__main__":  # self-check — no send unless Telegram is configured
@@ -112,6 +130,9 @@ if __name__ == "__main__":  # self-check — no send unless Telegram is configur
         }
     )
     day_summary("2026-09-07", [{"pnl_usd": 2.68, "pnl_inr": 235.0}])
+    day_summary(  # 0 closed but a position still open → still sends
+        "2026-09-07", [], [{"asset": "BTCUSD", "strategy": "fvg_scalp", "side": "long", "entry_price": 63000.0}]
+    )
     # persistent per-key dedup (rebinds the module globals alert() reads)
     import tempfile
     from pathlib import Path

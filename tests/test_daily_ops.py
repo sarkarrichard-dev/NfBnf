@@ -49,40 +49,27 @@ def test_eod_runs_once_per_day(tmp_path, monkeypatch):
     assert (tmp_path / "reports" / f"{r['date']}.md").is_file()
 
 
-def test_eod_due_waits_for_the_square_off_to_finish(monkeypatch):
+def test_eod_due_fires_at_market_close(monkeypatch):
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     ist = ZoneInfo("Asia/Kolkata")
-    monkeypatch.setattr(daily_ops, "_state", lambda: {})
+    state: dict = {}
+    monkeypatch.setattr(daily_ops, "_state", lambda: state)
     monkeypatch.setattr(daily_ops, "today_ist_date", lambda: "2026-09-02")
     monkeypatch.setattr("index_ai.market_clock.is_trading_day", lambda *a, **k: True)
 
-    open_trades = ["one still closing"]
-    monkeypatch.setattr("index_ai.learning.open_trades_for_mode", lambda _m: open_trades)
-
-    class _Cfg:
-        risk = type("R", (), {"trading_mode": "PAPER"})()
-
-    monkeypatch.setattr("index_ai.config.settings", lambda: _Cfg())
-
-    # 15:13 with a position still open → not yet
-    monkeypatch.setattr(daily_ops, "now_ist", lambda: datetime(2026, 9, 2, 15, 13, tzinfo=ist))
+    # before the 15:30 close — not yet, even after the square-off ran
+    monkeypatch.setattr(daily_ops, "now_ist", lambda: datetime(2026, 9, 2, 15, 20, tzinfo=ist))
     assert daily_ops.eod_due() is False
 
-    # same time, square-off done → go
-    open_trades.clear()
+    # at the close — fire, regardless of whether the book is flat
+    monkeypatch.setattr(daily_ops, "now_ist", lambda: datetime(2026, 9, 2, 15, 30, tzinfo=ist))
     assert daily_ops.eod_due() is True
 
-    # 15:21, square-off ran late and a position is still open → keep waiting
-    # (so the day review isn't built with 0 closed and the summary is sent)
-    open_trades.append("stuck")
-    monkeypatch.setattr(daily_ops, "now_ist", lambda: datetime(2026, 9, 2, 15, 21, tzinfo=ist))
+    # once the day is stamped, never again
+    state["eod_date"] = "2026-09-02"
     assert daily_ops.eod_due() is False
-
-    # past the 15:30 close, still stuck → fire anyway rather than never
-    monkeypatch.setattr(daily_ops, "now_ist", lambda: datetime(2026, 9, 2, 15, 31, tzinfo=ist))
-    assert daily_ops.eod_due() is True
 
 
 def test_report_markdown_states_verdicts_plainly():

@@ -242,7 +242,10 @@ def trade_closed(
 
 
 def day_summary(summary: dict[str, Any] | None) -> None:
-    if not summary or not summary.get("closed"):
+    if not summary:
+        return
+    opens = summary.get("open_trades") or []
+    if not summary.get("closed") and not opens:
         return
     net = float(summary.get("net_rupees") or 0)
     wr = ""
@@ -264,6 +267,14 @@ def day_summary(summary: dict[str, Any] | None) -> None:
     ends = summary.get("how_trades_ended") or {}
     if ends:
         lines.append("Exits: " + " · ".join(f"{k} {v}" for k, v in ends.items()))
+    if opens:
+        lines.append(
+            f"⚠️ {len(opens)} still open: "
+            + " · ".join(
+                f"{o.get('instrument') or '?'} {str(o.get('action') or '').replace('_', ' ')}".strip()
+                for o in opens
+            )
+        )
     send("\n".join(lines))
 
 
