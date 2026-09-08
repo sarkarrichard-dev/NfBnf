@@ -291,7 +291,6 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 logger.warning("crypto_state.json write failed", exc_info=True)
             events.append(ev)
 
-    _maybe_day_summary(st, s, in_ny, ny_date)
     try:
         journal.save_state(st)
     except OSError:
@@ -503,22 +502,6 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
         "trail_stop_pnl_pct": pos.get("trail_stop_pnl_pct"),
         "features": pos.get("features") or {},
     }
-
-
-def _maybe_day_summary(st: dict[str, Any], s, in_ny: bool, ny_date: str) -> None:
-    meta = dict(st.get("_ny") or {})
-    if in_ny:
-        meta["active"] = ny_date
-        st["_ny"] = meta
-        return
-    active = meta.get("active")
-    if s.ny_nbreak_enabled and active and meta.get("summarised") != active:
-        rows = journal.day_rows(active, strategy="ny_n_break")
-        if rows:
-            notify.day_summary(active, rows)
-        meta["summarised"] = active
-        meta["active"] = None
-        st["_ny"] = meta
 
 
 if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op

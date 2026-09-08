@@ -108,6 +108,17 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "net_rupees": net,
         "by_instrument": _by(lambda r: str(r.get("instrument") or "?")),
         "by_lane": _by(_lane),
+        "open_trades": [
+            {
+                "instrument": r.get("instrument"),
+                "action": r.get("action"),
+                "lots": r.get("lots"),
+                "entry_premium": r.get("entry_premium"),
+                "opened_ist": r.get("opened_ist"),
+            }
+            for r in rows
+            if r.get("is_open")
+        ],
         "best_trade": max(closed, key=lambda r: float(r["pnl_rupees"]), default=None),
         "worst_trade": min(closed, key=lambda r: float(r["pnl_rupees"]), default=None),
         "how_trades_ended": dict(sorted(ends.items(), key=lambda x: -x[1])),
