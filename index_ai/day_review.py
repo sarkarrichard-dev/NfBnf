@@ -118,9 +118,15 @@ def _bucket_exit(reason: str | None) -> str:
     r = str(reason or "").lower()
     if not r:
         return "unknown"
-    if "square-off" in r or "square off" in r or "end-of-session" in r:
+    if (
+        "square-off" in r
+        or "square off" in r
+        or "end-of-session" in r
+        or "prior session" in r
+        or "flat at scanner" in r
+    ):
         return "EOD square-off"
-    if "trailing exit" in r or "profit trail" in r:
+    if "trailing exit" in r or "profit trail" in r or "trailing stop" in r or "trail" in r:
         return "trailing stop"
     if "hard stop" in r or "stop loss" in r or "max loss" in r:
         return "stop loss"

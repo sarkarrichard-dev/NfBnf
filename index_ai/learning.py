@@ -1374,17 +1374,17 @@ def record_trade_outcome(trade_id: str, pnl: float, note: str | None = None) -> 
                 "UPDATE trades SET pnl = ?, status = ? WHERE id = ? AND pnl IS NULL",
                 (pnl, "CLOSED", trade_id),
             )
-        if cur.rowcount == 0:
-            db.execute(
-                "INSERT INTO feedback (trade_id, rating, note, created_at) VALUES (?, ?, ?, ?)",
-                (trade_id, rating, note or f"Outcome PnL: {pnl}", now_utc()),
-            )
-        else:
-            db.execute(
-                "INSERT INTO feedback (trade_id, rating, note, created_at) VALUES (?, ?, ?, ?)",
-                (trade_id, rating, note or f"Outcome PnL: {pnl}", now_utc()),
-            )
-    return update_learning()
+        transitioned = cur.rowcount > 0
+        db.execute(
+            "INSERT INTO feedback (trade_id, rating, note, created_at) VALUES (?, ?, ?, ?)",
+            (trade_id, rating, note or f"Outcome PnL: {pnl}", now_utc()),
+        )
+    learned = update_learning()
+    # True only when THIS call flipped an open row to CLOSED. A no-op (already
+    # closed, or lost a race) returns False so the caller can skip re-notifying
+    # — this is what stopped the "same EXIT every restart" Telegram loop.
+    learned["_transitioned"] = transitioned
+    return learned
 
 
 def update_learning() -> dict[str, Any]:

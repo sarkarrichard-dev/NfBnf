@@ -22,22 +22,50 @@ def test_close_credit_spread_imports_compute_mtm(monkeypatch) -> None:
         ),
     )
 
+    option = {
+        "transaction_type": "SELL",
+        "ltp": 77.35,
+        "quantity": 30,
+        "expiry": "2026-05-30",
+        "legs": [
+            {
+                "transaction_type": "SELL",
+                "option_type": "PUT",
+                "strike": 54600,
+                "ltp": 100.0,
+                "security_id": 1,
+                "segment": "NSE_FNO",
+                "quantity": 30,
+            },
+            {
+                "transaction_type": "BUY",
+                "option_type": "PUT",
+                "strike": 54400,
+                "ltp": 22.65,
+                "security_id": 2,
+                "segment": "NSE_FNO",
+                "quantity": 30,
+            },
+        ],
+    }
+    from index_ai.learning import record_trade
+
+    trade_id = record_trade(
+        mode="PAPER",
+        instrument="BANKNIFTY",
+        action="SELL_BULL_PUT_SPREAD",
+        confidence=0.6,
+        option=option,
+        signal={"price": 54800.0},
+        status="PAPER_RECORDED",
+    )
     trade = {
-        "id": "t-credit",
+        "id": trade_id,
         "mode": "PAPER",
         "instrument": "BANKNIFTY",
         "action": "SELL_BULL_PUT_SPREAD",
         "signal": {"price": 54800.0},
-        "option": {
-            "transaction_type": "SELL",
-            "ltp": 77.35,
-            "quantity": 30,
-            "expiry": "2026-05-30",
-            "legs": [
-                {"transaction_type": "SELL", "option_type": "PUT", "strike": 54600, "ltp": 100.0, "security_id": 1, "segment": "NSE_FNO", "quantity": 30},
-                {"transaction_type": "BUY", "option_type": "PUT", "strike": 54400, "ltp": 22.65, "security_id": 2, "segment": "NSE_FNO", "quantity": 30},
-            ],
-        },
+        "option": option,
     }
 
     monkeypatch.setattr(
