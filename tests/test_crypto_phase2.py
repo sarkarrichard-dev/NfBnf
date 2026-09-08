@@ -160,6 +160,7 @@ def test_journal_roundtrip(tmp_path, monkeypatch):
 @pytest.fixture
 def paper_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
+    monkeypatch.setenv("CRYPTO_NBREAK_ALLROUND", "false")  # these tests exercise the NY-window gate
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_FVG_SCALP_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,ETHUSD")
@@ -279,6 +280,28 @@ def test_lane_noop_when_disabled(monkeypatch):
     monkeypatch.setenv("CRYPTO_FVG_SCALP_ENABLED", "false")
     assert lanes.scan_crypto_paper() == []
     assert lanes.enabled() is False
+
+
+def test_nbreak_allround_takes_the_setup_outside_the_ny_window(paper_env, monkeypatch):
+    monkeypatch.setenv("CRYPTO_NBREAK_ALLROUND", "true")
+    df5 = paper_env["df5"]
+    df15 = df5.iloc[::3].reset_index(drop=True)
+    flat = df5.assign(close=130.0, open=130.0, high=131.0, low=129.0)
+
+    def fake_candles(symbol, resolution, *, days=3.0, client=None):
+        if symbol == "BTCUSD" and resolution == "5m":
+            return df5
+        if symbol == "BTCUSD" and resolution == "15m":
+            return df15
+        return flat
+
+    monkeypatch.setattr(lanes.market_data, "candles", fake_candles)
+    # well outside 18:00–23:00 IST — the window gate would block this
+    monkeypatch.setattr(lanes, "in_ny_window", lambda *a, **k: False)
+
+    events = lanes.scan_crypto_paper()
+    assert any(e.get("event") == "enter" and e.get("asset") == "BTCUSD" for e in events)
+    assert journal.load_state()["ny_n_break:BTCUSD"]["position"]["side"] == "long"
 
 
 def test_prune_removed_strategy_closes_and_drops_the_orphan_slot(paper_env, monkeypatch):

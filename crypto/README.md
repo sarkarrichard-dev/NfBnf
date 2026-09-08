@@ -57,9 +57,10 @@ signing / endpoint / payload detail (same rule CLAUDE.md states for Dhan).
 
 **6 PM / NY N-Break** — 5-minute bias (EMA25 + day-anchored VWAP), arm off the
 most recent on-side swing high/low, enter on the closing-basis re-break, exit on
-the 15-minute opposite-N / hard SL / 23:00 session close. Max 3 trades per
-session. The 18:00–23:00 IST window also gives the lane a daily boundary for
-journaling and the Telegram summary.
+the 15-minute opposite-N or the P&L trail. Runs **around the clock** by default
+(`CRYPTO_NBREAK_ALLROUND=true`) — the same setup at any hour, cap 6 trades/UTC-day
+(`CRYPTO_NBREAK_MAX_TRADES`). Set `CRYPTO_NBREAK_ALLROUND=false` for the original
+18:00–23:00 IST window (3 trades/session, 23:00 force-close).
 
 **Ichimoku** — runs 24/7 on 1h. Entry: Tenkan crosses Kijun in the trade's
 direction **and** price is on the right side of the Kumo **and** the forward
