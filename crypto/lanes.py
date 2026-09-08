@@ -64,6 +64,8 @@ def _enabled_strategies(s) -> list[str]:
         out.append("vp_edge")
     if s.fvg_scalp_enabled:
         out.append("fvg_scalp")
+    if s.ema_pivot_enabled:
+        out.append("ema_pivot")
     return out
 
 
@@ -130,18 +132,25 @@ def _fvg_scalp_cfg(s):
     return FvgScalpConfig(**_tuned("fvg_scalp"), trail=_trail_cfg(s))
 
 
+def _ema_pivot_cfg(s):
+    from crypto.strategies.ema_pivot import EmaPivotConfig
+
+    return EmaPivotConfig(**_tuned("ema_pivot"), trail=_trail_cfg(s))
+
+
 # name -> builder returning (module, timeframe, days-of-history, cfg)
 _SIMPLE: dict[str, "Any"] = {}
 
 
 def _register_simple() -> None:
-    from crypto.strategies import bb_reversal, ema_jaguar, fvg_scalp, vp_edge
+    from crypto.strategies import bb_reversal, ema_jaguar, ema_pivot, fvg_scalp, vp_edge
 
     _SIMPLE.update({
         "bb_reversal": lambda s: (bb_reversal, "5m", 2, _bb_cfg(s)),
         "ema_jaguar": lambda s: (ema_jaguar, "5m", 2, _ema_jaguar_cfg(s)),
         "vp_edge": lambda s: (vp_edge, "15m", 6, _vp_edge_cfg(s)),
         "fvg_scalp": lambda s: (fvg_scalp, "5m", 3, _fvg_scalp_cfg(s)),
+        "ema_pivot": lambda s: (ema_pivot, "5m", 4, _ema_pivot_cfg(s)),
     })
 
 
@@ -559,8 +568,8 @@ if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
 
     off = replace(
         crypto_settings(), ny_nbreak_enabled=False, ichimoku_enabled=False,
-        fvg_scalp_enabled=False, bb_reversal_enabled=False, ema_jaguar_enabled=False,
-        vp_edge_enabled=False, trading_mode="PAPER", live_armed=False,
+        fvg_scalp_enabled=False, ema_pivot_enabled=False, bb_reversal_enabled=False,
+        ema_jaguar_enabled=False, vp_edge_enabled=False, trading_mode="PAPER", live_armed=False,
     )
     crypto_settings = lambda: off  # noqa: E731 — stub for the self-check
     assert scan_crypto_paper() == []

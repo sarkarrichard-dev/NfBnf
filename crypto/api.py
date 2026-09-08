@@ -51,6 +51,7 @@ def crypto_status() -> dict:
             "ny_n_break": s.ny_nbreak_enabled,
             "ichimoku": s.ichimoku_enabled,
             "fvg_scalp": s.fvg_scalp_enabled,
+            "ema_pivot": s.ema_pivot_enabled,
         },
         "sizing": {
             "lots": s.lots,
@@ -376,6 +377,7 @@ def set_config(
     ny_n_break_enabled: bool | None = Body(None, embed=True),
     ichimoku_enabled: bool | None = Body(None, embed=True),
     fvg_scalp_enabled: bool | None = Body(None, embed=True),
+    ema_pivot_enabled: bool | None = Body(None, embed=True),
     symbols: list[str] | None = Body(None, embed=True),
 ) -> dict:
     """Non-financial-in-paper knobs — plain write, no confirm (Delta keys are
@@ -405,6 +407,8 @@ def set_config(
         values["CRYPTO_ICHIMOKU_ENABLED"] = "true" if ichimoku_enabled else "false"
     if fvg_scalp_enabled is not None:
         values["CRYPTO_FVG_SCALP_ENABLED"] = "true" if fvg_scalp_enabled else "false"
+    if ema_pivot_enabled is not None:
+        values["CRYPTO_EMA_PIVOT_ENABLED"] = "true" if ema_pivot_enabled else "false"
     if not values:
         raise HTTPException(400, "No settings provided.")
     update_env_values(values)

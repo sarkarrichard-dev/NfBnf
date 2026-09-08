@@ -114,5 +114,49 @@ this measurement it bleeds ~$1.8/trade. It stays paper until the walk-forward
 OOS net is stably positive across ≥ 2 symbols (the standing gate).
 `retune_all()` tunes it nightly via `SEARCH_SPACE["fvg_scalp"]`.
 
-The live crypto strategies are now **`ny_n_break`** (6 PM), **`ichimoku`**, and
-**`fvg_scalp`** (paper only until it clears the cost floor).
+---
+
+# ema_pivot — 2026-09-08
+
+Fourth crypto strategy, from the CoinSwitch "EMA + Pivot" video (Ahmed Lekhan)
+Richard sent — he felt `ichimoku` wasn't triggering enough. Module
+`crypto/strategies/ema_pivot.py` + `crypto/strategies/pivots.py`.
+
+**Setup:** 5-minute. Two support/resistance types must agree — **horizontal**
+(standard daily pivots P / R1-R3 / S1-S3, from the prior UTC-day OHLC, held all
+day) and **dynamic** (the 9/13/21 EMA fan). Enter only when the fan is stacked
+*and* sloping in the trend direction (9 > 13 > 21 rising for longs), price is on
+the supporting side of the day pivot P, and the last 5m close breaks a pivot
+level — skipping an oversized trigger candle (> `big_candle_atr × ATR`, a
+retracement risk per the video). **Exit:** the shared P&L trailing engine, a
+close back through the 9 EMA, or price stretched `stretch_atr × ATR` from the
+9 EMA (the video's "moved too far from the average, book it").
+
+## Backtest — defaults, 90 days, BTC / ETH / SOL / PAXG
+
+| symbol | trades | net USD | win rate |
+|---|---:|---:|---:|
+| BTCUSD | 416 | **−$1,226** | 17% |
+| ETHUSD | 372 | **−$261** | 22% |
+| SOLUSD | 451 | **−$1,414** | 26% |
+| PAXGUSD | 415 | **−$61** | 18% |
+| **total** | **1,654** | **−$2,961** | 21% |
+
+~18 trades/day — **much more active** than ichimoku (Richard's complaint) and
+2× fvg_scalp. `avg win $4.34` vs `avg loss −$3.38` (1.28:1) at a 21% hit rate,
+EV ≈ −$1.8/trade. The EMA-fan + pivot-break filter fires often but the win rate
+is the same 5m-friction problem — a pivot break on the 5m frame is more noise
+than signal after the fee (~0.1% round-trip eats a third of the average win).
+
+Auto-tune: `retune_all()` picks it up nightly (`SEARCH_SPACE["ema_pivot"]`).
+
+## Status
+
+`CRYPTO_EMA_PIVOT_ENABLED` defaults `true` — runs in the **paper** lane as the
+fourth strategy Richard asked for, and it does solve the "not enough trades"
+problem. **Do not arm crypto live**: −$1.8/trade on this measurement. It stays
+paper until the walk-forward OOS net is stably positive across ≥ 2 symbols.
+
+The live crypto strategies are now **`ny_n_break`** (6 PM, 24/7),
+**`ichimoku`**, **`fvg_scalp`**, and **`ema_pivot`** (paper only until they
+clear the cost floor).

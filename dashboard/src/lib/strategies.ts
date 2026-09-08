@@ -31,7 +31,7 @@ export type StrategyDef = {
   name: string
   kind: 'crypto' | 'index'
   /** which lane / status block reports it */
-  statusKey: 'ny_n_break' | 'ichimoku' | 'fvg_scalp' | 'options_cpr' | 'futures'
+  statusKey: 'ny_n_break' | 'ichimoku' | 'fvg_scalp' | 'ema_pivot' | 'options_cpr' | 'futures'
   engine: string
   instrument: string
   timeframe: string
@@ -128,6 +128,32 @@ export const STRATEGIES: StrategyDef[] = [
       { key: 'stretch_atr', label: 'Reversal stretch × ATR', group: 'signal', type: 'float', default: 1.5, min: 0.5, max: 4, step: 0.25 },
       { key: 'session_start_ist', label: 'Session start (IST hr)', group: 'market', type: 'int', default: 13, min: 0, max: 23 },
       { key: 'session_end_ist', label: 'Session end (IST hr)', group: 'market', type: 'int', default: 23, min: 1, max: 24 },
+      ...TRAIL,
+    ],
+  },
+  {
+    id: 'ema_pivot',
+    name: 'EMA + Pivot',
+    kind: 'crypto',
+    statusKey: 'ema_pivot',
+    engine: '5m · 9/13/21 EMA fan · standard daily pivots',
+    instrument: 'BTC / ETH perp',
+    timeframe: '5m',
+    blurb:
+      'From the CoinSwitch "EMA + Pivot" video. Combines a horizontal S/R (standard daily pivots, computed from the prior UTC-day OHLC) with a dynamic one (the 9/13/21 EMA fan). Enter only when the fan is stacked and sloping in the trend direction, price is on the supporting side of the day pivot, and the last 5m close breaks a pivot level — skipping oversized trigger candles. Exit on the P&L trail, a close back through the 9 EMA, or price stretched far from it.',
+    reads:
+      'When the 9/13/21 EMAs are stacked & sloping up, price is above the day pivot, and a 5m close breaks a pivot level (trigger candle ≤ {big_candle_atr}×ATR), enter long. Exit on the trail, a close below EMA9, or {stretch_atr}×ATR away from EMA9.',
+    backtest: { window: '90 days, BTC/ETH/SOL', net: 'pending backtest', trades: 0, note: 'auto-tuned nightly; paper only until it clears the cost floor' },
+    paperDefault: true,
+    builder: true,
+    params: [
+      { key: 'ema_fast', label: 'EMA fast', group: 'signal', type: 'int', default: 9, min: 3, max: 30 },
+      { key: 'ema_mid', label: 'EMA mid', group: 'signal', type: 'int', default: 13, min: 5, max: 50 },
+      { key: 'ema_slow', label: 'EMA slow', group: 'signal', type: 'int', default: 21, min: 10, max: 100 },
+      { key: 'slope_lookback', label: 'Slope lookback (bars)', group: 'signal', type: 'int', default: 3, min: 1, max: 10 },
+      { key: 'atr_len', label: 'ATR length', group: 'market', type: 'int', default: 14, min: 5, max: 40 },
+      { key: 'big_candle_atr', label: 'Skip trigger candle > ×ATR', group: 'signal', type: 'float', default: 2.0, min: 1, max: 5, step: 0.25 },
+      { key: 'stretch_atr', label: 'Take-profit stretch × ATR', group: 'signal', type: 'float', default: 3.0, min: 1.5, max: 6, step: 0.5 },
       ...TRAIL,
     ],
   },

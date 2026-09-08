@@ -63,6 +63,11 @@ SEARCH_SPACE: dict[str, dict[str, list]] = {
         "impulse_vol_mult": [1.0, 1.3, 1.6],
         "stretch_atr": [1.0, 1.5, 2.5],
     },
+    "ema_pivot": {
+        "slope_lookback": [2, 3, 5],
+        "big_candle_atr": [1.5, 2.0, 3.0],
+        "stretch_atr": [2.0, 3.0, 4.0],
+    },
 }
 
 
