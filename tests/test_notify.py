@@ -201,3 +201,21 @@ def test_entry_stoploss_floored_at_zero_for_cheap_option(monkeypatch) -> None:
         option={"option_type": "PUT", "strike": 24000, "entry_ltp": 7.45},
     )
     assert "SL ₹0.00" in out[0] and "-" not in out[0].split("SL")[1].split("·")[0]
+
+
+def test_day_summary_sends_with_open_trades_and_no_closes(monkeypatch) -> None:
+    out = _capture(monkeypatch)
+    # book left open at the close — 0 closed, but the message still goes out
+    notify.day_summary(
+        {
+            "date": "2026-09-08",
+            "closed": 0,
+            "open": 1,
+            "open_trades": [{"instrument": "BANKNIFTY", "action": "SELL_BULL_PUT_SPREAD"}],
+        }
+    )
+    assert out and "still open" in out[0] and "BANKNIFTY" in out[0]
+    # nothing closed AND nothing open → silent
+    out.clear()
+    notify.day_summary({"date": "x", "closed": 0, "open_trades": []})
+    assert out == []
