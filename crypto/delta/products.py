@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 _CACHE_PATH = CRYPTO_MEMORY / "crypto_products.json"
 _MAX_AGE_SECONDS = 24 * 3600
-_SCHEMA = 2  # bump when _pull's shape/filter changes so a stale disk cache is dropped
+_DELIST_AFTER_SECONDS = 7 * 24 * 3600  # a symbol absent this long from /v2/products is really gone
+_SCHEMA = 3  # bump when _pull's shape/filter changes so a stale disk cache is dropped
 _mem: dict[str, Any] | None = None
 
 
@@ -102,6 +103,24 @@ def _blob(client: DeltaClient | None = None, *, force: bool = False) -> dict[str
             _mem = disk
             return _mem
     fresh = _pull(client or DeltaClient())
+    # Delta's /v2/products response is occasionally incomplete (a symbol briefly
+    # flips out of "operational", a partial page): a symbol that traded fine an
+    # hour ago should not vanish because it's missing from one pull. Keep the
+    # last-known entry for anything the fresh pull dropped, and only forget it
+    # once it has been absent for _DELIST_AFTER_SECONDS (a real delisting).
+    prev = (_mem or _load_disk() or {}).get("contracts") or {}
+    now_ts = fresh["fetched_at"]
+    merged: dict[str, Any] = {}
+    for sym, spec in fresh["contracts"].items():
+        merged[sym] = {**spec, "last_seen": now_ts}
+    for sym, spec in prev.items():
+        if sym in merged:
+            continue
+        last_seen = float(spec.get("last_seen") or spec.get("fetched_at") or now_ts)
+        if now_ts - last_seen < _DELIST_AFTER_SECONDS:
+            merged[sym] = spec  # keep the stale-but-recent entry
+            logger.info("crypto: %s missing from this /v2/products pull — kept from cache", sym)
+    fresh["contracts"] = merged
     _save_disk(fresh)
     _mem = fresh
     return _mem
@@ -152,8 +171,6 @@ def available_symbols(client: DeltaClient | None = None) -> list[str]:
 
 
 if __name__ == "__main__":  # self-check — no network (uses a fake blob)
-    import os as _o
-
     _mem = {
         "schema": _SCHEMA,
         "fetched_at": time.time(),
@@ -171,10 +188,32 @@ if __name__ == "__main__":  # self-check — no network (uses a fake blob)
     assert get("DOGEUSD") is None
     # available_symbols is the allowlist ∩ live — FOOUSD (not on the allowlist) is hidden
     assert available_symbols() == ["BTCUSD", "PAXGUSD"]
-    _o.environ["CRYPTO_SYMBOLS"] = "PAXGUSD,DOGEUSD"  # DOGE not in cache → dropped
-    assert set(all_contracts()) == {"PAXGUSD"}
-    _o.environ.pop("CRYPTO_SYMBOLS")
+    # a configured symbol that isn't in the contract cache is dropped from
+    # all_contracts() (env-independent: .env may pin CRYPTO_SYMBOLS)
+    from crypto.config import crypto_settings as _cs
+
+    want = set(_cs().symbols)
+    have = set(_blob()["contracts"])
+    assert set(all_contracts()) == (want & have)
     # a cache from an older schema is stale even if recent
     assert not _fresh({"fetched_at": time.time()}, time.time())
     assert _fresh({"schema": _SCHEMA, "fetched_at": time.time()}, time.time())
+
+    # merge: a symbol dropped from one /v2/products pull is kept from cache
+    import crypto.delta.products as _P
+
+    _P._mem = {"schema": _SCHEMA, "fetched_at": time.time() - 60,
+               "contracts": {"BTCUSD": {"symbol": "BTCUSD", "product_id": 27, "contract_value": 0.001,
+                                        "tick_size": 0.5, "min_size": 1, "max_leverage": 100,
+                                        "last_seen": time.time() - 60},
+                             "SOLUSD": {"symbol": "SOLUSD", "product_id": 14823, "contract_value": 1.0,
+                                        "tick_size": 0.0001, "min_size": 1, "max_leverage": 100,
+                                        "last_seen": time.time() - 60}}}
+    _P._pull = lambda _c: {"schema": _SCHEMA, "fetched_at": time.time(),
+                           "contracts": {"BTCUSD": _P._mem["contracts"]["BTCUSD"]}}  # SOL missing
+    blob = _P._blob(force=True)
+    assert set(blob["contracts"]) == {"BTCUSD", "SOLUSD"}, blob["contracts"]
+    # …but a symbol absent longer than the delist window is dropped
+    _P._mem["contracts"]["SOLUSD"]["last_seen"] = time.time() - _DELIST_AFTER_SECONDS - 1
+    assert set(_P._blob(force=True)["contracts"]) == {"BTCUSD"}
     print("crypto.delta.products self-check ok")
