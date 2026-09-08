@@ -34,6 +34,7 @@ type Status = {
     peak_trail_pnl_pct: number
   }
   session_ist: { start: string; end: string }
+  nbreak_allround?: boolean
   ichimoku_tf: string
   symbols: string[]
   available_symbols: string[]
@@ -264,7 +265,10 @@ export function CryptoPanel() {
             Exit: stop −{s.trailing.stop_pnl_pct}% P&L, ratchets +{s.trailing.ratchet_step_pnl_pct}%
             for every +{s.trailing.ratchet_step_pnl_pct}% gained · trailing profit from +
             {s.trailing.tp_trigger_pnl_pct}%, then floor tracks peak −{s.trailing.peak_trail_pnl_pct}%
-            · window {s?.session_ist.start}–{s?.session_ist.end} IST
+            {' · '}
+            {s?.nbreak_allround
+              ? 'N-Break 24/7'
+              : `N-Break window ${s?.session_ist.start}–${s?.session_ist.end} IST`}
           </p>
         ) : null}
 

@@ -92,6 +92,10 @@ class CryptoSettings:
     # 6 PM (NY N-Break) session window, IST, 24h "HH:MM"
     ny_start: str
     ny_end: str
+    # when true, ny_n_break takes the same N-break setup around the clock, not
+    # only inside the NY window; the window still counts as "in session" so the
+    # post-6PM behaviour is unchanged. The trade cap becomes per-UTC-day.
+    nbreak_allround: bool
     # ichimoku
     ichimoku_tf: str
     # P&L trailing stop / target — percent of P&L on margin (see crypto/strategies/trailing.py)
@@ -142,6 +146,7 @@ def crypto_settings() -> CryptoSettings:
         fvg_scalp_enabled=_b("CRYPTO_FVG_SCALP_ENABLED", True),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
+        nbreak_allround=_b("CRYPTO_NBREAK_ALLROUND", True),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
         stop_pnl_pct=max(0.0, _f("CRYPTO_STOP_PNL_PCT", 10.0)),
         ratchet_step_pnl_pct=max(0.5, _f("CRYPTO_RATCHET_STEP_PNL_PCT", 5.0)),
@@ -167,6 +172,8 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_EMA_JAGUAR_ENABLED",
     "CRYPTO_VP_EDGE_ENABLED",
     "CRYPTO_FVG_SCALP_ENABLED",
+    "CRYPTO_NBREAK_ALLROUND",
+    "CRYPTO_NBREAK_MAX_TRADES",
     "CRYPTO_DEPLOY_USD",
     "CRYPTO_LEVERAGE",
     "CRYPTO_MAX_CONCURRENT",

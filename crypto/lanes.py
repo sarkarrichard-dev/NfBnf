@@ -83,8 +83,11 @@ def _trail_cfg(s) -> TrailConfig:
 
 
 def _nb_cfg(s) -> nb.NBreakConfig:
+    # around-the-clock covers more hours than the 5h NY window, so the per-period
+    # cap gets more room (still tunable via the env var).
+    default_cap = "6" if getattr(s, "nbreak_allround", False) else "3"
     return nb.NBreakConfig(
-        max_trades_per_session=int(os.getenv("CRYPTO_NBREAK_MAX_TRADES", "3") or 3),
+        max_trades_per_session=int(os.getenv("CRYPTO_NBREAK_MAX_TRADES", default_cap) or default_cap),
         trail=_trail_cfg(s),
     )
 
@@ -223,11 +226,15 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 if strat == "ny_n_break":
                     c5 = _closed(market_data.candles(sym, "5m", days=2, client=client))
                     c15 = _closed(market_data.candles(sym, "15m", days=4, client=client))
+                    # all-round: always "in session" (setup traded 24/7, NY hours
+                    # unchanged), and the trade cap resets per UTC day.
+                    nb_session = True if s.nbreak_allround else in_ny
+                    nb_date = crypto_day(now_utc) if s.nbreak_allround else ny_date
                     new_state, ev = nb.step(
                         sym, c5, c15, state=slot.get("strategy"), cfg=_nb_cfg(s),
-                        in_session=in_ny, session_date=ny_date,
+                        in_session=nb_session, session_date=nb_date,
                     )
-                    day, frame = ny_date, c5
+                    day, frame = nb_date, c5
                 elif strat == "ichimoku":
                     days = _ICHI_DAYS.get(s.ichimoku_tf, 15)
                     ch = _closed(market_data.candles(sym, s.ichimoku_tf, days=days, client=client))

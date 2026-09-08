@@ -164,10 +164,12 @@ def backtest_ny_n_break(sym: str, days: float, s) -> list[Trade]:
         win5 = c5.iloc[i - _WINDOW : i + 1].reset_index(drop=True)
         now = pd.Timestamp(win5["datetime"].iloc[-1]).to_pydatetime()
         win15 = c15_all[c15_all["datetime"] <= win5["datetime"].iloc[-1]].tail(200).reset_index(drop=True)
+        allround = getattr(s, "nbreak_allround", False)
         state, ev = nb.step(
             sym, win5, win15, state=state, cfg=nb.NBreakConfig(trail=_trail(s)),
-            in_session=in_ny_window(ny_start, ny_end, now),
-            session_date=ny_session_date(ny_start, ny_end, now),
+            in_session=True if allround else in_ny_window(ny_start, ny_end, now),
+            session_date=now.date().isoformat() if allround
+            else ny_session_date(ny_start, ny_end, now),
         )
         px = float(win5["close"].iloc[-1])
         ts = win5["datetime"].iloc[-1]
