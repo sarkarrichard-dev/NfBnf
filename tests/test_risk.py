@@ -21,21 +21,21 @@ def _risk(**kwargs: object) -> RiskSettings:
 
 
 def test_kill_switch_blocks_after_loss_budget_in_live(monkeypatch) -> None:
-    monkeypatch.setattr("index_ai.risk.today_live_realized_pnl", lambda: -7000.0)
+    monkeypatch.setattr("index_ai.risk.today_live_realized_pnl", lambda: -9500.0)
     monkeypatch.setattr("index_ai.risk.today_live_consecutive_loss_streak", lambda: 0)
-    ks = kill_switch_state(_risk(trading_mode="LIVE", max_daily_loss_rupees=6000.0))
+    ks = kill_switch_state(_risk(trading_mode="LIVE"))
     assert ks["triggered"] is True
     assert ks["active"] is True
 
 
 def test_kill_switch_scales_daily_loss_with_lots(monkeypatch) -> None:
     monkeypatch.setattr("index_ai.trade_lots.get_lots_per_trade", lambda: 2)
-    monkeypatch.setattr("index_ai.risk.today_live_realized_pnl", lambda: -7000.0)
+    monkeypatch.setattr("index_ai.risk.today_live_realized_pnl", lambda: -9000.0)
     monkeypatch.setattr("index_ai.risk.today_live_consecutive_loss_streak", lambda: 0)
-    ks = kill_switch_state(_risk(trading_mode="LIVE", max_daily_loss_rupees=12000.0))
-    assert ks["triggered"] is False
-    monkeypatch.setattr("index_ai.risk.today_live_realized_pnl", lambda: -12001.0)
-    ks2 = kill_switch_state(_risk(trading_mode="LIVE", max_daily_loss_rupees=12000.0))
+    ks = kill_switch_state(_risk(trading_mode="LIVE"))
+    assert ks["triggered"] is False  # 2 lots × ₹9,000 = ₹18,000 budget
+    monkeypatch.setattr("index_ai.risk.today_live_realized_pnl", lambda: -18001.0)
+    ks2 = kill_switch_state(_risk(trading_mode="LIVE"))
     assert ks2["triggered"] is True
 
 
@@ -89,5 +89,3 @@ def test_buy_and_sell_gates(monkeypatch) -> None:
     )
     assert ok_sell is False
     assert "selling" in reason.lower()
-
-

@@ -10,7 +10,7 @@ class HardcodedRiskPolicy:
     allow_option_buying: bool = True
     allow_option_selling: bool = True
     max_losing_trades_per_day: int = 3
-    max_daily_loss_rupees: float = 6000.0
+    max_daily_loss_rupees: float = 9000.0
     # Legacy summary field; per-index trails live on IndexInstrument (activation + distance).
     trailing_stop_index_points: float = 40.0
     # Option-buying entry gate. Buys are swift directional scalps — hold them to a

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -75,7 +74,7 @@ def test_lots_api_adjust(lots_db: None) -> None:
     assert base["lots_per_trade"] == 1
     up = c.post("/api/settings/lots", json={"delta": 1}).json()
     assert up["lots_per_trade"] == 2
-    assert up["policy"]["max_daily_loss_rupees"] == 12000
+    assert up["policy"]["max_daily_loss_rupees"] == 18000
     down = c.post("/api/settings/lots", json={"delta": -1}).json()
     assert down["lots_per_trade"] == 1
-    assert down["policy"]["max_daily_loss_rupees"] == 6000
+    assert down["policy"]["max_daily_loss_rupees"] == 9000
