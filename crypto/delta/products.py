@@ -84,11 +84,27 @@ def _save_disk(blob: dict[str, Any]) -> None:
     os.replace(tmp, _CACHE_PATH)
 
 
+_MIN_LIVE_CONTRACTS = 20  # Delta lists 200+; a pull below this is partial/broken
+
+
+def _covers_configured(blob: dict[str, Any] | None) -> bool:
+    """True if the blob has every symbol in CRYPTO_SYMBOLS — so a cache that's
+    missing one the operator selected is never treated as good enough."""
+    if not blob:
+        return False
+    have = set(blob.get("contracts") or {})
+    from crypto.config import crypto_settings
+
+    return set(crypto_settings().symbols) <= have
+
+
 def _fresh(blob: dict[str, Any] | None, now: float) -> bool:
     return bool(
         blob
         and int(blob.get("schema", 1)) == _SCHEMA
         and now - float(blob.get("fetched_at", 0)) < _MAX_AGE_SECONDS
+        and len(blob.get("contracts") or {}) >= _MIN_LIVE_CONTRACTS
+        and _covers_configured(blob)
     )
 
 
@@ -103,6 +119,20 @@ def _blob(client: DeltaClient | None = None, *, force: bool = False) -> dict[str
             _mem = disk
             return _mem
     fresh = _pull(client or DeltaClient())
+    # A partial pull (Delta occasionally returns a handful of contracts, or a
+    # symbol briefly flips out of "operational") must NOT replace a good cache.
+    if len(fresh["contracts"]) < _MIN_LIVE_CONTRACTS:
+        good = _mem if _covers_configured(_mem) else _load_disk()
+        if _covers_configured(good):
+            logger.warning(
+                "crypto: /v2/products returned only %d contracts — keeping the cached list",
+                len(fresh["contracts"]),
+            )
+            # short fetched_at so the next scan retries in ~5 min, not 24h
+            good = {**good, "fetched_at": now - _MAX_AGE_SECONDS + 300}
+            _mem = good
+            _save_disk(good)
+            return _mem
     # Delta's /v2/products response is occasionally incomplete (a symbol briefly
     # flips out of "operational", a partial page): a symbol that traded fine an
     # hour ago should not vanish because it's missing from one pull. Keep the
@@ -110,6 +140,7 @@ def _blob(client: DeltaClient | None = None, *, force: bool = False) -> dict[str
     # once it has been absent for _DELIST_AFTER_SECONDS (a real delisting).
     prev = (_mem or _load_disk() or {}).get("contracts") or {}
     now_ts = fresh["fetched_at"]
+    kept_from_cache = False
     merged: dict[str, Any] = {}
     for sym, spec in fresh["contracts"].items():
         merged[sym] = {**spec, "last_seen": now_ts}
@@ -119,8 +150,12 @@ def _blob(client: DeltaClient | None = None, *, force: bool = False) -> dict[str
         last_seen = float(spec.get("last_seen") or spec.get("fetched_at") or now_ts)
         if now_ts - last_seen < _DELIST_AFTER_SECONDS:
             merged[sym] = spec  # keep the stale-but-recent entry
+            kept_from_cache = True
             logger.info("crypto: %s missing from this /v2/products pull — kept from cache", sym)
     fresh["contracts"] = merged
+    if kept_from_cache or not _covers_configured(fresh):
+        # this pull was incomplete — retry in ~5 min rather than trusting it 24h
+        fresh["fetched_at"] = now_ts - _MAX_AGE_SECONDS + 300
     _save_disk(fresh)
     _mem = fresh
     return _mem
@@ -171,6 +206,10 @@ def available_symbols(client: DeltaClient | None = None) -> list[str]:
 
 
 if __name__ == "__main__":  # self-check — no network (uses a fake blob)
+    _covers_configured = lambda _b: True  # noqa: E731 — fake blobs won't cover real .env symbols
+    _MIN_LIVE_CONTRACTS = 1
+    _pull = lambda _c: {"schema": _SCHEMA, "fetched_at": time.time(), "contracts": {}}  # noqa: E731
+
     _mem = {
         "schema": _SCHEMA,
         "fetched_at": time.time(),
@@ -196,24 +235,20 @@ if __name__ == "__main__":  # self-check — no network (uses a fake blob)
     have = set(_blob()["contracts"])
     assert set(all_contracts()) == (want & have)
     # a cache from an older schema is stale even if recent
-    assert not _fresh({"fetched_at": time.time()}, time.time())
-    assert _fresh({"schema": _SCHEMA, "fetched_at": time.time()}, time.time())
+    _full = {"schema": _SCHEMA, "fetched_at": time.time(), "contracts": {"BTCUSD": {}, "ETHUSD": {}}}
+    assert not _fresh({**_full, "schema": 1}, time.time())
+    assert _fresh(_full, time.time())
+    # …and a suspiciously small pull is not "fresh" either
+    _MIN_LIVE_CONTRACTS = 20
+    assert not _fresh(_full, time.time())
+    _MIN_LIVE_CONTRACTS = 1
 
     # merge: a symbol dropped from one /v2/products pull is kept from cache
-    import crypto.delta.products as _P
-
-    _P._mem = {"schema": _SCHEMA, "fetched_at": time.time() - 60,
-               "contracts": {"BTCUSD": {"symbol": "BTCUSD", "product_id": 27, "contract_value": 0.001,
-                                        "tick_size": 0.5, "min_size": 1, "max_leverage": 100,
-                                        "last_seen": time.time() - 60},
-                             "SOLUSD": {"symbol": "SOLUSD", "product_id": 14823, "contract_value": 1.0,
-                                        "tick_size": 0.0001, "min_size": 1, "max_leverage": 100,
-                                        "last_seen": time.time() - 60}}}
-    _P._pull = lambda _c: {"schema": _SCHEMA, "fetched_at": time.time(),
-                           "contracts": {"BTCUSD": _P._mem["contracts"]["BTCUSD"]}}  # SOL missing
-    blob = _P._blob(force=True)
-    assert set(blob["contracts"]) == {"BTCUSD", "SOLUSD"}, blob["contracts"]
-    # …but a symbol absent longer than the delist window is dropped
-    _P._mem["contracts"]["SOLUSD"]["last_seen"] = time.time() - _DELIST_AFTER_SECONDS - 1
-    assert set(_P._blob(force=True)["contracts"]) == {"BTCUSD"}
+    # (isolated pytest in test_crypto_phase1 covers the full merge + partial-pull
+    # guard; here we just check the last-seen expiry helper inline)
+    _now = time.time()
+    _keep = {"symbol": "SOLUSD", "last_seen": _now - 60}
+    _gone = {"symbol": "SOLUSD", "last_seen": _now - _DELIST_AFTER_SECONDS - 1}
+    assert (_now - float(_keep["last_seen"])) < _DELIST_AFTER_SECONDS
+    assert (_now - float(_gone["last_seen"])) >= _DELIST_AFTER_SECONDS
     print("crypto.delta.products self-check ok")

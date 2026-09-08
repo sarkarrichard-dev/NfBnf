@@ -63,9 +63,72 @@ def test_products_parse_from_blob(monkeypatch):
         },
     }
     monkeypatch.setattr(products, "_mem", fake)
+    # the fake cache doesn't cover CRYPTO_SYMBOLS and is tiny, so guard the
+    # freshness checks and any live re-pull
+    monkeypatch.setattr(products, "_covers_configured", lambda _b: True)
+    monkeypatch.setattr(products, "_MIN_LIVE_CONTRACTS", 1)
+    monkeypatch.setattr(products, "_load_disk", lambda: None)
+    monkeypatch.setattr(products, "_pull", lambda _c: fake)
     c = products.get("btcusd")
     assert c and c.usable and c.contract_value == 0.001
     assert products.get("SOLUSD") is None
+
+
+def _spec(sym, pid):
+    return {
+        "symbol": sym,
+        "product_id": pid,
+        "contract_value": 1.0,
+        "tick_size": 0.1,
+        "min_size": 1,
+        "max_leverage": 100,
+        "last_seen": 1e18,
+    }
+
+
+def test_products_merge_keeps_symbols_a_partial_pull_dropped(monkeypatch):
+    import time
+
+    monkeypatch.setattr(products, "_covers_configured", lambda _b: True)
+    monkeypatch.setattr(products, "_MIN_LIVE_CONTRACTS", 2)
+    cached = {
+        "schema": products._SCHEMA,
+        "fetched_at": time.time() - 60,
+        "contracts": {
+            "BTCUSD": _spec("BTCUSD", 27),
+            "ETHUSD": _spec("ETHUSD", 3136),
+            "SOLUSD": _spec("SOLUSD", 14823),
+        },
+    }
+    monkeypatch.setattr(products, "_mem", dict(cached))
+    monkeypatch.setattr(products, "_load_disk", lambda: dict(cached))
+    monkeypatch.setattr(products, "_save_disk", lambda _b: None)
+
+    # a pull that only returns BTC + ETH must not lose SOL
+    monkeypatch.setattr(
+        products,
+        "_pull",
+        lambda _c: {
+            "schema": products._SCHEMA,
+            "fetched_at": time.time(),
+            "contracts": {"BTCUSD": _spec("BTCUSD", 27), "ETHUSD": _spec("ETHUSD", 3136)},
+        },
+    )
+    blob = products._blob(force=True)
+    assert set(blob["contracts"]) == {"BTCUSD", "ETHUSD", "SOLUSD"}
+
+    # a pull below the sanity floor is thrown away entirely — the good cache stands
+    monkeypatch.setattr(
+        products,
+        "_pull",
+        lambda _c: {
+            "schema": products._SCHEMA,
+            "fetched_at": time.time(),
+            "contracts": {"BTCUSD": _spec("BTCUSD", 27)},
+        },
+    )
+    blob = products._blob(force=True)
+    assert set(blob["contracts"]) == {"BTCUSD", "ETHUSD", "SOLUSD"}
 
 
 def test_charges_fee_and_spread():
