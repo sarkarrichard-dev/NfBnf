@@ -28,7 +28,7 @@ export function StrategyTuningPanel({ strategy }: Props) {
     ['Breakout', data.breakout_lookback],
     ['Confirm bars', data.entry_confirmation_bars],
     ['Supertrend', `${data.supertrend_period} / ${data.supertrend_multiplier}`],
-    ['Credit conf.', data.credit_min_confidence],
+    ['Sell gate', data.credit_confidence_gate],
     ['Credit stop', data.credit_stop_loss_pct],
     ['Credit profit', data.credit_profit_target_pct],
   ]

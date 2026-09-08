@@ -29,7 +29,13 @@ _BULLISH = frozenset({"BUY_CALL", "SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"})
 _BEARISH = frozenset({"BUY_PUT", "SELL_BEAR_CALL_SPREAD", "SELL_ATM_CALL"})
 _CREDIT_RANGE = frozenset({"SELL_IRON_CONDOR"})
 _CREDIT_ACTIONS = frozenset(
-    {"SELL_BULL_PUT_SPREAD", "SELL_BEAR_CALL_SPREAD", "SELL_ATM_PUT", "SELL_ATM_CALL", "SELL_IRON_CONDOR"}
+    {
+        "SELL_BULL_PUT_SPREAD",
+        "SELL_BEAR_CALL_SPREAD",
+        "SELL_ATM_PUT",
+        "SELL_ATM_CALL",
+        "SELL_IRON_CONDOR",
+    }
 )
 _ACTIONABLE = _BULLISH | _BEARISH | _CREDIT_RANGE
 
@@ -75,9 +81,7 @@ def _trade_pnl(
 ) -> dict[str, float]:
     if pnl_mode == "option_proxy":
         try:
-            hold = (
-                pd.Timestamp(exit_time) - pd.Timestamp(entry_time)
-            ).total_seconds() / 60.0
+            hold = (pd.Timestamp(exit_time) - pd.Timestamp(entry_time)).total_seconds() / 60.0
         except Exception:
             hold = 30.0
         est = estimate_option_pnl_rupees(
@@ -230,7 +234,7 @@ def replay_session(
                 and _bar_time_allowed(ts, bounds)
                 and i >= last_exit_bar + cooldown
                 and (
-                    signal.confidence >= sp.credit_min_confidence
+                    signal.confidence >= sp.credit_confidence_gate
                     or signal.action in {"BUY_CALL", "BUY_PUT"}
                 )
             ):
@@ -285,7 +289,9 @@ def replay_session(
             elif open_action in _BEARISH:
                 adverse = float(win["high"].max()) - entry_px
             else:  # condor
-                adverse = max(entry_px - float(win["low"].min()), float(win["high"].max()) - entry_px)
+                adverse = max(
+                    entry_px - float(win["low"].min()), float(win["high"].max()) - entry_px
+                )
             if credit_stop_pct > 0 and adverse >= entry_px * credit_stop_pct:
                 pending_exit_action = "CREDIT_STOP"
             elif not _bar_time_allowed(ts, bounds):
@@ -353,7 +359,10 @@ def _replay_candles(
                 "trades": len(day_trades),
                 "proxy_pnl_rupees": round(sum(float(t["proxy_pnl_rupees"]) for t in day_trades), 2),
                 "gross_proxy_pnl_rupees": round(
-                    sum(float(t.get("gross_proxy_pnl_rupees") or t["proxy_pnl_rupees"]) for t in day_trades),
+                    sum(
+                        float(t.get("gross_proxy_pnl_rupees") or t["proxy_pnl_rupees"])
+                        for t in day_trades
+                    ),
                     2,
                 ),
                 "estimated_friction_rupees": round(
@@ -427,16 +436,15 @@ def run_dhan_intraday_backtest(
         sum(float(t.get("gross_proxy_pnl_rupees") or t["proxy_pnl_rupees"]) for t in all_trades),
         2,
     )
-    total_friction = round(sum(float(t.get("estimated_friction_rupees") or 0) for t in all_trades), 2)
+    total_friction = round(
+        sum(float(t.get("estimated_friction_rupees") or 0) for t in all_trades), 2
+    )
     from index_ai.candle_cache import cache_status
 
-    disclaimer = (
-        "Signal replay on cached/Dhan intraday spot. "
-        + (
-            "option_proxy PnL uses simplified delta/theta — calibrate vs paper journal."
-            if pnl_mode == "option_proxy"
-            else "spot mode uses index points × lot — not option MTM."
-        )
+    disclaimer = "Signal replay on cached/Dhan intraday spot. " + (
+        "option_proxy PnL uses simplified delta/theta — calibrate vs paper journal."
+        if pnl_mode == "option_proxy"
+        else "spot mode uses index points × lot — not option MTM."
     )
     return {
         "instrument": key,

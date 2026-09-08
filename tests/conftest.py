@@ -15,7 +15,7 @@ def _test_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("CPR_NARROW_WIDTH_PCT", "0.35")
     monkeypatch.setenv("CPR_WIDE_WIDTH_PCT", "0.75")
     monkeypatch.setenv("CREDIT_PROFIT_TARGET_PCT", "0.50")
-    monkeypatch.setenv("CPR_CREDIT_MIN_CONFIDENCE", "0.58")
+    monkeypatch.setenv("CPR_CREDIT_CONFIDENCE_GATE", "0.45")
     monkeypatch.setenv("ENTRY_CONFIRMATION_BARS", "2")
     monkeypatch.setenv("MAX_CPR_ENTRY_EXTENSION_PCT", "0")
     monkeypatch.setenv("LOSS_GUARD_ENABLED", "true")
