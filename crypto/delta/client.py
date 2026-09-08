@@ -84,10 +84,39 @@ class DeltaClient:
         # Residential IPv6 is a rotating privacy address no static whitelist can
         # hold; pin Delta traffic to IPv4 so the operator whitelists one address.
         self._force_ipv4 = getattr(s, "force_ipv4", True)
+        self._http: httpx.Client | None = None
 
-    def _client(self, timeout: float) -> httpx.Client:
-        transport = httpx.HTTPTransport(local_address="0.0.0.0") if self._force_ipv4 else None
-        return httpx.Client(timeout=timeout, transport=transport)
+    def _client(self) -> httpx.Client:
+        """One pooled httpx.Client per DeltaClient instance. Building a client
+        loads the system trust store (`ssl.create_default_context`) — tens of ms
+        of CPU — so a fresh one per request made a scan cycle's ~25 calls burn a
+        core on SSL setup. Timeout is passed per-request instead."""
+        if self._http is None or self._http.is_closed:
+            transport = (
+                httpx.HTTPTransport(local_address="0.0.0.0") if self._force_ipv4 else None
+            )
+            self._http = httpx.Client(transport=transport)
+        return self._http
+
+    def close(self) -> None:
+        if self._http is not None:
+            self._http.close()
+            self._http = None
+
+    def __enter__(self) -> DeltaClient:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        # Safety net for callers that don't use `with` / close() (the per-request
+        # clients in crypto/api.py). CPython refcounting collects these promptly
+        # once the request handler returns.
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @property
     def has_credentials(self) -> bool:
@@ -158,8 +187,13 @@ class DeltaClient:
                     }
                 )
             try:
-                with self._client(_TIMEOUT if signed else _PUBLIC_TIMEOUT) as client:
-                    resp = client.request(m, url, headers=headers, content=payload or None)
+                resp = self._client().request(
+                    m,
+                    url,
+                    headers=headers,
+                    content=payload or None,
+                    timeout=_TIMEOUT if signed else _PUBLIC_TIMEOUT,
+                )
             except httpx.HTTPError as exc:
                 last_exc = exc
                 # A transport error on a mutating call may mean the request DID
@@ -211,9 +245,12 @@ if __name__ == "__main__":  # self-check — no network
     # IPv4 pin builds a bound transport; opt-out builds none
     import dataclasses as _dc
     _s = crypto_settings()
-    c4 = DeltaClient(_s)._client(1.0)
+    dc4 = DeltaClient(_s)
+    c4 = dc4._client()
     assert isinstance(c4._transport, httpx.HTTPTransport)
-    c4.close()
-    c6 = DeltaClient(_dc.replace(_s, force_ipv4=False))._client(1.0)
-    c6.close()
+    assert dc4._client() is c4, "httpx.Client is pooled per DeltaClient, not rebuilt"
+    dc4.close()
+    assert c4.is_closed
+    with DeltaClient(_dc.replace(_s, force_ipv4=False)) as dc6:
+        assert dc6._client()._transport is not None or dc6._force_ipv4 is False
     print("crypto.delta.client self-check ok — signing, query string, error context, IPv4 pin")
