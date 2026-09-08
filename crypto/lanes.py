@@ -208,6 +208,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
             journal.save_state(st)
 
     strategies = _enabled_strategies(s)
+    _prune_removed_strategies(st, strategies, client, fx, now_utc, events)
 
     for strat in strategies:
         for sym in s.symbols:
@@ -467,6 +468,48 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
     notify.opened(pos)
 
 
+def _known_strategies() -> set[str]:
+    """Every strategy the current code can run — anything else in the state file
+    is a leftover from a removed strategy (e.g. candle_renko)."""
+    return {"ny_n_break", "ichimoku"} | set(_SIMPLE)
+
+
+def _prune_removed_strategies(st, enabled, client, fx, now_utc, events) -> None:
+    """Drop state slots for strategies that no longer exist in the code. If such
+    a slot still holds a paper position, journal it closed at the current mark
+    (reason: 'strategy removed') so it doesn't linger in the dashboard forever."""
+    known = _known_strategies()
+    changed = False
+    for key in [k for k in list(st) if ":" in k and k.split(":", 1)[0] not in enabled]:
+        strat, sym = key.split(":", 1)
+        if strat in known:
+            continue  # merely disabled, not removed — leave it
+        slot = st.get(key) or {}
+        pos = slot.get("position")
+        if pos:
+            try:
+                mark = float(market_data.ticker(sym, client=client).get("mark_price") or 0)
+            except Exception:
+                mark = 0.0
+            mark = mark or float(pos.get("entry_price") or 0)
+            row = _build_exit_row(
+                {"price": mark, "reason": "strategy removed", "ts": now_utc.isoformat()},
+                slot, strat, sym, fx,
+            )
+            if row and not _already_journalled(row["exit_id"]):
+                journal.journal(row)
+                try:
+                    notify.closed(row)
+                except Exception:
+                    pass
+                events.append({"strategy": strat, "asset": sym, "event": "exit",
+                               "reason": "strategy removed"})
+        st.pop(key, None)
+        changed = True
+    if changed:
+        journal.save_state(st)
+
+
 def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
     """The closed-trade row. Does NOT persist — the caller saves state (position
     cleared) before appending this, so a crash between the two loses a record
@@ -509,7 +552,8 @@ if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
 
     off = replace(
         crypto_settings(), ny_nbreak_enabled=False, ichimoku_enabled=False,
-        trading_mode="PAPER", live_armed=False,
+        fvg_scalp_enabled=False, bb_reversal_enabled=False, ema_jaguar_enabled=False,
+        vp_edge_enabled=False, trading_mode="PAPER", live_armed=False,
     )
     crypto_settings = lambda: off  # noqa: E731 — stub for the self-check
     assert scan_crypto_paper() == []

@@ -279,3 +279,40 @@ def test_lane_noop_when_disabled(monkeypatch):
     monkeypatch.setenv("CRYPTO_FVG_SCALP_ENABLED", "false")
     assert lanes.scan_crypto_paper() == []
     assert lanes.enabled() is False
+
+
+def test_prune_removed_strategy_closes_and_drops_the_orphan_slot(paper_env, monkeypatch):
+    df5 = paper_env["df5"]
+    flat = df5.assign(close=130.0, open=130.0, high=131.0, low=129.0)
+    monkeypatch.setattr(lanes.market_data, "candles", lambda *a, **k: flat)
+    monkeypatch.setattr(lanes.market_data, "ticker", lambda *a, **k: {"mark_price": 131.0})
+    monkeypatch.setattr(lanes, "in_ny_window", lambda *a, **k: False)
+
+    # a leftover position for a strategy the code no longer has
+    journal.save_state(
+        {
+            "candle_renko:BTCUSD": {
+                "position": {
+                    "strategy": "candle_renko",
+                    "asset": "BTCUSD",
+                    "side": "short",
+                    "day": "2026-09-08",
+                    "entry_price": 130.0,
+                    "entry_time": "2026-09-08T10:00:00+00:00",
+                    "opened_at": "2026-09-08T10:00:00+00:00",
+                    "size": 30,
+                    "contract_value": 0.001,
+                    "leverage": 100,
+                    "margin_total_usd": 1.35,
+                    "notional_usd": 3.9,
+                    "mode": "paper",
+                }
+            }
+        }
+    )
+    lanes.scan_crypto_paper()
+
+    st = journal.load_state()
+    assert "candle_renko:BTCUSD" not in st  # slot dropped
+    rows = [r for r in journal.recent() if r["strategy"] == "candle_renko"]
+    assert len(rows) == 1 and rows[0]["exit_reason"] == "strategy removed"
