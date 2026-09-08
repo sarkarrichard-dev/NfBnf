@@ -158,6 +158,16 @@ def close_open_trade(
     if trade.get("pnl") is not None:
         return {"status": "ALREADY_CLOSED", "trade_id": trade_id}
 
+    # Guard against a stale `trade` dict (a cached in-memory copy, a row already
+    # closed by another path, a phantom id): the row must exist and still be
+    # open in the DB right now, or we do nothing — no journal write, no Telegram.
+    from index_ai.learning import connect
+
+    with connect() as _db:
+        _row = _db.execute("SELECT pnl FROM trades WHERE id = ?", (trade_id,)).fetchone()
+    if _row is None or _row["pnl"] is not None:
+        return {"status": "ALREADY_CLOSED", "trade_id": trade_id, "reason": "not open in DB"}
+
     option = trade.get("option") or {}
     mode = str(trade.get("mode") or "")
     entry_ltp = effective_entry_ltp(option)
