@@ -65,6 +65,9 @@ const ReportsPage = lazy(() =>
 const TradeHistoryPage = lazy(() =>
   import('./components/pages/TradeHistoryPage').then((m) => ({ default: m.TradeHistoryPage })),
 )
+const StrategiesPage = lazy(() =>
+  import('./components/strategies/StrategiesPage').then((m) => ({ default: m.StrategiesPage })),
+)
 
 type StatusResponse = {
   trading_mode: string
@@ -265,17 +268,20 @@ function App() {
         <>
           <PageHeader
             eyebrow="Strategies"
-            title="Strategy lanes"
-            status="Paper lanes, the AI brain, and the ML entry gate."
+            title="Strategy catalog"
+            status="Your strategies, the builder, the marketplace, exchanges and deployments."
           />
-          <div className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
-            <CollapsibleSection title="Strategy lanes (paper)" defaultOpen>
+          <Suspense fallback={<PanelFallback />}>
+            <StrategiesPage />
+          </Suspense>
+          <div className="mt-8 grid gap-6 xl:grid-cols-[1.6fr,1fr]">
+            <CollapsibleSection title="Strategy lanes (paper) — legacy view">
               <Suspense fallback={<PanelFallback />}>
                 <LanesPanel />
               </Suspense>
             </CollapsibleSection>
             <aside className="space-y-4">
-              <CollapsibleSection title="AI brain & ML gate" defaultOpen>
+              <CollapsibleSection title="AI brain & ML gate">
                 <Suspense fallback={<PanelFallback />}>
                   <BrainPanel />
                 </Suspense>
