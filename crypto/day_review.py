@@ -33,25 +33,33 @@ _SYSTEM = (
     "is a P&L-percent trailing stop (initial -10% of margin, ratchets up, "
     "trailing profit from +25%). Exchange fees are ~0.1% of notional per fill = "
     "~10% of the margin on a round trip at 100x, so friction dominates a small "
-    "move. Be concrete, tie every point to a trade or a number, say plainly when "
+    "move. Report grouped by asset (BTC / ETH / PAX / OTHER), not per trade. Be "
+    "concrete, tie every point to a number or an exit pattern, say plainly when "
     "the sample is too small to conclude anything, and never predict the market."
 )
 
-_REVIEW_PROMPT = """One period of a crypto perp system. Write a short operator review.
+_REVIEW_PROMPT = """One period of a crypto perp system. Write a short operator review,
+**grouped by asset** — BTC, ETH, PAX (gold) and OTHER (SOL / DOGE / …), not per trade.
 
 Return ONLY a JSON object:
 {{
-  "narrative": "3-5 sentences: what kind of period it was, net result, what drove it",
-  "went_right": ["short concrete points, each tied to a trade or number"],
-  "went_wrong": ["short concrete points, each tied to a trade or number"],
-  "watch": ["optional: things to check next"]
+  "narrative": "2-4 sentences: what kind of period it was overall, net result, what drove it",
+  "by_group": [
+    {{
+      "group": "BTC",
+      "read": "1-2 sentences: how BTC did — the W/L split, which strategy carried it, which exit dominated",
+      "improve": "1-2 sentences: the single most useful change for next time, tied to a number or an exit pattern"
+    }}
+  ],
+  "watch": ["optional: cross-cutting things to check next"]
 }}
 
-Note which exits fired — a trade riding to the trailing stop vs the trailing
-profit vs a structural signal tells you whether the exit rules are working.
-Call out fee drag when a gross-positive trade closed net-negative.
+Only include a group in by_group if it actually traded. For 'improve' be concrete:
+e.g. 'every BTC loss exited at the -10% trailing stop with peak +0% — entries are
+firing mid-chop; require the 15m trend to hold N bars first' beats 'be more selective'.
+Call out fee drag when gross-positive trades closed net-negative.
 
-SUMMARY:
+SUMMARY (numbers per group are already computed — read them, don't recompute):
 {summary}
 
 TRADES:
@@ -107,12 +115,48 @@ def _bucket_exit(reason: str | None) -> str:
     return "other"
 
 
+_ASSET_GROUP = {"BTCUSD": "BTC", "ETHUSD": "ETH", "PAXGUSD": "PAX"}
+
+
+def _asset_group(asset: str | None) -> str:
+    """BTC / ETH / PAX / OTHER — the day review is grouped by these, not per
+    trade, so 10 BTC trades are one line."""
+    return _ASSET_GROUP.get(str(asset or "").upper(), "OTHER")
+
+
+def _by_asset(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        g = groups.setdefault(
+            _asset_group(r.get("asset")),
+            {"trades": 0, "wins": 0, "losses": 0, "net_usd": 0.0, "net_inr": 0.0,
+             "strategies": Counter(), "exits": Counter(), "best_usd": None, "worst_usd": None},
+        )
+        p = _num(r.get("pnl_usd"))
+        g["trades"] += 1
+        g["wins"] += 1 if p > 0 else 0
+        g["losses"] += 1 if p < 0 else 0
+        g["net_usd"] = round(g["net_usd"] + p, 4)
+        g["net_inr"] = round(g["net_inr"] + _num(r.get("pnl_inr")), 2)
+        g["strategies"][str(r.get("strategy") or "?")] += 1
+        g["exits"][_bucket_exit(r.get("exit_reason"))] += 1
+        g["best_usd"] = p if g["best_usd"] is None else max(g["best_usd"], p)
+        g["worst_usd"] = p if g["worst_usd"] is None else min(g["worst_usd"], p)
+    # Counters → plain dicts, ordered by frequency
+    for g in groups.values():
+        g["strategies"] = dict(g["strategies"].most_common())
+        g["exits"] = dict(g["exits"].most_common())
+        g["win_rate"] = round(g["wins"] / g["trades"], 3) if g["trades"] else 0.0
+    order = ["BTC", "ETH", "PAX", "OTHER"]
+    return {k: groups[k] for k in order if k in groups}
+
+
 def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     closed = len(rows)
     if not closed:
         return {"date": datetime.now(IST).date().isoformat(), "closed": 0,
                 "wins": 0, "losses": 0, "net_usd": 0.0, "net_inr": 0.0,
-                "how_trades_ended": {}, "by_strategy": {}}
+                "how_trades_ended": {}, "by_strategy": {}, "by_asset": {}}
     wins = sum(1 for r in rows if _num(r.get("pnl_usd")) > 0)
     losses = sum(1 for r in rows if _num(r.get("pnl_usd")) < 0)
     ends = Counter(_bucket_exit(r.get("exit_reason")) for r in rows)
@@ -136,6 +180,7 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "net_inr": round(sum(_num(r.get("pnl_inr")) for r in rows), 2),
         "how_trades_ended": dict(ends.most_common()),
         "by_strategy": by_strat,
+        "by_asset": _by_asset(rows),
         "fee_bled_trades": fee_bleed,
         "best_trade": {"asset": best.get("asset"), "strategy": best.get("strategy"),
                        "pnl_usd": round(_num(best.get("pnl_usd")), 4)},
@@ -196,41 +241,57 @@ def _context() -> dict[str, Any]:
     return ctx
 
 
+def _group_improve(g: dict[str, Any]) -> str:
+    """A deterministic 'what to improve' for one asset group — the LLM replaces
+    this when a key is set, but the local fallback still says something useful."""
+    exits, strat = g.get("exits") or {}, g.get("strategies") or {}
+    top_exit = next(iter(exits), "")
+    stopped = exits.get("trailing stop", 0)
+    if g["trades"] >= 3 and g["wins"] == 0 and stopped >= g["trades"] - 1:
+        return ("Every trade stopped out with no favourable excursion — entries are "
+                "firing mid-chop; wait for the 15m trend to be clearly established.")
+    if g["net_usd"] < 0 and top_exit == "trailing stop":
+        return ("Losses dominated by the trailing stop. Tighten the entry filter or "
+                "widen the initial stop so noise doesn't take the trade before it works.")
+    if g["net_usd"] < 0 and g["wins"] >= g["losses"]:
+        return "More wins than losses but still net-negative — winners are too small vs fees."
+    if g["net_usd"] >= 0:
+        return f"Net-positive; keep the {next(iter(strat), 'current')} setup as-is."
+    return "Not enough of a pattern yet — keep watching."
+
+
 def _local_review(rows: list[dict[str, Any]], summary: dict[str, Any]) -> dict[str, Any]:
     if not summary.get("closed"):
-        return {"narrative": "No crypto trades closed today.", "went_right": [],
-                "went_wrong": [], "watch": []}
+        return {"narrative": "No crypto trades closed today.", "by_group": [], "watch": []}
     net = summary["net_usd"]
     ends = summary.get("how_trades_ended") or {}
-    right, wrong = [], []
-    if summary["best_trade"]["pnl_usd"] > 0:
-        b = summary["best_trade"]
-        right.append(f"Best: {b['asset']} {b['strategy']} +${b['pnl_usd']:.2f}.")
-    if summary["worst_trade"]["pnl_usd"] < 0:
-        w = summary["worst_trade"]
-        wrong.append(f"Worst: {w['asset']} {w['strategy']} ${w['pnl_usd']:.2f}.")
-    tp = ends.get("trailing profit", 0)
-    if tp:
-        right.append(f"{tp} trade(s) hit the trailing profit as designed.")
-    ts = ends.get("trailing stop", 0)
-    if ts and ts >= summary["closed"] / 2:
-        wrong.append(f"{ts}/{summary['closed']} trades stopped out on the trailing stop.")
-    if summary.get("fee_bled_trades"):
-        wrong.append(f"{summary['fee_bled_trades']} gross-positive trade(s) closed net-negative — fee drag.")
-    for k, a in (summary.get("by_strategy") or {}).items():
-        (right if a["net_usd"] >= 0 else wrong).append(
-            f"{k}: {a['trades']} trades, ${a['net_usd']:.2f}."
-        )
+    by_group = []
+    for name, g in (summary.get("by_asset") or {}).items():
+        strat = ", ".join(f"{k} ×{v}" for k, v in (g.get("strategies") or {}).items())
+        top_exit = next(iter(g.get("exits") or {}), "—")
+        by_group.append({
+            "group": name,
+            "read": (
+                f"{g['trades']} trades, {g['wins']}W/{g['losses']}L, "
+                f"net ${g['net_usd']:.2f} (₹{g['net_inr']:.0f}). {strat}. "
+                f"Mostly {top_exit} exits."
+            ),
+            "improve": _group_improve(g),
+        })
     watch = []
     if summary["closed"] < 5:
         watch.append("Sample is tiny (<5 trades) — nothing here is conclusive.")
+    if summary.get("fee_bled_trades"):
+        watch.append(
+            f"{summary['fee_bled_trades']} gross-positive trade(s) closed net-negative — fee drag."
+        )
     return {
         "narrative": (
             f"{summary['closed']} trades closed, {summary['wins']}W/{summary['losses']}L, "
             f"net ${net:.2f} (₹{summary['net_inr']:.0f}). Exits: "
             + ", ".join(f"{k} {v}" for k, v in ends.items()) + "."
         ),
-        "went_right": right, "went_wrong": wrong, "watch": watch,
+        "by_group": by_group, "watch": watch,
     }
 
 
@@ -245,17 +306,27 @@ def _ai_review(rows: list[dict[str, Any]], summary: dict[str, Any]) -> dict[str,
         trades=json.dumps(_trade_cards(rows), default=str)[:9000],
         context=json.dumps(_context(), default=str)[:4000],
     )
-    text = ask(_SYSTEM, prompt, max_tokens=1100)
+    text = ask(_SYSTEM, prompt, max_tokens=1200)
     if not text:
         return {**fallback, "source": "local"}
     try:
         text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
         parsed = json.loads(text)
+        # numbers stay from _summary.by_asset; the LLM only supplies read/improve
+        nums = {g["group"]: g for g in fallback["by_group"]}
+        merged = []
+        for g in parsed.get("by_group") or []:
+            name = str(g.get("group") or "").upper()
+            base = nums.get(name, {"group": name, "read": "", "improve": ""})
+            merged.append({
+                "group": name,
+                "read": str(g.get("read") or base.get("read") or ""),
+                "improve": str(g.get("improve") or base.get("improve") or ""),
+            })
         return {
             "narrative": str(parsed.get("narrative") or fallback["narrative"]),
-            "went_right": [str(x) for x in (parsed.get("went_right") or [])][:6],
-            "went_wrong": [str(x) for x in (parsed.get("went_wrong") or [])][:6],
-            "watch": [str(x) for x in (parsed.get("watch") or [])][:4],
+            "by_group": merged or fallback["by_group"],
+            "watch": [str(x) for x in (parsed.get("watch") or fallback["watch"])][:4],
             "source": "ai",
         }
     except Exception:
@@ -330,7 +401,7 @@ if __name__ == "__main__":  # self-check — real journal, no LLM call forced
     s = _summary(rows)
     assert set(s) >= {"net_usd", "wins", "losses", "how_trades_ended", "by_strategy"}
     lr = _local_review(rows, s)
-    assert "narrative" in lr and isinstance(lr["went_wrong"], list)
+    assert "narrative" in lr and isinstance(lr["by_group"], list)
     assert _bucket_exit("trailing profit +76% P&L (peak +78%)") == "trailing profit"
     assert _bucket_exit("15m inverted-N") == "structural signal"
     assert _bucket_exit("something odd") == "other"
