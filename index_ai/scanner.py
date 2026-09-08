@@ -704,8 +704,27 @@ async def _run_loop() -> None:
 
         if not is_market_open():
             _state.last_error = None
-            _log("paused", reason="market_closed", message=mkt["message"])
-            await asyncio.sleep(backoff)
+            # EOD still gets a chance every closed cycle it's due — this branch
+            # used to `continue` straight past the report stage, so a book that
+            # wasn't flat by 15:30 relied on a restart to send the summary.
+            try:
+                await _run_eod_if_due()
+            except Exception as exc:  # never fatal
+                _log("cycle_error", stage="eod_report_closed", error=_friendly_error(exc))
+            from index_ai.daily_ops import eod_due
+            from index_ai.market_clock import seconds_to_next_session_open
+
+            if eod_due():
+                idle = float(backoff)  # still pending — keep the normal cadence
+            else:
+                idle = min(1800.0, max(60.0, seconds_to_next_session_open() - 600.0))
+            _log(
+                "paused",
+                reason="market_closed",
+                message=mkt["message"],
+                next_check_s=int(idle),
+            )
+            await asyncio.sleep(idle)
             continue
 
         ks = kill_switch_state(cfg.risk)

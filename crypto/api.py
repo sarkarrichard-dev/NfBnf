@@ -50,7 +50,7 @@ def crypto_status() -> dict:
         "lanes": {
             "ny_n_break": s.ny_nbreak_enabled,
             "ichimoku": s.ichimoku_enabled,
-            "candle_renko": s.candle_renko_enabled,
+            "fvg_scalp": s.fvg_scalp_enabled,
         },
         "sizing": {
             "lots": s.lots,
@@ -374,6 +374,7 @@ def set_config(
     max_concurrent: int | None = Body(None, embed=True),
     ny_n_break_enabled: bool | None = Body(None, embed=True),
     ichimoku_enabled: bool | None = Body(None, embed=True),
+    fvg_scalp_enabled: bool | None = Body(None, embed=True),
     symbols: list[str] | None = Body(None, embed=True),
 ) -> dict:
     """Non-financial-in-paper knobs — plain write, no confirm (Delta keys are
@@ -401,6 +402,8 @@ def set_config(
         values["CRYPTO_NY_NBREAK_ENABLED"] = "true" if ny_n_break_enabled else "false"
     if ichimoku_enabled is not None:
         values["CRYPTO_ICHIMOKU_ENABLED"] = "true" if ichimoku_enabled else "false"
+    if fvg_scalp_enabled is not None:
+        values["CRYPTO_FVG_SCALP_ENABLED"] = "true" if fvg_scalp_enabled else "false"
     if not values:
         raise HTTPException(400, "No settings provided.")
     update_env_values(values)

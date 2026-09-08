@@ -31,7 +31,7 @@ export type StrategyDef = {
   name: string
   kind: 'crypto' | 'index'
   /** which lane / status block reports it */
-  statusKey: 'ny_n_break' | 'ichimoku' | 'candle_renko' | 'options_cpr' | 'futures'
+  statusKey: 'ny_n_break' | 'ichimoku' | 'fvg_scalp' | 'options_cpr' | 'futures'
   engine: string
   instrument: string
   timeframe: string
@@ -104,25 +104,30 @@ export const STRATEGIES: StrategyDef[] = [
     ],
   },
   {
-    id: 'candle_renko',
-    name: 'Candle-Renko',
+    id: 'fvg_scalp',
+    name: 'FVG Scalp',
     kind: 'crypto',
-    statusKey: 'candle_renko',
-    engine: '5m reversal bar · 15m Supertrend · Renko gate',
+    statusKey: 'fvg_scalp',
+    engine: '5m fair value gap · candlestick trigger · 15m trend',
     instrument: 'BTC / ETH perp',
     timeframe: '5m entry · 15m trend',
     blurb:
-      "Richard's own spec. A 5-minute candlestick reversal bar (engulfing / hammer / shooting-star), only in the direction of the 15-minute Supertrend, and only when the last ATR-sized Renko brick agrees. Exit on the P&L trailing engine or a 15m Supertrend flip.",
+      'A fast move leaves a 3-candle imbalance — a Fair Value Gap. When price retraces to retest the gap and a candlestick pattern confirms, enter: continuation when the 15m Supertrend and 5m structure agree, reversal when the trend is flat and price is stretched into an opposing gap. Filters: minimum gap width, a real impulse candle (range + volume), and an IST session window. Exit on the P&L trailing engine or a close through the gap.',
     reads:
-      'Enter long on a bullish 5m reversal bar when 15m Supertrend({st_period}, {st_mult}) is up and the last {renko_atr_mult}×ATR({atr_len}) Renko brick is green. Exit on the trail or a Supertrend flip.',
-    backtest: { window: '90 days, BTC/ETH', net: 'see RESULTS.md', trades: 0, note: 'auto-tuned nightly; enabled in paper' },
+      'When a bull FVG at least {fvg_min_atr}×ATR wide is retested with a bullish candle, enter long — continuation if 15m trend agrees, reversal if price is {stretch_atr}×ATR below EMA{ema_fast}. Only inside the {session_start_ist}:00–{session_end_ist}:00 IST window.',
+    backtest: { window: '90 days, BTC/ETH/SOL', net: 'pending backtest', trades: 0, note: 'auto-tuned nightly; paper only until it clears the cost floor' },
     paperDefault: true,
     builder: true,
     params: [
       { key: 'atr_len', label: 'ATR length', group: 'market', type: 'int', default: 14, min: 5, max: 40 },
-      { key: 'renko_atr_mult', label: 'Renko brick × ATR', group: 'signal', type: 'float', default: 1.0, min: 0.5, max: 3, step: 0.25 },
-      { key: 'st_period', label: 'Supertrend period', group: 'signal', type: 'int', default: 10, min: 5, max: 30 },
-      { key: 'st_mult', label: 'Supertrend multiplier', group: 'signal', type: 'float', default: 3.0, min: 1, max: 6, step: 0.5 },
+      { key: 'fvg_min_atr', label: 'Min gap width × ATR', group: 'signal', type: 'float', default: 0.25, min: 0.1, max: 1, step: 0.05 },
+      { key: 'impulse_atr_mult', label: 'Impulse range × ATR', group: 'signal', type: 'float', default: 1.2, min: 0.5, max: 3, step: 0.1 },
+      { key: 'impulse_vol_mult', label: 'Impulse volume ×', group: 'signal', type: 'float', default: 1.3, min: 1, max: 3, step: 0.1 },
+      { key: 'st_period', label: '15m Supertrend period', group: 'signal', type: 'int', default: 10, min: 5, max: 30 },
+      { key: 'st_mult', label: '15m Supertrend mult', group: 'signal', type: 'float', default: 3.0, min: 1, max: 6, step: 0.5 },
+      { key: 'stretch_atr', label: 'Reversal stretch × ATR', group: 'signal', type: 'float', default: 1.5, min: 0.5, max: 4, step: 0.25 },
+      { key: 'session_start_ist', label: 'Session start (IST hr)', group: 'market', type: 'int', default: 13, min: 0, max: 23 },
+      { key: 'session_end_ist', label: 'Session end (IST hr)', group: 'market', type: 'int', default: 23, min: 1, max: 24 },
       ...TRAIL,
     ],
   },

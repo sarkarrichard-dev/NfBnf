@@ -62,8 +62,8 @@ def _enabled_strategies(s) -> list[str]:
         out.append("ema_jaguar")
     if s.vp_edge_enabled:
         out.append("vp_edge")
-    if s.candle_renko_enabled:
-        out.append("candle_renko")
+    if s.fvg_scalp_enabled:
+        out.append("fvg_scalp")
     return out
 
 
@@ -121,10 +121,10 @@ def _vp_edge_cfg(s):
     return VpEdgeConfig(**_tuned("vp_edge"), trail=_trail_cfg(s))
 
 
-def _candle_renko_cfg(s):
-    from crypto.strategies.candle_renko import CandleRenkoConfig
+def _fvg_scalp_cfg(s):
+    from crypto.strategies.fvg_scalp import FvgScalpConfig
 
-    return CandleRenkoConfig(**_tuned("candle_renko"), trail=_trail_cfg(s))
+    return FvgScalpConfig(**_tuned("fvg_scalp"), trail=_trail_cfg(s))
 
 
 # name -> builder returning (module, timeframe, days-of-history, cfg)
@@ -132,13 +132,13 @@ _SIMPLE: dict[str, "Any"] = {}
 
 
 def _register_simple() -> None:
-    from crypto.strategies import bb_reversal, candle_renko, ema_jaguar, vp_edge
+    from crypto.strategies import bb_reversal, ema_jaguar, fvg_scalp, vp_edge
 
     _SIMPLE.update({
         "bb_reversal": lambda s: (bb_reversal, "5m", 2, _bb_cfg(s)),
         "ema_jaguar": lambda s: (ema_jaguar, "5m", 2, _ema_jaguar_cfg(s)),
         "vp_edge": lambda s: (vp_edge, "15m", 6, _vp_edge_cfg(s)),
-        "candle_renko": lambda s: (candle_renko, "5m", 3, _candle_renko_cfg(s)),
+        "fvg_scalp": lambda s: (fvg_scalp, "5m", 3, _fvg_scalp_cfg(s)),
     })
 
 

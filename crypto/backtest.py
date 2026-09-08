@@ -27,8 +27,8 @@ from crypto.session import in_ny_window, ny_session_date
 from crypto.sizing import size_position
 from crypto.strategies import (
     bb_reversal,
-    candle_renko,
     ema_jaguar,
+    fvg_scalp,
     ichimoku as ichi,
     ny_n_break as nb,
     vp_edge,
@@ -48,8 +48,8 @@ _SIMPLE = {
                    lambda s, **kw: ema_jaguar.EmaJaguarConfig(trail=_trail(s), **kw)),
     "vp_edge": (vp_edge, "15m",
                 lambda s, **kw: vp_edge.VpEdgeConfig(trail=_trail(s), **kw)),
-    "candle_renko": (candle_renko, "5m",
-                     lambda s, **kw: candle_renko.CandleRenkoConfig(trail=_trail(s), **kw)),
+    "fvg_scalp": (fvg_scalp, "5m",
+                  lambda s, **kw: fvg_scalp.FvgScalpConfig(trail=_trail(s), **kw)),
 }
 _WIN_N = {"ichimoku": 220}  # cloud needs a longer warm-up; the rest use 160
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
@@ -182,7 +182,7 @@ def backtest_ny_n_break(sym: str, days: float, s) -> list[Trade]:
 def backtest_simple(name: str, sym: str, days: float, s, *, cfg_overrides: dict | None = None,
                     frame: pd.DataFrame | None = None) -> list[Trade]:
     """Generic replay for a strategy with the plain step(sym, candles, *, state, cfg)
-    shape (ichimoku / bb_reversal / ema_jaguar / vp_edge / candle_renko).
+    shape (ichimoku / bb_reversal / ema_jaguar / vp_edge / fvg_scalp).
     ``frame`` overrides the fetched candles (walk-forward optimiser, one fold)."""
     module, tf, make_cfg = _SIMPLE[name]
     tf = tf(s) if callable(tf) else tf

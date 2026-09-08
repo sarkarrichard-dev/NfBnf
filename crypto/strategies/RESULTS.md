@@ -49,51 +49,55 @@ accumulates, flip the flag.
 
 ---
 
-# candle_renko — 2026-09-08
+# candle_renko — removed 2026-09-08
 
-Richard's own spec: 5-minute candlestick reversal bar (engulfing / hammer /
-shooting-star) gated by a 15-minute Supertrend trend and an ATR-sized Renko
-brick-direction agreement; exit on the P&L trailing engine or a 15m Supertrend
-flip. Module `crypto/strategies/candle_renko.py`.
+Enabled at Richard's request, then removed the same day after live paper
+confirmed the backtest. 22 paper trades in ~8 hours, **1 win / 21 losses**,
+−$81. The 90-day backtest had already measured **−$7,605 over 3,520 trades**
+(23% win rate) and the walk-forward tuner found **no eligible combo in 24**
+(best still −$4,691 OOS). Every candle_renko entry the live day was
+`bearish 5m bar, 15m ST down, renko down` — it shorted every 5m red candle while
+the 15m Supertrend sat bearish and spot chopped sideways, each trade a fresh
+~0.1%-price coin-flip (the 10%-of-P&L stop at 100× leverage) minus fees. Not a
+tuning problem — structural 5m-scalp friction, same as the three video
+strategies. Module and `renko.py` deleted; replaced by `fvg_scalp`.
 
-## Backtest — video-style defaults (atr_len 14, renko_atr_mult 1.0, st 10/3.0), 90 days
+---
 
-| symbol | trades | net USD | win rate |
-|---|---:|---:|---:|
-| BTCUSD | 1184 | **−$2,904** | 22% |
-| ETHUSD | 1172 | **−$817** | 22% |
-| SOLUSD | 1164 | **−$3,884** | 24% |
-| **total** | **3520** | **−$7,605** | 23% |
+# fvg_scalp — 2026-09-08
 
-~40 trades/day, `avg win $4.83` vs `avg loss −$4.21` — the same ~1:1 payoff at a
-~23% hit rate that sank the three video strategies, and the triple filter
-(pattern + Supertrend + Renko) barely thins the trade count. Structurally the
-worst of the four candidates on raw net.
+Replaces `candle_renko` as the third crypto strategy (with `ny_n_break` and
+`ichimoku`). Designed here, not from a video. Module `crypto/strategies/
+fvg_scalp.py` + `crypto/strategies/fairvalue.py`.
 
-(First measurement on this frame was −$5,215; the 2026-09-08 speed rework
-evaluates the 15m Supertrend once per 15-minute bucket instead of per 5m bar —
-a more stable trend read that lands on a different, slightly worse, trade set.
-Both readings are far below viable; the exact figure changes no decision.)
+**Setup:** a fast move leaves a 3-candle Fair Value Gap on the 5m frame; price
+retraces to retest the gap zone; a candlestick pattern (engulfing / hammer /
+shooting-star) confirms. Two contexts, chosen per setup:
 
-## Auto-tune — walk-forward, 24 combos, 3 OOS folds, BTC/ETH/SOL
+- **continuation** — the 15m Supertrend and the 5m swing structure both agree
+  with the gap direction.
+- **reversal** — the trend is flat/mild and price is `stretch_atr × ATR` beyond
+  the fast EMA, into an opposing gap.
 
-`crypto.ml.optimize.optimize_one("candle_renko", days=90)`:
-`{"stable": false, "eligible": 0, "candidates": 24}`. **Not one combo cleared
-the bar.** Best-scoring combo `atr_len 10 / renko_atr_mult 1.0 / st_period 10 /
-st_mult 4.0` still nets **−$4,691** OOS. `tuned_params("candle_renko")` returns
-`{}`, so the lane runs the dataclass defaults. Identical verdict to the three
-video strategies: the loss is structural 5m-scalp friction, not a tuning miss.
+**Filters:** minimum gap width (`fvg_min_atr × ATR`); a real impulse candle
+(range ≥ `impulse_atr_mult × ATR` *and* volume ≥ `impulse_vol_mult × mean`); the
+15m trend read; 5m market structure (HH/HL vs LH/LL); and an IST session window
+(`session_start_ist`–`session_end_ist`, default 13:00–23:00, skipping the dead
+Asian afternoon). **Exit:** the shared P&L trailing engine (same `TrailConfig`
+as the other two lanes), a 5m close through the far side of the entry gap, or
+session end.
+
+## Backtest — defaults, 90 days, BTCUSD / ETHUSD / SOLUSD
+
+_Pending — `python -m crypto.backtest --days 90 --strategy fvg_scalp` running;
+fill the table + the auto-tune result before deciding whether it stays enabled._
 
 ## Status
 
-**Enabled anyway, at Richard's explicit request (2026-09-08): "make the renko
-supertrand not dormant but an active strategy."** `CRYPTO_CANDLE_RENKO_ENABLED`
-defaults `true`; it runs in the paper lane alongside `ny_n_break` and
-`ichimoku`. Live orders still need `CRYPTO_TRADING_MODE=LIVE` +
-`CRYPTO_ALLOW_LIVE=true` + the arm phrase — **do not arm it live**: on this
-measurement it loses about as fast as fees can take it. `retune_all()` tunes it
-nightly through `crypto/ml/optimize.py` (`SEARCH_SPACE["candle_renko"]`); the
-walk-forward OOS result is the number to watch before it goes near live.
+`CRYPTO_FVG_SCALP_ENABLED` defaults `true` — it runs in the **paper** lane.
+**Do not arm crypto live** until this table is filled and the walk-forward OOS
+net is stably positive across ≥ 2 symbols (the standing gate). `retune_all()`
+tunes it nightly via `SEARCH_SPACE["fvg_scalp"]`.
 
 The live crypto strategies are now **`ny_n_break`** (6 PM), **`ichimoku`**, and
-**`candle_renko`** (paper only until it clears the cost floor).
+**`fvg_scalp`** (paper only until it clears the cost floor).

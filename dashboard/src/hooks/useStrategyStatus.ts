@@ -53,6 +53,6 @@ export function useStrategyStatus(): Record<string, LiveStatus> {
     options_cpr: lane(optionsCpr.data),
     ny_n_break: cLane('ny_n_break'),
     ichimoku: cLane('ichimoku'),
-    candle_renko: cLane('candle_renko'),
+    fvg_scalp: cLane('fvg_scalp'),
   }
 }
