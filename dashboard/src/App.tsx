@@ -1,15 +1,23 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CollapsibleSection } from './components/CollapsibleSection'
-import { Tabs } from './components/ui/Tabs'
-import { useStickyTab } from './hooks/useStickyTab'
-import { OperationsPanel } from './components/OperationsPanel'
+import { AppShell } from './components/shell/AppShell'
+import { PageHeader } from './components/shell/PageHeader'
+import { StatusPills } from './components/shell/StatusPills'
+import type { NavGroup } from './components/shell/Sidebar'
+import {
+  IconGrid,
+  IconLayers,
+  IconCoin,
+  IconFlask,
+  IconGear,
+} from './components/ui/Icons'
 import { ExecutionPanel } from './components/ExecutionPanel'
-import { Header } from './components/Header'
 import { JournalPanel } from './components/JournalPanel'
 import { StatsOverview } from './components/StatsRail'
 import { useDashboardData } from './hooks/useDashboardData'
 import { usePollMs } from './hooks/usePageVisible'
+import { useStickyTab } from './hooks/useStickyTab'
 import { api } from './lib/api'
 import type { DateRange, PeriodKey } from './types/analytics'
 
@@ -46,14 +54,14 @@ const DayReviewPanel = lazy(() =>
 const CryptoPanel = lazy(() =>
   import('./components/CryptoPanel').then((m) => ({ default: m.CryptoPanel })),
 )
+const OperationsPanel = lazy(() =>
+  import('./components/OperationsPanel').then((m) => ({ default: m.OperationsPanel })),
+)
 
 type StatusResponse = {
   trading_mode: string
   kill_switch?: { active?: boolean; reasons?: string[] }
-  policy?: {
-    lots_per_trade?: number
-    order_quantities?: Record<string, number>
-  }
+  policy?: { lots_per_trade?: number; order_quantities?: Record<string, number> }
   market?: { message?: string; now_ist?: string; is_open?: boolean; phase?: string }
   strategy?: Record<string, unknown>
   dhan_ready?: boolean
@@ -63,14 +71,24 @@ type StatusResponse = {
     trading_mode?: string
     reasons?: Array<{ title?: string; detail?: string }>
   }
-  auto?: {
-    running?: boolean
-    last_error?: string
-  }
+  auto?: { running?: boolean; last_error?: string }
 }
 
 function PanelFallback() {
   return <p className="text-xs text-slate-500">Loading…</p>
+}
+
+function greeting(): string {
+  const h = Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      hour12: false,
+    }).format(new Date()),
+  )
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
 }
 
 function App() {
@@ -109,6 +127,16 @@ function App() {
   )
 
   const ks = status.data?.kill_switch
+  const marketMsg = status.data?.market?.message
+  const marketOpen = status.data?.market?.is_open
+  const phaseLabel =
+    marketMsg ||
+    (marketOpen
+      ? 'Market open'
+      : status.data?.market?.phase === 'square_off'
+        ? 'Square-off'
+        : 'Market closed')
+
   const refreshLabel = [
     dashboard.statsUpdatedAt ? `Stats ${dashboard.statsUpdatedAt}` : '',
     dashboard.hasOpen && dashboard.mtmUpdatedAt ? `MTM ${dashboard.mtmUpdatedAt}` : '',
@@ -117,48 +145,62 @@ function App() {
     .filter(Boolean)
     .join(' · ')
 
-  return (
-    <main className="mx-auto max-w-[90rem] px-4 py-6 md:px-8">
-      <Header
-        tradingMode={status.data?.trading_mode}
-        market={status.data?.market}
-        dhanReady={status.data?.dhan_ready}
-      />
+  const nav: NavGroup[] = [
+    {
+      items: [
+        { id: 'trade', label: 'Dashboard', icon: <IconGrid />, badge: openCount || null },
+        { id: 'strategies', label: 'Strategies', icon: <IconLayers /> },
+        { id: 'crypto', label: 'Crypto', icon: <IconCoin /> },
+      ],
+    },
+    {
+      label: 'More',
+      items: [
+        { id: 'research', label: 'Research', icon: <IconFlask /> },
+        { id: 'setup', label: 'Settings', icon: <IconGear /> },
+      ],
+    },
+  ]
 
+  return (
+    <AppShell
+      nav={nav}
+      active={tab}
+      onNavigate={setTab}
+      topRight={
+        <StatusPills
+          tradingMode={status.data?.trading_mode}
+          market={status.data?.market}
+          dhanReady={status.data?.dhan_ready}
+        />
+      }
+    >
       {ks?.active ? (
-        <p className="mb-4 rounded-md border border-red-500/30 bg-red-950/30 px-3 py-2 text-sm text-red-200">
+        <p className="mb-4 rounded-lg border border-[var(--armed)]/40 bg-[var(--armed)]/10 px-3 py-2 text-sm text-[var(--armed)]">
           Kill switch active: {(ks.reasons || []).join(' ')}
         </p>
       ) : null}
-
       {dashboard.isError ? (
-        <p className="mb-4 rounded-lg border border-red-500/30 bg-red-950/20 px-3 py-2 text-sm text-red-200">
+        <p className="mb-4 rounded-lg border border-[var(--armed)]/40 bg-[var(--armed)]/10 px-3 py-2 text-sm text-[var(--armed)]">
           {dashboard.error instanceof Error ? dashboard.error.message : 'Failed to load analytics'}
         </p>
       ) : null}
 
-      <Tabs
-        tabs={[
-          { id: 'trade', label: 'Trade', badge: openCount || null },
-          { id: 'strategies', label: 'Strategies' },
-          { id: 'research', label: 'Research' },
-          { id: 'crypto', label: 'Crypto' },
-          { id: 'setup', label: 'Setup' },
-        ]}
-        value={tab}
-        onChange={setTab}
-      />
-
       {tab === 'trade' ? (
         <>
+          <PageHeader
+            eyebrow="Overview · NIFTY · BANKNIFTY · SENSEX"
+            title={greeting()}
+            status={`${phaseLabel} · CPR + EMA + OI${refreshLabel ? ` · ${refreshLabel}` : ''}`}
+          />
           <StatsOverview
             period={period}
             onPeriodChange={setPeriod}
             range={range}
             onRangeChange={setRange}
             updatedLabel={refreshLabel}
-            marketMessage={status.data?.market?.message}
-            marketOpen={status.data?.market?.is_open}
+            marketMessage={marketMsg}
+            marketOpen={marketOpen}
             analytics={dashboard.analytics}
             trades={dashboard.trades}
             openMtmRupees={dashboard.openMtmRupees}
@@ -205,71 +247,100 @@ function App() {
       ) : null}
 
       {tab === 'strategies' ? (
-        <div className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
-          <CollapsibleSection title="Strategy lanes (paper)" defaultOpen>
-            <Suspense fallback={<PanelFallback />}>
-              <LanesPanel />
-            </Suspense>
-          </CollapsibleSection>
-          <aside className="space-y-4">
-            <CollapsibleSection title="AI brain & ML gate" defaultOpen>
+        <>
+          <PageHeader
+            eyebrow="Strategies"
+            title="Strategy lanes"
+            status="Paper lanes, the AI brain, and the ML entry gate."
+          />
+          <div className="grid gap-6 xl:grid-cols-[1.6fr,1fr]">
+            <CollapsibleSection title="Strategy lanes (paper)" defaultOpen>
               <Suspense fallback={<PanelFallback />}>
-                <BrainPanel />
+                <LanesPanel />
               </Suspense>
             </CollapsibleSection>
-          </aside>
-        </div>
+            <aside className="space-y-4">
+              <CollapsibleSection title="AI brain & ML gate" defaultOpen>
+                <Suspense fallback={<PanelFallback />}>
+                  <BrainPanel />
+                </Suspense>
+              </CollapsibleSection>
+            </aside>
+          </div>
+        </>
       ) : null}
 
       {tab === 'research' ? (
-        <div className="grid gap-6 xl:grid-cols-2">
-          <CollapsibleSection title="Backtest (Dhan intraday)" defaultOpen>
-            <Suspense fallback={<PanelFallback />}>
-              <BacktestPanel />
-            </Suspense>
-          </CollapsibleSection>
-          <CollapsibleSection title="Learning from outcomes" defaultOpen>
-            <Suspense fallback={<PanelFallback />}>
-              <LearningPanel />
-            </Suspense>
-          </CollapsibleSection>
-        </div>
-      ) : null}
-
-      {tab === 'crypto' ? (
-        <CollapsibleSection title="Crypto — Delta Exchange" defaultOpen>
-          <Suspense fallback={<PanelFallback />}>
-            <CryptoPanel />
-          </Suspense>
-        </CollapsibleSection>
-      ) : null}
-
-      {tab === 'setup' ? (
-        <div className="space-y-6">
+        <>
+          <PageHeader
+            eyebrow="Research"
+            title="Backtest & learning"
+            status="Replay the signal over Dhan history; learn from closed outcomes."
+          />
           <div className="grid gap-6 xl:grid-cols-2">
-            <CollapsibleSection title="Dhan login & token" defaultOpen>
+            <CollapsibleSection title="Backtest (Dhan intraday)" defaultOpen>
               <Suspense fallback={<PanelFallback />}>
-                <DhanAuthPanel />
+                <BacktestPanel />
               </Suspense>
             </CollapsibleSection>
-            <CollapsibleSection title="Feature toggles" defaultOpen>
+            <CollapsibleSection title="Learning from outcomes" defaultOpen>
               <Suspense fallback={<PanelFallback />}>
-                <FeaturesPanel />
-              </Suspense>
-            </CollapsibleSection>
-            <CollapsibleSection title="Strategy tuning (.env)" defaultOpen>
-              <Suspense fallback={<PanelFallback />}>
-                <StrategyTuningPanel strategy={status.data?.strategy} />
+                <LearningPanel />
               </Suspense>
             </CollapsibleSection>
           </div>
-          <CollapsibleSection title="Diagnostics & scanner log">
-            <OperationsPanel />
-          </CollapsibleSection>
-        </div>
+        </>
       ) : null}
 
-    </main>
+      {tab === 'crypto' ? (
+        <>
+          <PageHeader
+            eyebrow="Crypto · Delta Exchange"
+            title="Crypto"
+            status="Perpetual futures on Delta Exchange India — 24/7, its own ML."
+          />
+          <CollapsibleSection title="Crypto — Delta Exchange" defaultOpen>
+            <Suspense fallback={<PanelFallback />}>
+              <CryptoPanel />
+            </Suspense>
+          </CollapsibleSection>
+        </>
+      ) : null}
+
+      {tab === 'setup' ? (
+        <>
+          <PageHeader
+            eyebrow="Settings"
+            title="Setup & diagnostics"
+            status="Broker login, feature toggles, strategy tuning, scanner log."
+          />
+          <div className="space-y-6">
+            <div className="grid gap-6 xl:grid-cols-2">
+              <CollapsibleSection title="Dhan login & token" defaultOpen>
+                <Suspense fallback={<PanelFallback />}>
+                  <DhanAuthPanel />
+                </Suspense>
+              </CollapsibleSection>
+              <CollapsibleSection title="Feature toggles" defaultOpen>
+                <Suspense fallback={<PanelFallback />}>
+                  <FeaturesPanel />
+                </Suspense>
+              </CollapsibleSection>
+              <CollapsibleSection title="Strategy tuning (.env)" defaultOpen>
+                <Suspense fallback={<PanelFallback />}>
+                  <StrategyTuningPanel strategy={status.data?.strategy} />
+                </Suspense>
+              </CollapsibleSection>
+            </div>
+            <CollapsibleSection title="Diagnostics & scanner log">
+              <Suspense fallback={<PanelFallback />}>
+                <OperationsPanel />
+              </Suspense>
+            </CollapsibleSection>
+          </div>
+        </>
+      ) : null}
+    </AppShell>
   )
 }
 

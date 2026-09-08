@@ -1,9 +1,13 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
-/* Fresh look: flat near-black surface, hairline cards, single blue accent.
-   The old neon-cyan theme is remapped onto a neutral slate ramp so every
-   `*-cyan-*` / `*-violet-*` utility already in the components reads as clean
-   grey without touching those files. */
+/* ─────────────────────────────────────────────────────────────────────────────
+   Phase 1 — design foundation, modelled on web.cryptomaty.com's app UI:
+   one blue accent, flat hairline cards (no glow, no shadow), Plus Jakarta Sans
+   for text and Geist Mono for every number.
+
+   The `*-cyan-*` / `*-violet-*` utilities scattered through the components are
+   remapped onto one neutral slate ramp so a palette change stays in this file.
+   ──────────────────────────────────────────────────────────────────────────── */
 @theme {
   --color-cyan-50: #f8fafc;
   --color-cyan-100: #f1f5f9;
@@ -28,40 +32,51 @@
   --color-violet-800: #1e293b;
   --color-violet-900: #0f172a;
   --color-violet-950: #020617;
+
+  --font-sans:
+    'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:
+    'Geist Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas,
+    monospace;
 }
 
 :root {
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-family:
+    'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto,
+    sans-serif;
+  color-scheme: dark;
+  letter-spacing: -0.003em;
 
-  /* One accent, real saturation. Semantic pair for money (up/down) plus an
-     "armed" red that only appears when live orders are enabled. */
-  --acc: #22d3ee;
-  --acc-strong: #06b6d4;
-  --acc-ink: #06212a;
-  --up: #34d399;
-  --down: #fb7185;
-  --warn: #fbbf24;
-  --armed: #fb3d5b;
-  --panel: #111621;
-  --panel-hi: rgba(255, 255, 255, 0.055);
-  --hair: rgba(255, 255, 255, 0.09);
+  /* One accent — the Cryptomaty blue, at its dark-theme brightness. Semantic
+     money pair (up / down), a warn amber, and an "armed" red that only shows
+     when live orders are enabled. */
+  --acc: #4d93f0;
+  --acc-strong: #1f6bff;
+  --acc-ink: #0a1a2e;
+  --acc-soft: rgba(77, 147, 240, 0.14);
+  --up: #4fb87e;
+  --down: #e27c6c;
+  --warn: #d3a24c;
+  --armed: #f0655a;
+
+  /* Surfaces: near-black navy ground, flat card fill, one hairline weight. */
+  --ground: #0a0e1a;
+  --panel: #121826;
+  --panel-hi: transparent;
+  --hair: #253044;
+  --hair-soft: #1c2536;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  color: #e8ebf0;
-  background-color: #0a0d14;
-  /* Two soft light sources instead of one barely-there wash — gives the near-black
-     ground some depth without turning it into a gradient. */
-  background-image:
-    radial-gradient(ellipse 50% 38% at 18% -8%, rgba(34, 211, 238, 0.13), transparent 62%),
-    radial-gradient(ellipse 45% 34% at 88% -6%, rgba(129, 140, 248, 0.1), transparent 60%);
-  background-attachment: fixed;
+  color: #f1f5fa;
+  background-color: var(--ground);
+  -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: rgba(34, 211, 238, 0.32);
+  background: var(--acc-soft);
   color: #fff;
 }
 
@@ -69,4 +84,10 @@ body {
   min-height: 100vh;
   position: relative;
   z-index: 0;
+}
+
+/* Numbers read as data — every price, P&L, percentage and timestamp. */
+.tabular-nums,
+[class*='tabular'] {
+  font-variant-numeric: tabular-nums;
 }
