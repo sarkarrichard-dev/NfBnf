@@ -92,6 +92,7 @@ from index_ai.exit import close_open_trade
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from index_ai.single_instance import acquire_or_exit
 
+    _quiet_http_loggers()  # covers `uvicorn index_ai.server:app`, which skips run()
     acquire_or_exit()  # a second instance sharing this .env + DB is the switch-lag cause
 
     from index_ai.learning import reconcile_all_trade_lots
@@ -364,6 +365,25 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Index Options AI", version="0.2.0", lifespan=lifespan)
+
+# The API has no auth and can arm live orders. It's bound to 127.0.0.1, but a
+# web page in the operator's browser can still reach it by rebinding a hostname
+# it controls to 127.0.0.1 (DNS-rebinding). A Host-header allowlist closes that
+# vector: the browser sends the attacker's Host, which isn't in the list, so the
+# request is rejected before it hits a handler. Necessary, not sufficient — real
+# auth still needs adding before this leaves localhost (cloud security baseline).
+# ALLOWED_HOSTS is env-driven so a reverse proxy / container health probe in the
+# cloud shape can widen it without a code change.
+from starlette.middleware.trustedhost import TrustedHostMiddleware  # noqa: E402
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=[
+        h.strip()
+        for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,::1,testserver").split(",")
+        if h.strip()
+    ],
+)
 
 # Crypto section (Delta Exchange) — separate lane, its own /api/crypto surface.
 try:
@@ -657,7 +677,7 @@ def trades_recent(limit: int = Query(80, ge=1, le=200)) -> dict[str, Any]:  # sy
 
 
 @app.get("/api/reports/export", include_in_schema=False)
-async def export_report(
+def export_report(  # sync: build_report does SQLite + Dhan I/O — Starlette threadpools it
     period: str = Query("today", description="today | week | month | all | custom"),
     from_date: str | None = Query(None, alias="from"),
     to_date: str | None = Query(None, alias="to"),
@@ -1600,9 +1620,18 @@ def configure_server_logging() -> Path:
     # httpx logs every request URL at INFO — for the Telegram API that URL
     # carries the bot token, which would then be written to server.log (and the
     # S3 backup) on every send. Quiet the HTTP client loggers.
+    _quiet_http_loggers()
+    return log_path
+
+
+def _quiet_http_loggers() -> None:
+    """httpx logs every request URL at INFO; the Telegram API URL carries the bot
+    token. On the run() path that INFO line lands in memory/server.log (and its
+    backup); on the uvicorn path there's no such file handler today, but a cloud
+    log shipper attaching a root handler would capture it. Belt and braces —
+    called from both start paths (run() and lifespan())."""
     for name in ("httpx", "httpcore", "hpack", "h11"):
         logging.getLogger(name).setLevel(logging.WARNING)
-    return log_path
 
 
 def run() -> None:
