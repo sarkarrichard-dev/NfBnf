@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 
 from crypto._util import num as _num
 from crypto.config import CRYPTO_MEMORY
-from crypto.journal import recent
+from crypto.journal import load_state, recent
 
 IST = ZoneInfo("Asia/Kolkata")
 CACHE_PATH = CRYPTO_MEMORY / "crypto_day_review.json"
@@ -369,6 +369,30 @@ def latest_crypto_review() -> dict[str, Any] | None:
         return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def open_positions() -> list[dict[str, Any]]:
+    """Lane-level open positions right now, across every strategy."""
+    return [
+        v["position"]
+        for k, v in load_state().items()
+        if ":" in str(k) and isinstance(v, dict) and v.get("position")
+    ]
+
+
+def send_day_summary() -> dict[str, Any]:
+    """Build + cache today's review and push the crypto day recap to Telegram.
+    Called at 23:58 IST; anything still open is listed."""
+    out = build_crypto_review(refresh=True)
+    rows = _today_rows()
+    opens = open_positions()
+    try:
+        from crypto import notify
+
+        notify.day_summary(out["summary"].get("date", ""), rows, opens)
+    except Exception:
+        pass
+    return {"date": out["summary"].get("date"), "closed": len(rows), "open": len(opens)}
 
 
 if __name__ == "__main__":  # self-check — real journal, no LLM call forced
