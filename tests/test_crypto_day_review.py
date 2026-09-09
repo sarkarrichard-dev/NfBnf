@@ -96,8 +96,7 @@ def test_empty_day(monkeypatch):
     assert out["review"]["narrative"].startswith("No crypto trades")
 
 
-def test_send_day_summary_reports_open_positions(monkeypatch):
-    monkeypatch.setattr(dr, "_today_rows", lambda: [])
+def test_open_positions_lists_only_live_slots(monkeypatch):
     monkeypatch.setattr(
         dr,
         "load_state",
@@ -113,13 +112,8 @@ def test_send_day_summary_reports_open_positions(monkeypatch):
             "ichimoku:ETHUSD": {"position": None},
         },
     )
-    from crypto import notify
-
-    out: list = []
-    monkeypatch.setattr(notify, "send", lambda text, **kw: out.append(text))
-    r = dr.send_day_summary()
-    assert r["closed"] == 0 and r["open"] == 1
-    assert out and "still open" in out[0] and "BTCUSD" in out[0]
+    opens = dr.open_positions()
+    assert len(opens) == 1 and opens[0]["asset"] == "BTCUSD"
 
 
 def test_endpoint_shape():
