@@ -45,19 +45,23 @@
   --color-slate-900: #161618;
   --color-slate-950: #0a0a0c;
 
+  /* QuantHawk runs on the logo's geometric display face everywhere — Richard's
+     call (2026-09-10), warned it costs scan-speed on the data tables. Plus
+     Jakarta Sans / Geist Mono stay as fallbacks. */
   --font-sans:
-    'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    'Orbitron', 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI',
+    Roboto, sans-serif;
   --font-mono:
-    'Geist Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas,
-    monospace;
+    'Orbitron', 'Geist Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo,
+    Consolas, monospace;
 }
 
 :root {
   font-family:
-    'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto,
-    sans-serif;
+    'Orbitron', 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI',
+    Roboto, sans-serif;
   color-scheme: dark;
-  letter-spacing: -0.003em;
+  letter-spacing: -0.012em;
 
   /* One accent — hawk gold, at its dark-theme brightness. Semantic money pair
      (up = candlestick green / down), a warn orange kept off the gold hue, and
