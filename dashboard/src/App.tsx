@@ -56,6 +56,9 @@ const DayReviewPanel = lazy(() =>
 const CryptoPanel = lazy(() =>
   import('./components/CryptoPanel').then((m) => ({ default: m.CryptoPanel })),
 )
+const FuturesPanel = lazy(() =>
+  import('./components/FuturesPanel').then((m) => ({ default: m.FuturesPanel })),
+)
 const OperationsPanel = lazy(() =>
   import('./components/OperationsPanel').then((m) => ({ default: m.OperationsPanel })),
 )
@@ -162,6 +165,7 @@ function App() {
         { id: 'trade', label: 'Dashboard', icon: <IconGrid />, badge: openCount || null },
         { id: 'strategies', label: 'Strategies', icon: <IconLayers /> },
         { id: 'crypto', label: 'Crypto', icon: <IconCoin /> },
+        { id: 'futures', label: 'Futures', icon: <IconChart /> },
       ],
     },
     {
@@ -325,6 +329,19 @@ function App() {
               <CryptoPanel />
             </Suspense>
           </CollapsibleSection>
+        </>
+      ) : null}
+
+      {tab === 'futures' ? (
+        <>
+          <PageHeader
+            eyebrow="Futures"
+            title="Futures"
+            status="Directional index-futures paper lane + the stock-futures replay verdict."
+          />
+          <Suspense fallback={<PanelFallback />}>
+            <FuturesPanel />
+          </Suspense>
         </>
       ) : null}
 

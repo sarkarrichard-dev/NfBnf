@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 
-type LaneStatus = {
+export type LaneStatus = {
   enabled?: boolean
   instruments?: string[]
   lanes?: string[]
@@ -12,13 +12,13 @@ type LaneStatus = {
   recent_trades?: Record<string, unknown>[]
 }
 
-const rupees = (v?: number | null) =>
+export const rupees = (v?: number | null) =>
   v == null ? '—' : `${v < 0 ? '-' : ''}₹${Math.abs(Math.round(v)).toLocaleString('en-IN')}`
 
-const pnlClass = (v?: number | null) =>
+export const pnlClass = (v?: number | null) =>
   v == null || v === 0 ? 'text-slate-300' : v > 0 ? 'text-emerald-300' : 'text-rose-300'
 
-function LaneCard({ title, data }: { title: string; data?: LaneStatus }) {
+export function LaneCard({ title, data }: { title: string; data?: LaneStatus }) {
   const today = data?.today ?? {}
   const all = data?.all_time ?? {}
   const open = Object.entries(data?.open_positions ?? {})
