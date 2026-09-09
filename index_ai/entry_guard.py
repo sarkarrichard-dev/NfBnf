@@ -99,8 +99,11 @@ def _enforce_regime_gate() -> bool:
 
 
 def _require_viable() -> bool:
+    # default OFF: the sell-lane gross edge was re-measured negative 2026-09-09,
+    # but the signal was just retimed (5m/15m) — don't auto-pause the lane on a
+    # stale verdict. Flip OPTIONS_REQUIRE_VIABLE=true to arm it.
     raw = os.getenv("OPTIONS_REQUIRE_VIABLE")
-    return True if raw is None else raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return raw is not None and raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _viable_sell_blocks(instrument: str) -> tuple[bool, str]:
@@ -230,17 +233,15 @@ if __name__ == "__main__":  # self-check (pure logic — no journal read)
     )[0]
     assert not regime_blocks_lane(None, "buy")[0]
 
-    # viability sell gate: BANKNIFTY hedged spread on a wide book is NOT_VIABLE;
-    # NIFTY (measured, tight book) is VIABLE; an unmeasured index never blocks
-    os.environ["SLIPPAGE_HALF_SPREAD_POINTS_NIFTY"] = "0.20"
+    # viability sell gate is opt-in (default off); when armed a NOT_VIABLE index
+    # is blocked, an UNMEASURED one is not
     os.environ["SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY"] = "4.06"
+    assert not _viable_sell_blocks("BANKNIFTY")[0]  # gate default-off
+    os.environ["OPTIONS_REQUIRE_VIABLE"] = "true"
     assert _viable_sell_blocks("BANKNIFTY")[0]
-    assert not _viable_sell_blocks("NIFTY")[0]
-    os.environ["OPTIONS_REQUIRE_VIABLE"] = "false"
-    assert not _viable_sell_blocks("BANKNIFTY")[0]
+    assert not _viable_sell_blocks("SENSEX")[0]  # UNMEASURED — never blocks
     del os.environ["OPTIONS_REQUIRE_VIABLE"]
     del os.environ["SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY"]
-    del os.environ["SLIPPAGE_HALF_SPREAD_POINTS_NIFTY"]
 
     os.environ["ENFORCE_REGIME_GATE"] = "false"
     assert not regime_blocks_lane(
