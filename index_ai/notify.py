@@ -71,7 +71,10 @@ def _seen(key: str, window_s: float) -> bool:
     stamps = {k: v for k, v in stamps.items() if now - float(v or 0) < _STAMP_TTL_S}
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        tmp = f"{path}.tmp"
+        # per-thread temp name — two daemon sends stamping at once must not
+        # collide on the same .tmp (os.replace is atomic, so the target is
+        # always a whole document from one writer or the other)
+        tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(stamps, fh)
         os.replace(tmp, path)

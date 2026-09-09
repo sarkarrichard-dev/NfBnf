@@ -445,11 +445,11 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, ope
         except Exception as exc:
             new_state["position"] = None  # order failed → we are flat, record nothing
             logger.error("crypto live entry FAILED for %s %s: %s", sym, side.upper(), exc)
+            ev.update(event="live_rejected", reason=str(exc))
             notify.alert(
                 f"\U0001f534 <b>CRYPTO LIVE ENTRY FAILED</b> — {sym} {side.upper()}\n{exc}",
                 key=f"c-entryfail:{sym}:{strat}",
             )
-            ev.update(event="live_rejected", reason=str(exc))
             return
         # THE ORDER IS LIVE. The position MUST be recorded from here — the fill
         # lookup is a soft refinement, never a reason to drop the position.
