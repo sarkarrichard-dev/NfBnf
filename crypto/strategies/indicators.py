@@ -11,6 +11,12 @@ def ema(series: pd.Series, length: int) -> pd.Series:
     return series.astype(float).ewm(span=length, adjust=False).mean()
 
 
+def smma(series: pd.Series, length: int) -> pd.Series:
+    """Smoothed / Wilder's moving average (RMA) — ``alpha = 1/length``.
+    What TradingView calls a "Smoothed MA"."""
+    return series.astype(float).ewm(alpha=1.0 / length, adjust=False).mean()
+
+
 def anchored_vwap(df: pd.DataFrame, *, anchor: str = "1D") -> pd.Series:
     """Volume-weighted average of hlc3, restarting each ``anchor`` period
     (default the UTC day — the 'BTC day' the Pine strategy anchors to).

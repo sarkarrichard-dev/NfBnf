@@ -33,6 +33,7 @@ from crypto.strategies import (
     fvg_scalp,
     ichimoku as ichi,
     ny_n_break as nb,
+    tma_phoenix,
     vp_edge,
 )
 from crypto.strategies.trailing import TrailConfig
@@ -56,8 +57,10 @@ _SIMPLE = {
                   lambda s, **kw: ema_pivot.EmaPivotConfig(trail=_trail(s), **kw)),
     "ak_roxx_pro": (ak_roxx_pro, "5m",
                     lambda s, **kw: ak_roxx_pro.AkRoxxConfig(trail=_trail(s), **kw)),
+    "tma_phoenix": (tma_phoenix, "5m",
+                    lambda s, **kw: tma_phoenix.TmaPhoenixConfig(trail=_trail(s), **kw)),
 }
-_WIN_N = {"ichimoku": 220, "ema_pivot": 340, "ak_roxx_pro": 220}  # ema_pivot needs a full prior UTC day; ak_roxx only the prior hour + 55 EMA
+_WIN_N = {"ichimoku": 220, "ema_pivot": 340, "ak_roxx_pro": 220, "tma_phoenix": 340}  # ema_pivot needs a prior UTC day; ak_roxx the prior hour; tma_phoenix the 200 SMMA
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 
 
