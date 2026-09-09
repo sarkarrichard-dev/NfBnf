@@ -1,76 +1,92 @@
 @import 'tailwindcss';
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Phase 1 — design foundation, modelled on web.cryptomaty.com's app UI:
-   one blue accent, flat hairline cards (no glow, no shadow), Plus Jakarta Sans
-   for text and Geist Mono for every number.
+   QuantHawk — design foundation. Colours are taken straight from the logo:
+   a near-black ground, a metallic-silver chrome (Tailwind `slate` reads as the
+   hawk's plumage), hawk-gold as the one accent (the "HAWK" wordmark + the eye),
+   and the candlestick green as the money-up colour.
 
-   The `*-cyan-*` / `*-violet-*` utilities scattered through the components are
-   remapped onto one neutral slate ramp so a palette change stays in this file.
+   Every component pulls colour from the tokens below, so a palette change is
+   this one file. The `*-cyan-*` / `*-violet-*` utilities scattered through the
+   components are remapped onto the neutral ramp; the deep end of `slate`
+   (700–950 — surfaces, borders, ring-offsets) is neutralised so it agrees with
+   the near-black ground. `slate` 50–600 stays as-is: it already reads as the
+   logo's cool silver.
    ──────────────────────────────────────────────────────────────────────────── */
 @theme {
-  --color-cyan-50: #f8fafc;
-  --color-cyan-100: #f1f5f9;
-  --color-cyan-200: #e2e8f0;
-  --color-cyan-300: #cbd5e1;
-  --color-cyan-400: #94a3b8;
-  --color-cyan-500: #64748b;
-  --color-cyan-600: #475569;
-  --color-cyan-700: #334155;
-  --color-cyan-800: #1e293b;
-  --color-cyan-900: #0f172a;
-  --color-cyan-950: #020617;
+  --color-cyan-50: #fafafa;
+  --color-cyan-100: #f4f4f5;
+  --color-cyan-200: #e4e4e7;
+  --color-cyan-300: #d4d4d8;
+  --color-cyan-400: #a1a1aa;
+  --color-cyan-500: #71717a;
+  --color-cyan-600: #52525b;
+  --color-cyan-700: #3f3f46;
+  --color-cyan-800: #27272a;
+  --color-cyan-900: #18181b;
+  --color-cyan-950: #0a0a0c;
 
-  --color-violet-50: #f8fafc;
-  --color-violet-100: #f1f5f9;
-  --color-violet-200: #e2e8f0;
-  --color-violet-300: #cbd5e1;
-  --color-violet-400: #94a3b8;
-  --color-violet-500: #64748b;
-  --color-violet-600: #475569;
-  --color-violet-700: #334155;
-  --color-violet-800: #1e293b;
-  --color-violet-900: #0f172a;
-  --color-violet-950: #020617;
+  --color-violet-50: #fafafa;
+  --color-violet-100: #f4f4f5;
+  --color-violet-200: #e4e4e7;
+  --color-violet-300: #d4d4d8;
+  --color-violet-400: #a1a1aa;
+  --color-violet-500: #71717a;
+  --color-violet-600: #52525b;
+  --color-violet-700: #3f3f46;
+  --color-violet-800: #27272a;
+  --color-violet-900: #18181b;
+  --color-violet-950: #0a0a0c;
 
+  /* Neutralise the deep end of slate so surfaces sit on the near-black ground
+     without a navy cast. The lighter steps (text) stay slate — they're silver. */
+  --color-slate-700: #3a3a40;
+  --color-slate-800: #26262b;
+  --color-slate-900: #161618;
+  --color-slate-950: #0a0a0c;
+
+  /* QuantHawk runs on the logo's geometric display face everywhere — Richard's
+     call (2026-09-10), warned it costs scan-speed on the data tables. Plus
+     Jakarta Sans / Geist Mono stay as fallbacks. */
   --font-sans:
-    'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    'Orbitron', 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI',
+    Roboto, sans-serif;
   --font-mono:
-    'Geist Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas,
-    monospace;
+    'Orbitron', 'Geist Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo,
+    Consolas, monospace;
 }
 
 :root {
   font-family:
-    'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto,
-    sans-serif;
+    'Orbitron', 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI',
+    Roboto, sans-serif;
   color-scheme: dark;
-  letter-spacing: -0.003em;
+  letter-spacing: -0.012em;
 
-  /* One accent — the Cryptomaty blue, at its dark-theme brightness. Semantic
-     money pair (up / down), a warn amber, and an "armed" red that only shows
-     when live orders are enabled. */
-  --acc: #4d93f0;
-  --acc-strong: #1f6bff;
-  --acc-ink: #0a1a2e;
-  --acc-soft: rgba(77, 147, 240, 0.14);
-  --up: #4fb87e;
-  --down: #e27c6c;
-  --warn: #d3a24c;
-  --armed: #f0655a;
+  /* One accent — hawk gold, at its dark-theme brightness. Semantic money pair
+     (up = candlestick green / down), a warn orange kept off the gold hue, and
+     an "armed" red that only shows when live orders are enabled. */
+  --acc: #f2a63c;
+  --acc-strong: #e08d1c;
+  --acc-ink: #1a1305;
+  --acc-soft: rgba(242, 166, 60, 0.14);
+  --up: #33c06e;
+  --down: #e86a5b;
+  --warn: #e8893a;
+  --armed: #ff5340;
 
-  /* Surfaces: near-black navy ground, flat card fill, one hairline weight. */
-  --ground: #0a0e1a;
-  --panel: #121826;
+  /* Surfaces: near-black neutral ground, flat card fill, one hairline weight. */
+  --ground: #0a0a0b;
+  --panel: #141416;
   --panel-hi: transparent;
-  --hair: #253044;
-  --hair-soft: #1c2536;
+  --hair: #2a2a30;
+  --hair-soft: #201f24;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  color: #f1f5fa;
+  color: #f4f4f5;
   background-color: var(--ground);
   -webkit-font-smoothing: antialiased;
 }

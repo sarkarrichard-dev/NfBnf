@@ -25,7 +25,7 @@ export function Sparkline({ points, width = 72, height = 20, className, stroke }
     .join(' ')
 
   const trend = points[points.length - 1] - points[0]
-  const color = stroke ?? (trend >= 0 ? '#34d399' : '#f87171')
+  const color = stroke ?? (trend >= 0 ? 'var(--up)' : 'var(--down)')
 
   return (
     <svg

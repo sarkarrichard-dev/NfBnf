@@ -137,7 +137,7 @@ export const ExecutionPanel = memo(function ExecutionPanel({
             onClick={onToggle}
             className={cn(
               'relative flex h-9 w-[164px] items-center rounded-full border p-1 text-xs font-semibold transition-colors',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--acc)]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0d14]',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--acc)]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ground)]',
               'disabled:cursor-not-allowed disabled:opacity-70',
               isLive
                 ? liveArmed

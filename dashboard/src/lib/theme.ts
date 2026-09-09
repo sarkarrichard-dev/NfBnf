@@ -1,7 +1,6 @@
 /** Shared UI surface classes — flat hairline cards on a near-black ground, one
- *  blue accent, mono numbers. Modelled on the web.cryptomaty.com app UI.
- *  Colours come from the CSS custom properties in index.css so a palette change
- *  is one file. */
+ *  hawk-gold accent, mono numbers. Colours come from the CSS custom properties
+ *  in index.css so a palette change is one file. */
 export const fx = {
   /** Section container — flat, one hairline, 12px radius, no shadow or glow. */
   panel: 'rounded-xl border border-[var(--hair)] bg-[var(--panel)]',
