@@ -120,10 +120,29 @@ stop distance, the MA type) is **hard-coded in the script** — not exposed.
   trail distance) each move the result — fit them on Delta 5m history for BTC /
   ETH / SOL and report the sweep, don't hard-code a number.
 
-## If it clears the backtest
+## Backtest result — it did not clear (2026-09-09)
 
-Wire it as a `crypto/strategies/ak_roxx_pro.py` module in the same shape as the
-others (`ny_n_break.py`, `ichimoku.py`): a pure `step(bars, state) -> event`
-signal, `AkRoxxConfig` frozen dataclass, a `__main__` self-check, added to
-`crypto/lanes.py` behind a `CRYPTO_AK_ROXX_ENABLED` flag (default off), and
-walk-forward-tuned by `crypto/ml/optimize.py`.
+`crypto/strategies/ak_roxx_pro.py` is the port; `crypto/backtest.py` runs it
+(`python -m crypto.backtest --days 120 --strategy ak_roxx_pro`). Replayed on
+Delta 5m history, 60 days, BTC/ETH/SOL, entries on close, confirmed pivots,
+previous completed 1H bar for the CPR — the honest setup.
+
+**Net, after Delta fees (default config):** −$7,972 over 3,562 trades, 32% win
+(BTC −$2,081 · ETH −$964 · SOL −$4,927). Every point of the `near_pct` ×
+`require_beyond_cpr` sweep loses; best was `near_pct=0.30, beyond_cpr=on` at
+−$6,124 / 2,765 trades. Turning the 1H-CPR gate **off** makes it strictly worse
+(more entries, more bleed) — so the CPR gate helps at the margin but nowhere
+near enough.
+
+**Gross, costs zeroed:** BTC +$168 (+$0.19/trade), ETH −$38 (−$0.03/trade),
+SOL −$74 (−$0.05/trade) — i.e. **no gross edge**, flat to slightly positive on
+BTC and noise on the rest. This is the same verdict as every other intraday
+config on this platform
+(`memory/strategy-findings.md`): the signal has no edge to begin with, so
+friction is not even the issue here.
+
+The module stays in the tree as documented-dead (like `ema_pivot.py`): wired to
+the backtest, **not** wired to `crypto/lanes.py`, no `CRYPTO_AK_ROXX_ENABLED`
+flag. The reusable idea — a higher-timeframe CPR/pivot breakout gate layered on
+a signal that is *already* predictive — is preserved here for when such a signal
+exists. Re-running the sweep on this signal is not a pending task.
