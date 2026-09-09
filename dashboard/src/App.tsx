@@ -65,6 +65,11 @@ const OperationsPanel = lazy(() =>
 const ReportsPage = lazy(() =>
   import('./components/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })),
 )
+const StrategyPerformancePage = lazy(() =>
+  import('./components/pages/StrategyPerformancePage').then((m) => ({
+    default: m.StrategyPerformancePage,
+  })),
+)
 const TradeHistoryPage = lazy(() =>
   import('./components/pages/TradeHistoryPage').then((m) => ({ default: m.TradeHistoryPage })),
 )
@@ -171,6 +176,7 @@ function App() {
     {
       label: 'Insights',
       items: [
+        { id: 'performance', label: 'Strategy P&L', icon: <IconLayers /> },
         { id: 'trades', label: 'Trade history', icon: <IconList /> },
         { id: 'reports', label: 'Reports & PnL', icon: <IconChart /> },
       ],
@@ -341,6 +347,19 @@ function App() {
           />
           <Suspense fallback={<PanelFallback />}>
             <FuturesPanel />
+          </Suspense>
+        </>
+      ) : null}
+
+      {tab === 'performance' ? (
+        <>
+          <PageHeader
+            eyebrow="Strategy P&L · per strategy · per instrument"
+            title="Strategy performance"
+            status="What each strategy actually earns on each instrument — gross, the Dhan/Delta charges paid, and net."
+          />
+          <Suspense fallback={<PanelFallback />}>
+            <StrategyPerformancePage />
           </Suspense>
         </>
       ) : null}
