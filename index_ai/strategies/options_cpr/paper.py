@@ -634,7 +634,8 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
     today, prev = days[-1], days[-2]
     today5, prev5 = d5[today], d5[prev]
     t15 = trend15_read(d15[prev], d15[today], cfg)  # 15m trend + swing S&R
-    d15_dir = int(t15["direction"])
+    d15_dir = int(t15["direction"])  # full consensus — entry gate
+    d15_ema = int(t15["ema_dir"])  # looser EMA-only — exit trend-flip
     cpr = cpr_context(prev5, cfg)
     df = add_indicators(
         pd.concat([prev5.tail(cfg.warmup_bars + 5), today5], ignore_index=True), cfg
@@ -669,7 +670,7 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
             mode="mark",
         )
         broke = (spot < cpr.tc) if is_put else (spot > cpr.bc)
-        flip = d15_dir != 0 and d15_dir != (1 if is_put else -1)
+        flip = d15_ema != 0 and d15_ema != (1 if is_put else -1)
         reason = None
         if debit >= cfg.sell_stop_credit_mult * pos["entry_credit"]:
             reason = "spread_stop"

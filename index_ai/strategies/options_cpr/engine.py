@@ -45,19 +45,26 @@ def trend15_read(
 ) -> dict[str, float]:
     """15-minute trend + swing S&R for the directional-sell lane.
 
-    ``direction`` is +1 / -1 only when the 15m EMA (fast/slow), Supertrend
-    (``cfg.st_period`` / ``cfg.st_multiplier``) and candle structure all agree on
-    the bar closed by ``at_ts`` (or the last closed bar when ``at_ts`` is None);
-    otherwise 0. ``swing_high`` / ``swing_low`` bound the last
-    ``cfg.trend15_swing_lookback`` bars.
+    ``direction`` (entry gate) is +1 / -1 only when the 15m EMA (fast/slow),
+    Supertrend (``cfg.st_period`` / ``cfg.st_multiplier``) and candle structure
+    all agree on the bar closed by ``at_ts`` (or the last closed bar when
+    ``at_ts`` is None); otherwise 0. ``ema_dir`` is the looser EMA-only read used
+    for the trend-flip *exit* — as strict as the old ``_align15``.
+    ``swing_high`` / ``swing_low`` bound the last ``cfg.trend15_swing_lookback``
+    bars of *today's* session (the levels a live move just broke).
     """
     full = pd.concat([prev15, today15], ignore_index=True)
+    today_only = today15
     if at_ts is not None:
         ts = pd.Timestamp(at_ts)
-        closed = pd.to_datetime(full["datetime"]) + pd.Timedelta("15min") <= ts
-        full = full[closed.to_numpy()].reset_index(drop=True)
+        full = full[
+            (pd.to_datetime(full["datetime"]) + pd.Timedelta("15min") <= ts).to_numpy()
+        ].reset_index(drop=True)
+        today_only = today15[
+            (pd.to_datetime(today15["datetime"]) + pd.Timedelta("15min") <= ts).to_numpy()
+        ].reset_index(drop=True)
     if len(full) < max(cfg.ema_slow, cfg.st_period) + 2:
-        return {"direction": 0.0, "swing_high": 0.0, "swing_low": 0.0}
+        return {"direction": 0.0, "ema_dir": 0.0, "swing_high": 0.0, "swing_low": 0.0}
     ef = float(full["close"].ewm(span=cfg.ema_fast, adjust=False).mean().iloc[-1])
     es = float(full["close"].ewm(span=cfg.ema_slow, adjust=False).mean().iloc[-1])
     ema_dir = 1 if ef > es else -1 if ef < es else 0
@@ -73,9 +80,11 @@ def trend15_read(
         direction = 0
     elif direction == -1 and struct == "UP":
         direction = 0
-    tail = full.tail(max(2, cfg.trend15_swing_lookback))
+    swing_src = today_only if len(today_only) >= 2 else full
+    tail = swing_src.tail(max(2, cfg.trend15_swing_lookback))
     return {
         "direction": float(direction),
+        "ema_dir": float(ema_dir),
         "swing_high": float(tail["high"].astype(float).max()),
         "swing_low": float(tail["low"].astype(float).min()),
     }

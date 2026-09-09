@@ -130,7 +130,7 @@ def replay_sell_session(
     cpr = cpr_context(prev_day_ohlc, cfg)
     n_tail = len(bars5_prev_tail)
     df = add_indicators(pd.concat([bars5_prev_tail, bars5_today], ignore_index=True), cfg)
-    _blank15 = {"direction": 0.0, "swing_high": 0.0, "swing_low": 0.0}
+    _blank15 = {"direction": 0.0, "ema_dir": 0.0, "swing_high": 0.0, "swing_low": 0.0}
 
     def t15_at(ts: pd.Timestamp) -> dict[str, float]:
         if not require_15m_alignment:
@@ -203,7 +203,7 @@ def replay_sell_session(
             )
 
             broke_struct = (c < cpr.tc) if is_put else (c > cpr.bc)
-            d15 = int(t15_at(ts)["direction"])
+            d15 = int(t15_at(ts)["ema_dir"])  # looser EMA-only read for the exit
             trend_flip = d15 != 0 and d15 != (1 if is_put else -1)
 
             if debit_adverse >= cfg.sell_stop_credit_mult * pos["entry_credit"]:

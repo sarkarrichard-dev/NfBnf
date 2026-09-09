@@ -44,7 +44,15 @@ def summarize_trend15(frame15: pd.DataFrame | None, params: StrategyParams) -> d
         direction = 0
     elif direction == -1 and structure == "UP":
         direction = 0
-    tail = frame15.tail(max(2, params.sell_trend15_swing_lookback))
+    # swing S/R from *today's* 15m bars — the levels a live move just broke; falls
+    # back to the whole frame only when today is still too thin.
+    n_swing = max(2, params.sell_trend15_swing_lookback)
+    today = frame15
+    if "datetime" in frame15.columns:
+        d = pd.to_datetime(frame15["datetime"]).dt.date
+        today = frame15[d == d.iloc[-1]]
+    swing_src = today if len(today) >= 2 else frame15
+    tail = swing_src.tail(n_swing)
     return {
         "direction": direction,
         "structure": structure,
