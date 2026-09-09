@@ -216,7 +216,7 @@ TOGGLEABLE_FLAGS: dict[str, str] = {
     "ENABLE_TICK_FEED": "Live websocket tick feed (records exchange ticks to SQLite)",
     "ENABLE_MARKET_LOG": "Time-series log of observations and decisions",
     "ENABLE_SPREAD_SAMPLING": "Measure real option bid-ask during market hours",
-    "ENABLE_OPTIONS_CPR_PAPER": "CPR options paper lane (buy + directional sell)",
+    "OPTIONS_REQUIRE_VIABLE": "Block a credit-sell lane whose measured gross edge can't cover its cost floor",
     "ENABLE_FUTURES_PAPER": "Directional futures paper lane",
     "ENABLE_STOCK_FUTURES_PAPER": "Directional futures paper lane on the stock universe (20 NSE F&O names)",
     "ENABLE_BRAIN_GATE": "ML win-probability entry gate",
@@ -244,7 +244,7 @@ def feature_flags() -> list[dict[str, Any]]:
         default_on = key in {
             "ENABLE_MARKET_LOG",
             "ENABLE_SPREAD_SAMPLING",
-            "ENABLE_OPTIONS_CPR_PAPER",
+            "OPTIONS_REQUIRE_VIABLE",
             "ENABLE_FUTURES_PAPER",
             "ENABLE_STOCK_FUTURES_PAPER",
             "ENABLE_BRAIN_GATE",

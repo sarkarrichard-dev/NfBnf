@@ -79,25 +79,19 @@ export function LanesPanel() {
     queryFn: () => api<LaneStatus>('/api/futures/status'),
     refetchInterval: poll,
   })
-  const optionsCpr = useQuery({
-    queryKey: ['lane-options-cpr'],
-    queryFn: () => api<LaneStatus>('/api/options-cpr/status'),
-    refetchInterval: poll,
-  })
 
-  const recent = [
-    ...(optionsCpr.data?.recent_trades ?? []),
-    ...(futures.data?.recent_trades ?? []),
-  ]
+  const recent = [...(futures.data?.recent_trades ?? [])]
     .sort((a, b) => String(b.exit_time ?? '').localeCompare(String(a.exit_time ?? '')))
     .slice(0, 8)
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3">
         <LaneCard title="Directional futures (paper)" data={futures.data} />
-        <LaneCard title="CPR options — buy + directional sell (paper)" data={optionsCpr.data} />
       </div>
+      <p className="text-xs text-slate-500">
+        Index options run through the live execution engine — see Trade History (source: index) for their P&amp;L.
+      </p>
 
       {recent.length ? (
         <div className="overflow-x-auto">
@@ -145,8 +139,8 @@ export function LanesPanel() {
         </div>
       ) : (
         <p className="text-sm text-slate-500">
-          No paper trades logged yet. Enable a lane with ENABLE_FUTURES_PAPER or
-          ENABLE_OPTIONS_CPR_PAPER.
+          No futures paper trades logged yet. Enable the lane with ENABLE_FUTURES_PAPER
+          or ENABLE_STOCK_FUTURES_PAPER.
         </p>
       )}
     </div>

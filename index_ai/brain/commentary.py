@@ -55,10 +55,7 @@ def _snapshot() -> dict[str, Any]:
         snap["dataset"] = {"rows": ds["total_rows"], "by_source": ds["counts"]}
     except Exception as exc:
         snap["dataset"] = {"error": str(exc)}
-    for name, fn in (
-        ("futures_paper", "index_ai.strategies.futures.paper:futures_paper_status"),
-        ("options_cpr_paper", "index_ai.strategies.options_cpr.paper:options_cpr_paper_status"),
-    ):
+    for name, fn in (("futures_paper", "index_ai.strategies.futures.paper:futures_paper_status"),):
         try:
             mod_name, attr = fn.split(":")
             mod = __import__(mod_name, fromlist=[attr])
@@ -100,7 +97,7 @@ def _local_summary(snap: dict[str, Any], kind: str) -> str:
         lines.append(
             f"ML gate NOT armed{why} — every setup passes; only the regime filter is active."
         )
-    for lane in ("futures_paper", "options_cpr_paper"):
+    for lane in ("futures_paper",):
         st = snap.get(lane) or {}
         if st.get("enabled"):
             today = st.get("today") or {}

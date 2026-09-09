@@ -15,9 +15,17 @@ def db(tmp_path, monkeypatch):
 
 def test_records_observation_and_reads_it_back(db):
     market_log.record_observation(
-        "NIFTY", spot=24175.65, atm_iv=10.3, pcr=0.92, max_pain=24200,
-        near_half_spread=0.2, wing_half_spread=0.6, vix=10.66,
-        regime="TREND", signal_direction="LONG", expiry="2026-09-01",
+        "NIFTY",
+        spot=24175.65,
+        atm_iv=10.3,
+        pcr=0.92,
+        max_pain=24200,
+        near_half_spread=0.2,
+        wing_half_spread=0.6,
+        vix=10.66,
+        regime="TREND",
+        signal_direction="LONG",
+        expiry="2026-09-01",
     )
     rows = market_log.observations(instrument="NIFTY")
     assert len(rows) == 1
@@ -27,11 +35,13 @@ def test_records_observation_and_reads_it_back(db):
 
 
 def test_records_refusals_which_is_the_point(db):
-    market_log.record_decision("NIFTY", "sell", "entry", traded=True,
-                               reason="breakout", win_probability=0.6)
+    market_log.record_decision(
+        "NIFTY", "sell", "entry", traded=True, reason="breakout", win_probability=0.6
+    )
     for _ in range(3):
-        market_log.record_decision("BANKNIFTY", "sell", "skip", traded=False,
-                                   reason="NOT_VIABLE: cannot cover floor")
+        market_log.record_decision(
+            "BANKNIFTY", "sell", "skip", traded=False, reason="NOT_VIABLE: cannot cover floor"
+        )
     s = market_log.stats()
     assert s["decisions"] == 4 and s["traded"] == 1 and s["skipped"] == 3
     top = market_log.skip_reasons()
@@ -75,14 +85,12 @@ def test_stats_is_honest_about_resolution(db):
 
 
 def test_paper_lanes_default_on(monkeypatch):
-    monkeypatch.delenv("ENABLE_OPTIONS_CPR_PAPER", raising=False)
     monkeypatch.delenv("ENABLE_FUTURES_PAPER", raising=False)
     from index_ai.strategies.futures.paper import enabled as fut
-    from index_ai.strategies.options_cpr.paper import enabled as opt
 
-    assert opt() is True and fut() is True
-    monkeypatch.setenv("ENABLE_OPTIONS_CPR_PAPER", "false")
-    assert opt() is False
+    assert fut() is True
+    monkeypatch.setenv("ENABLE_FUTURES_PAPER", "false")
+    assert fut() is False
 
 
 def test_db_lives_apart_from_the_trade_journal():
@@ -95,8 +103,20 @@ def test_tick_batch_persists_and_maps_instrument(db):
     from index_ai.tick_feed import parse_packet
     import struct
 
-    payload = struct.pack("<fHIfIIIffff", 24180.5, 50, 1756400001, 24170.0,
-                          123456, 700, 800, 24100.0, 24050.0, 24250.0, 24000.0)
+    payload = struct.pack(
+        "<fHIfIIIffff",
+        24180.5,
+        50,
+        1756400001,
+        24170.0,
+        123456,
+        700,
+        800,
+        24100.0,
+        24050.0,
+        24250.0,
+        24000.0,
+    )
     frame = struct.pack("<BHBI", 4, 8 + len(payload), 0, 13) + payload
     packets = parse_packet(frame)
     n = market_log.record_tick_batch(packets, {13: "NIFTY"})
