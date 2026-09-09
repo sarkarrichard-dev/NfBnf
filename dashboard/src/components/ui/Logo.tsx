@@ -3,7 +3,7 @@ import { cn } from '../../lib/cn'
 /** The QuantHawk mark — a hawk swept into an upward peak (wings rising = the
  *  bullish read) with a candlestick spine. Wings/head inherit `currentColor`
  *  (the silver plumage); the candle spine is money-green and the eye is
- *  hawk-gold. Legible down to 16px. */
+ *  hawk-gold. Kept as a vector fallback for favicon-scale use. */
 export function HawkMark({ className, title }: { className?: string; title?: string }) {
   return (
     <svg
@@ -28,15 +28,28 @@ export function HawkMark({ className, title }: { className?: string; title?: str
   )
 }
 
-/** Mark + wordmark, for the top bar. */
+/** Mark + wordmark for the top bar — the logo's real hawk, and QUANTHAWK set
+ *  the way the logo sets it: Orbitron, all-caps, tight, QUANT in metallic
+ *  silver and HAWK in hawk-gold, the two run together as one word. */
 export function Logo({ className }: { className?: string }) {
   return (
     <span className={cn('inline-flex items-center gap-2 select-none', className)}>
-      <span className="grid size-7 place-items-center rounded-lg border border-[var(--acc)]/40 bg-white/[0.04] text-slate-100">
-        <HawkMark className="h-[19px] w-[19px]" />
-      </span>
-      <span className="text-[15px] font-extrabold tracking-[-0.02em] text-slate-50">
-        Quant<span className="text-[var(--acc)]">Hawk</span>
+      <img
+        src="/quanthawk-mark.png"
+        alt=""
+        aria-hidden="true"
+        className="size-7 rounded-lg object-cover ring-1 ring-[var(--acc)]/35"
+      />
+      <span
+        className="text-[14px] font-bold tracking-[-0.01em] whitespace-nowrap"
+        style={{ fontFamily: "'Orbitron', 'Michroma', system-ui, sans-serif" }}
+      >
+        <span className="bg-gradient-to-b from-white to-slate-400 bg-clip-text text-transparent">
+          QUANT
+        </span>
+        <span className="bg-gradient-to-b from-[#f8c66d] to-[#df8f18] bg-clip-text text-transparent">
+          HAWK
+        </span>
       </span>
     </span>
   )
