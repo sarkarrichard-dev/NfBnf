@@ -10,18 +10,21 @@ index instead of relying on someone remembering which index "doesn't work":
     viability()       that floor against the gross edge per trade observed in the
                       backtest, giving a plain verdict
 
-Measured on 2026-08-29 (last ~19 months, 1 trade/day, hedged directional sell):
+Re-measured 2026-09-09 from the real SQLite journal (mid-to-mid gross, no charges;
+``scripts/measure_viability_gross.py`` recomputes it), hedged directional sell:
 
-    NIFTY      gross/trade  +Rs 211  vs floor ~Rs 152  -> VIABLE
-    BANKNIFTY  gross/trade  +Rs 229  vs floor ~Rs 595  -> NOT VIABLE (4x lot,
-               widest book of the three; the edge is real, the structure is wrong)
-    SENSEX     unmeasured — the BSE chain returned no book depth, so its floor is
-               a default, not an observation
+    NIFTY      gross/trade  +Rs 6    over 65 trades  (win 54%)  -> NOT_VIABLE
+    BANKNIFTY  gross/trade  -Rs 178  over 77 trades  (win 39%)  -> NOT_VIABLE
+    SENSEX     gross/trade  -Rs 57   over 36 trades  (win 33%)  -> UNMEASURED
+               (BSE book depth still not sampled, so its floor is a default)
 
-BANKNIFTY's problem is leg count, not signal: dropping to a single short leg
-halves friction and takes it from PF 0.64 to 0.94. That structure needs margin a
-small account does not have, so the honest answer for BANKNIFTY today is "not on
-this structure", not "no edge".
+The 2026-08-29 backtest read +Rs 211 / +Rs 229 / +Rs 300 — that was BS-proxy
+optimism (see strategy-findings on the six proxy versions). Live, the CPR + EMA
+directional-sell lane has no gross edge: flat on NIFTY, negative on BANKNIFTY
+and getting worse (first-half -Rs 51/trade, second-half -Rs 302). The
+``entry_guard`` viability gate that consumes this verdict ships **default-off**
+(``OPTIONS_REQUIRE_VIABLE``) — the lane's own signal was just retimed to 5m/15m
+(PR #41) and hasn't earned its way back yet; re-measure once it has ~30 trades.
 """
 
 from __future__ import annotations
@@ -41,15 +44,14 @@ UNMEASURED = "UNMEASURED"
 VIABLE_MULTIPLE = 1.30
 MARGINAL_MULTIPLE = 1.00
 
-# per-trade gross edge observed in backtest (rupees), last measured 2026-08-29.
-# NOTE: the friction floor below is live-measured (spread_calib), but this side is
-# a fixed constant. Now that entry_guard uses this verdict to gate the LIVE sell
-# lane, a spread widening can flip an index to NOT_VIABLE against a stale edge
-# number — re-measure from the SQLite journal when live volume allows.
+# per-trade gross edge (rupees). Sell lane: re-measured 2026-09-09 from the real
+# journal (scripts/measure_viability_gross.py). Buy lane: still the 2026-08-29
+# backtest — live buy volume is under 30 trades/index, too thin to re-measure.
+# Re-run the script and update the sell rows once a lane clears ~30 forward trades.
 OBSERVED_GROSS_PER_TRADE: dict[tuple[str, str], float] = {
-    ("NIFTY", "sell"): 211.0,
-    ("BANKNIFTY", "sell"): 229.0,
-    ("SENSEX", "sell"): 300.0,
+    ("NIFTY", "sell"): 6.0,
+    ("BANKNIFTY", "sell"): -178.0,
+    ("SENSEX", "sell"): -57.0,
     ("NIFTY", "buy"): -51.0,
     ("BANKNIFTY", "buy"): -197.0,
     ("SENSEX", "buy"): -80.0,
@@ -203,8 +205,11 @@ if __name__ == "__main__":  # ponytail self-check
     print(f"NIFTY     sell: floor Rs {n.friction_floor_rupees:>7.0f}  {n.verdict:11s} {n.reason}")
     print(f"BANKNIFTY sell: floor Rs {b.friction_floor_rupees:>7.0f}  {b.verdict:11s} {b.reason}")
     assert b.friction_floor_rupees > n.friction_floor_rupees * 2, "BANKNIFTY book is far wider"
+    # live gross: NIFTY +6 can't clear its floor, BANKNIFTY is negative
     assert b.verdict == NOT_VIABLE, b
-    assert n.verdict in (VIABLE, MARGINAL), n
+    assert n.verdict == NOT_VIABLE, n
+    # a positive gross that clears the floor is viable (explicit override)
+    assert viability("NIFTY", "sell", gross_per_trade=400.0).verdict in (VIABLE, MARGINAL)
     # a negative-gross lane is never viable at any cost level
     assert viability("NIFTY", "buy").verdict == NOT_VIABLE
     # naked halves the order count

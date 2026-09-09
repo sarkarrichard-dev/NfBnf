@@ -176,6 +176,7 @@ def test_walk_forward_gate_never_worse_on_separable_data():
 
 def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch):
     from index_ai.strategies.options_cpr.viability import (
+        MARGINAL,
         NOT_VIABLE,
         UNMEASURED,
         VIABLE,
@@ -189,7 +190,10 @@ def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch):
     n, b = viability("NIFTY", "sell"), viability("BANKNIFTY", "sell")
     # BANKNIFTY's book is far wider -> a much higher cost floor
     assert b.friction_floor_rupees > 2 * n.friction_floor_rupees
-    assert n.verdict == VIABLE and b.verdict == NOT_VIABLE
+    # live gross: NIFTY +6 can't clear its floor, BANKNIFTY is negative — both no
+    assert n.verdict == NOT_VIABLE and b.verdict == NOT_VIABLE
+    # an explicit positive gross that clears the floor is viable
+    assert viability("NIFTY", "sell", gross_per_trade=400.0).verdict in (VIABLE, MARGINAL)
     # a lane with negative gross edge is never viable
     assert viability("NIFTY", "buy").verdict == NOT_VIABLE
     # an unmeasured spread must not produce a confident verdict
@@ -202,18 +206,20 @@ def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch):
     assert legs_naked == 2 and floor_naked < b.friction_floor_rupees
 
 
-def test_entry_guard_viability_blocks_wide_book_sell(monkeypatch):
+def test_entry_guard_viability_gate_is_opt_in(monkeypatch):
     from index_ai.entry_guard import _viable_sell_blocks
 
-    # both measured: NIFTY clears its floor (VIABLE), BANKNIFTY's wide book doesn't
-    monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_NIFTY", "0.20")
     monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY", "4.06")
+    # default OFF — nothing blocks even a NOT_VIABLE index
+    monkeypatch.delenv("OPTIONS_REQUIRE_VIABLE", raising=False)
+    assert _viable_sell_blocks("BANKNIFTY")[0] is False
+    # armed: a negative-gross index is blocked
+    monkeypatch.setenv("OPTIONS_REQUIRE_VIABLE", "true")
     blocked, why = _viable_sell_blocks("BANKNIFTY")
     assert blocked is True and "not viable" in why
-    assert _viable_sell_blocks("NIFTY")[0] is False  # measured VIABLE — not blocked
-    # an UNMEASURED verdict never blocks
+    # an UNMEASURED verdict never blocks, even armed
     monkeypatch.delenv("SLIPPAGE_HALF_SPREAD_POINTS_SENSEX", raising=False)
     assert _viable_sell_blocks("SENSEX")[0] is False
-    # and the whole gate is opt-out
+    # opt out again
     monkeypatch.setenv("OPTIONS_REQUIRE_VIABLE", "false")
     assert _viable_sell_blocks("BANKNIFTY")[0] is False

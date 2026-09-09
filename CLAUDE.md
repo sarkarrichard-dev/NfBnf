@@ -58,11 +58,15 @@ directional edge at all. Directional selling has a small real gross edge that
 trustworthy (the option backtest uses a Black-Scholes proxy — relative
 comparisons only, never absolute rupees).
 
-The credit-sell lane is gated by `options_cpr/viability.py` (via
-`entry_guard._viable_sell_blocks`, env `OPTIONS_REQUIRE_VIABLE`, default on): an
-index whose measured gross edge can't clear its measured cost floor is blocked.
-BANKNIFTY's option book is ~20× NIFTY's, so 4-leg structures never work there no
-matter the tuning.
+`options_cpr/viability.py` scores each index's measured gross edge against its
+measured cost floor. The sell-lane gross was re-measured from the real journal
+2026-09-09 — NIFTY +₹6, BANKNIFTY −₹178, SENSEX −₹57 per trade, i.e. **no live
+gross edge** (the +₹200–300 backtest numbers were BS-proxy optimism). The
+`entry_guard._viable_sell_blocks` gate that would pause a NOT_VIABLE index ships
+**default-off** (`OPTIONS_REQUIRE_VIABLE`) because the signal was just retimed to
+5m/15m; re-run `scripts/measure_viability_gross.py` after ~30 forward trades and
+decide. BANKNIFTY's option book is ~20× NIFTY's, so 4-leg structures never work
+there no matter the tuning.
 
 ## Which Indian-options engine
 
