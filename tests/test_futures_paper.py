@@ -10,15 +10,22 @@ from index_ai.strategies.futures.config import config_for
 
 def _bars(closes, start="2026-08-05 09:15", freq="5min"):
     c = np.asarray(closes, dtype=float)
-    return pd.DataFrame({
-        "datetime": pd.date_range(start, periods=len(c), freq=freq),
-        "open": c, "high": c + 3, "low": c - 3, "close": c, "volume": 1000.0,
-    })
+    return pd.DataFrame(
+        {
+            "datetime": pd.date_range(start, periods=len(c), freq=freq),
+            "open": c,
+            "high": c + 3,
+            "low": c - 3,
+            "close": c,
+            "volume": 1000.0,
+        }
+    )
 
 
 def test_enabled_and_instruments_from_env(monkeypatch):
     # paper trading is ON by default so a fresh launch logs data without setup;
     # live trading stays separately gated by TRADING_MODE + ALLOW_LIVE_TRADING
+    monkeypatch.setenv("ENABLE_STOCK_FUTURES_PAPER", "false")  # indices only for this test
     monkeypatch.delenv("ENABLE_FUTURES_PAPER", raising=False)
     assert paper.enabled() is True
     monkeypatch.setenv("ENABLE_FUTURES_PAPER", "false")
@@ -30,8 +37,20 @@ def test_enabled_and_instruments_from_env(monkeypatch):
     assert paper.instruments() == ["NIFTY", "SENSEX"]
 
 
+def test_stock_universe_and_config(monkeypatch):
+    monkeypatch.setenv("ENABLE_STOCK_FUTURES_PAPER", "true")
+    monkeypatch.setenv("ENABLE_FUTURES_PAPER", "false")
+    names = paper.instruments()
+    assert "RELIANCE" in names and "NIFTY" not in names
+    assert paper._is_stock("RELIANCE") and not paper._is_stock("NIFTY")
+    cfg = paper._cfg("RELIANCE")
+    assert cfg.key == "RELIANCE" and cfg.lot_size > 1  # real lot from stock_universe.json
+    assert cfg.initial_stop_pts > 0 and cfg.trend_ema_fast == 9  # scale-free defaults intact
+
+
 def test_scan_returns_empty_when_disabled(monkeypatch):
     monkeypatch.setenv("ENABLE_FUTURES_PAPER", "false")
+    monkeypatch.setenv("ENABLE_STOCK_FUTURES_PAPER", "false")
     assert paper.scan_futures_paper(object()) == []
 
 
@@ -52,13 +71,18 @@ def test_short_pnl_sign(tmp_path, monkeypatch):
     monkeypatch.setattr(paper, "JOURNAL_PATH", tmp_path / "j.jsonl")
     cfg = config_for("NIFTY")
     state: dict = {}
-    t = paper._close({"dir": "SHORT", "entry": 24000.0, "entry_time": "t0"}, 23900.0, "stop", cfg, state)
+    t = paper._close(
+        {"dir": "SHORT", "entry": 24000.0, "entry_time": "t0"}, 23900.0, "stop", cfg, state
+    )
     assert t["points"] == 100.0 and t["gross_rupees"] > 0
 
 
 def test_status_reads_journal(tmp_path, monkeypatch):
     j = tmp_path / "j.jsonl"
-    j.write_text(json.dumps({"instrument": "NIFTY", "net_rupees": 500, "exit_time": "2020-01-01T10:00:00"}) + "\n")
+    j.write_text(
+        json.dumps({"instrument": "NIFTY", "net_rupees": 500, "exit_time": "2020-01-01T10:00:00"})
+        + "\n"
+    )
     monkeypatch.setattr(paper, "JOURNAL_PATH", j)
     monkeypatch.setattr(paper, "STATE_PATH", tmp_path / "s.json")
     monkeypatch.setenv("ENABLE_FUTURES_PAPER", "true")

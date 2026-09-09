@@ -1096,6 +1096,15 @@ def futures_paper_status_api() -> dict[str, Any]:  # sync
     return futures_paper_status()
 
 
+@app.get("/api/futures/journal", include_in_schema=False)
+def futures_journal_api(limit: int = Query(500, ge=1, le=2000)) -> dict[str, Any]:
+    """Closed futures paper trades (trade-shaped), newest first — for the
+    Reports / Trade-history 'Futures' source."""
+    from index_ai.strategies.futures.paper import _recent_trades
+
+    return {"trades": _recent_trades(limit)}
+
+
 @app.get("/api/futures/backtest", include_in_schema=False)
 def futures_backtest_api() -> dict[str, Any]:
     """Static replay results for the Futures tab — the stock-futures backtest

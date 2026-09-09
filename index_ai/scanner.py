@@ -298,9 +298,13 @@ async def _apply_strategy_exits_for_index(
 async def _run_futures_paper(client: DhanClient) -> None:
     """Directional index-futures paper strategy — separate from the options path."""
     try:
-        from index_ai.strategies.futures.paper import enabled, scan_futures_paper
+        from index_ai.strategies.futures.paper import (
+            enabled,
+            scan_futures_paper,
+            stock_paper_enabled,
+        )
 
-        if not enabled():
+        if not (enabled() or stock_paper_enabled()):
             return
         events = await asyncio.to_thread(scan_futures_paper, client)
         for e in events:
