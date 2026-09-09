@@ -87,6 +87,7 @@ export function TradeLogTable({ logRows, trades, period, range, mtmUpdatedAt, hi
               <th className="px-2 py-2 text-left font-medium">Strike</th>
               <th className="px-2 py-2 text-left font-medium">Type</th>
               <th className="px-2 py-2 text-right font-medium">Qty</th>
+              <th className="px-2 py-2 text-right font-medium">Capital</th>
               <th className="px-2 py-2 text-right font-medium">Entry</th>
               <th className="px-2 py-2 text-right font-medium">Mark</th>
               <th className="px-2 py-2 text-right font-medium">MTM</th>
@@ -140,7 +141,7 @@ function GroupBlock({
   return (
     <>
       <tr className="bg-slate-950/70 text-xs text-slate-400">
-        <td colSpan={13} className="px-3 py-2">
+        <td colSpan={14} className="px-3 py-2">
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             <strong className="text-slate-200">{instrument}</strong>
             <span>{rows.length} legs</span>
@@ -214,6 +215,18 @@ function LegRow({ row }: { row: LogRow }) {
       <td className="px-2 py-2 tabular-nums">{row.strike ?? '—'}</td>
       <td className="px-2 py-2">{row.option_type || '—'}</td>
       <td className="px-2 py-2 text-right tabular-nums">{row.quantity ?? '—'}</td>
+      <td className="px-2 py-2 text-right tabular-nums text-slate-300">
+        {row.capital_deployed != null ? (
+          <span title={row.capital_kind === 'margin' ? 'combined margin at risk (sell + hedge)' : 'premium paid'}>
+            ₹{Math.round(Number(row.capital_deployed)).toLocaleString('en-IN')}
+            <span className="ml-1 text-[9px] uppercase text-slate-500">
+              {row.capital_kind === 'margin' ? 'marg' : 'prem'}
+            </span>
+          </span>
+        ) : (
+          '—'
+        )}
+      </td>
       <td className="px-2 py-2 text-right tabular-nums">{px(row.avg_entry)}</td>
       <td className="px-2 py-2 text-right tabular-nums">{mark}</td>
       <td className={cn('px-2 py-2 text-right tabular-nums font-semibold', pnlClass(mtm))}>

@@ -104,6 +104,50 @@ def compute_capital_required(
     return cap
 
 
+def capital_deployed_rupees(option: dict[str, Any] | None, qty: int) -> tuple[float | None, str]:
+    """Rupees committed to a *recorded* trade, computed after the fact from the
+    stored entry prices (not live LTPs).
+
+    - buy-only     → premium paid = entry premium × qty              (kind "premium")
+    - sell + hedge → combined capital at risk = the spread's defined max loss
+                     (hedge debit + short-leg margin net of the hedge benefit
+                     ≈ strike width − net credit, per unit)          (kind "margin")
+
+    ``qty`` is the effective total contract count (NSE lot size × lots).
+    """
+    if not option:
+        return None, "premium"
+    q = max(0, int(qty or 0))
+    legs = [leg for leg in (option.get("legs") or []) if isinstance(leg, dict)]
+
+    if legs:
+        ml = option.get("max_loss_rupees")
+        try:
+            if ml is not None and float(ml) > 0:
+                return round(float(ml), 2), "margin"
+        except (TypeError, ValueError):
+            pass
+        # fallback from the legs themselves: (strike width − net credit) × qty
+        strikes = [float(leg["strike"]) for leg in legs if leg.get("strike") is not None]
+        if len(strikes) >= 2 and q:
+            width = max(strikes) - min(strikes)
+            credit_per_unit = 0.0
+            for leg in legs:
+                px = leg.get("entry_ltp") or leg.get("ltp") or leg.get("entry_option_ltp")
+                if px is None:
+                    return None, "margin"
+                sign = 1.0 if str(leg.get("transaction_type") or "").upper() == "SELL" else -1.0
+                credit_per_unit += sign * float(px)
+            return round(max(0.0, width - credit_per_unit) * q, 2), "margin"
+        return None, "margin"
+
+    px = option.get("entry_ltp") or option.get("ltp") or option.get("entry_option_ltp")
+    try:
+        return (round(float(px) * q, 2), "premium") if px and q else (None, "premium")
+    except (TypeError, ValueError):
+        return None, "premium"
+
+
 def format_capital_summary(cap: dict[str, Any]) -> str:
     """One-line label for dashboard heatmap / plan panels."""
     amt = float(cap.get("capital_required_rupees") or 0)
@@ -117,3 +161,21 @@ def format_capital_summary(cap: dict[str, Any]) -> str:
         leg_n = len(legs)
         return f"Margin ~₹{amt:,.0f}{credit_part} · {leg_n} legs · {lots} lot(s) · qty {qty}"
     return f"Premium ~₹{amt:,.0f} · {lots} lot(s) · qty {qty}"
+
+
+if __name__ == "__main__":  # self-check — capital_deployed_rupees branches
+    assert capital_deployed_rupees({"entry_ltp": 95.0}, 75) == (7125.0, "premium")
+    _spread = {
+        "legs": [
+            {"transaction_type": "SELL", "strike": 24000, "entry_ltp": 120},
+            {"transaction_type": "BUY", "strike": 23800, "entry_ltp": 60},
+        ]
+    }
+    assert capital_deployed_rupees({**_spread, "max_loss_rupees": 10500.0}, 75) == (
+        10500.0,
+        "margin",
+    )
+    assert capital_deployed_rupees(_spread, 75) == (10500.0, "margin")  # (200 − 60) × 75
+    assert capital_deployed_rupees(None, 75) == (None, "premium")
+    assert capital_deployed_rupees({"ltp": None}, 75) == (None, "premium")
+    print("capital_required self-check ok — premium vs combined-margin")

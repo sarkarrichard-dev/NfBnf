@@ -31,6 +31,10 @@ export type LogRow = {
   leg_pnl?: number | null
   spread_pnl?: number | null
   display_pnl?: number | null
+  /** ₹ committed to the whole trade — premium paid (buy) or combined margin at
+   *  risk (sell + hedge). Trade-level: set on leg 0 only. */
+  capital_deployed?: number | null
+  capital_kind?: 'premium' | 'margin' | string
   is_open?: boolean
   status?: string
   display_status?: string
@@ -62,6 +66,8 @@ export type TradeRow = {
   is_live?: boolean
   status?: string
   display_status?: string
+  capital_deployed?: number | null
+  capital_kind?: 'premium' | 'margin' | string
   legs_detail?: Array<Record<string, unknown>>
   mtm_error?: string | null
 }
