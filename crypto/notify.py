@@ -25,6 +25,14 @@ def _tagname(strategy: Any) -> str:
     return _STRAT_TAG.get(s, s)
 
 
+def _f(v: Any) -> float:
+    """Tolerant float — a malformed journal row must never crash the scan loop."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _usd(v: Any) -> str:
     try:
         return f"${float(v):,.2f}"
@@ -61,7 +69,7 @@ def opened(pos: dict[str, Any]) -> None:
 
 
 def closed(row: dict[str, Any]) -> None:
-    p = float(row.get("pnl_usd") or 0.0)
+    p = _f(row.get("pnl_usd"))
     mark = _GREEN if p > 0 else _RED if p < 0 else _WHITE
     sign = "+" if p >= 0 else "−"
     send(
@@ -80,11 +88,11 @@ def day_summary(day: str, rows: list[dict[str, Any]],
         return
     lines = [f"\U0001f4ca <b>CRYPTO DAY</b> — {day}"]
     if rows:
-        net_usd = sum(float(r.get("pnl_usd") or 0.0) for r in rows)
-        wins = sum(1 for r in rows if float(r.get("pnl_usd") or 0) > 0)
-        losses = sum(1 for r in rows if float(r.get("pnl_usd") or 0) < 0)
+        net_usd = sum(_f(r.get("pnl_usd")) for r in rows)
+        wins = sum(1 for r in rows if _f(r.get("pnl_usd")) > 0)
+        losses = sum(1 for r in rows if _f(r.get("pnl_usd")) < 0)
         sign = "+" if net_usd >= 0 else "−"
-        net_inr = sum(float(r.get("pnl_inr") or 0.0) for r in rows)
+        net_inr = sum(_f(r.get("pnl_inr")) for r in rows)
         lines.append(
             f"{len(rows)} closed · {wins}W / {losses}L · "
             f"{sign}{_usd(abs(net_usd))} ({sign}{_inr(net_inr)})"

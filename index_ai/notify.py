@@ -143,8 +143,12 @@ def _rs(v: Any) -> str:
         return "—"
 
 
-def _rs0(v: float) -> str:
-    return f"{'+' if v >= 0 else '−'}₹{abs(v):,.0f}"
+def _rs0(v: Any) -> str:
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    return f"{'+' if n >= 0 else '−'}₹{abs(n):,.0f}"
 
 
 def _leg(option: dict[str, Any], action: str) -> tuple[str, str, Any, Any]:
