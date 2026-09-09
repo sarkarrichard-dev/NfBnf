@@ -17,7 +17,7 @@ from index_ai.options_oi import analyze_option_chain
 from index_ai.options_expiry import pick_nearest_expiry
 from index_ai.plan_builder import build_opportunity
 from index_ai.strategies.candlestick_sr import intraday_candle_trend
-from index_ai.strategies.pivot_points import classic_pivot_levels
+from index_ai.strategies.pivot_points import classic_pivot_map
 from index_ai.strategies.strategy_router import evaluate_dual_opportunities
 
 INDEX_KEYS = configured_index_keys()
@@ -35,10 +35,9 @@ def _pivot_target(
     if spot <= 0 or not (a in _BULLISH or a in _BEARISH):
         return None, None
     try:
-        pp, r1, s1, _ = classic_pivot_levels(previous_day)
+        levels = {**classic_pivot_map(previous_day), "TC": cpr_regime.tc, "BC": cpr_regime.bc}
     except Exception:
         return None, None
-    levels = {"PP": pp, "R1": r1, "S1": s1, "TC": cpr_regime.tc, "BC": cpr_regime.bc}
     if a in _BULLISH:
         favour = [(v, k) for k, v in levels.items() if v > spot]
         pick = min(favour) if favour else None
@@ -99,6 +98,32 @@ def plan_instrument(
     except (ValueError, KeyError):
         pass  # thin history — fall back to single-frame sell evaluation
 
+    # Fetch the option chain BEFORE routing — the sell lane now takes its
+    # direction from the OI walls + max pain (sell_strategy.evaluate_sell_signal).
+    spot_now = float(ema_frame["close"].iloc[-1])
+    oi_context: dict[str, Any] | None = None
+    oi_fetch_error: str | None = None
+    option = None
+    expiry = None
+    chain = None
+    oi = None
+    try:
+        expiries = client.expiry_list(instrument)
+        expiry = pick_nearest_expiry(expiries, now=now) if expiries else None
+        if not expiries:
+            oi_fetch_error = "Dhan returned no expiries for this index."
+        elif not expiry:
+            oi_fetch_error = "Could not parse a tradable expiry from Dhan."
+        else:
+            chain = client.option_chain(instrument, expiry)
+            if not chain:
+                oi_fetch_error = "Dhan option chain response was empty."
+            else:
+                oi = analyze_option_chain(chain, spot=spot_now, instrument=instrument)
+                oi_context = oi.to_dict()
+    except Exception as exc:
+        oi_fetch_error = str(classify_http_error(exc, f"{instrument_key} option chain"))
+
     dual = evaluate_dual_opportunities(
         ema_frame,
         previous,
@@ -106,6 +131,7 @@ def plan_instrument(
         allow_option_buying=app_settings.risk.allow_option_buying,
         sell_today=sell_today,
         sell_trend15=sell_trend15,
+        oi=oi,
     )
     signal = dual.primary
     cpr_regime = dual.regime
@@ -125,29 +151,6 @@ def plan_instrument(
         intraday_trend = intraday_candle_trend(today_session, lookback=15)
     except Exception:
         intraday_trend = "RANGE"
-
-    oi_context: dict[str, Any] | None = None
-    oi_fetch_error: str | None = None
-    option = None
-    expiry = None
-    chain = None
-    oi = None
-    try:
-        expiries = client.expiry_list(instrument)
-        expiry = pick_nearest_expiry(expiries, now=now) if expiries else None
-        if not expiries:
-            oi_fetch_error = "Dhan returned no expiries for this index."
-        elif not expiry:
-            oi_fetch_error = "Could not parse a tradable expiry from Dhan."
-        else:
-            chain = client.option_chain(instrument, expiry)
-            if not chain:
-                oi_fetch_error = "Dhan option chain response was empty."
-            else:
-                oi = analyze_option_chain(chain, spot=signal.price, instrument=instrument)
-                oi_context = oi.to_dict()
-    except Exception as exc:
-        oi_fetch_error = str(classify_http_error(exc, f"{instrument_key} option chain"))
 
     buy_opp = build_opportunity(
         app_settings=app_settings,

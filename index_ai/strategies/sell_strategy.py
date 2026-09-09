@@ -1,9 +1,16 @@
-"""Directional credit selling — CPR support/resistance + 5m EMA + volume + 15m trend.
+"""Directional credit selling.
 
 **2-leg directional only** (Richard, 2026-09-10): the sell lane emits *only*
 ``SELL_BULL_PUT_SPREAD`` / ``SELL_BEAR_CALL_SPREAD`` — one sold leg + one hedge,
-for credit. No range selling (iron condor), no naked single-leg. Fewer legs →
-less brokerage, STT and slippage.
+for credit. No range selling (iron condor), no naked single-leg.
+
+**Direction comes from the OI profile** (Richard's edge): the max call/put OI
+strikes are the ceiling and floor, max pain is the bias. CPR is kept only for
+target / stop pivots downstream. When the option chain is unavailable the lane
+falls back to the CPR + EMA read (``pick_auto_credit``).
+
+A **failed breakout** is a *veto only* — the lane will not sell a spread that
+fights an intraday breakout that is still holding.
 """
 
 from __future__ import annotations
@@ -12,14 +19,29 @@ from typing import Any
 
 import pandas as pd
 
+from index_ai.options_oi import OptionOiContext
 from index_ai.strategies.bar_volume import volume_confirms
+from index_ai.strategies.breakout import detect_breakout
 from index_ai.strategies.cpr_regime import CprRegime
 from index_ai.strategies.ema_cross import analyze_ema_cross
+from index_ai.strategies.oi_credit import decide as oi_decide
 from index_ai.strategies.strategy import StrategySignal, add_indicators
 from index_ai.strategies.strategy_mode import pick_auto_credit
 from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
 
 _ALLOWED_SELL_ACTIONS = frozenset({"SELL_BULL_PUT_SPREAD", "SELL_BEAR_CALL_SPREAD"})
+
+
+def _breakout_vetoes(action: str, frame: pd.DataFrame) -> str:
+    """A live, still-holding breakout vetoes a credit spread that fights it."""
+    br = detect_breakout(frame, lookback=20)
+    if not br.get("ready"):
+        return ""
+    if action == "SELL_BEAR_CALL_SPREAD" and br.get("break_res"):
+        return f"upside breakout over {br['range_high']:.0f} still holding"
+    if action == "SELL_BULL_PUT_SPREAD" and br.get("break_sup"):
+        return f"downside breakdown under {br['range_low']:.0f} still holding"
+    return ""
 
 
 def _structure_for_bias(day_bias: str) -> str:
@@ -95,13 +117,15 @@ def evaluate_sell_signal(
     *,
     params: StrategyParams | None = None,
     trend15: dict[str, Any] | None = None,
+    oi: OptionOiContext | None = None,
 ) -> StrategySignal:
-    """Option selling from CPR levels + 5m EMA + volume, gated by the 15m trend.
+    """Directional credit selling.
 
-    ``trend15`` is ``strategy_mode.summarize_trend15`` output (direction + swing
-    S/R from the 15-minute frame). When present and ``sell_require_trend15`` is
-    set, a credit whose direction the 15m trend opposes — or one being sold
-    straight through the 15m swing level — is dropped.
+    Direction is picked from ``oi`` (the OI walls + max pain) when it is present
+    and ``sell_oi_primary`` is set; otherwise from the CPR + EMA read
+    (``pick_auto_credit``). ``trend15`` and the 5m volume gate are kept as
+    secondary confirmations. A still-holding intraday breakout vetoes a spread
+    that fights it.
     """
     _ = previous_day
     cfg = params or get_strategy_params()
@@ -132,21 +156,42 @@ def evaluate_sell_signal(
         ema_aligned=str(cross.get("aligned") or ""),
     )
 
-    action, reason, mode = pick_auto_credit(
-        regime,
-        cross,
-        ema_fast=cfg.ema_fast_period,
-        ema_slow=cfg.ema_slow_period,
-        frame=df,
-        trend15=trend15,
-    )
+    if cfg.sell_oi_primary and oi is not None:
+        action, reason = oi_decide(oi, price, max_pain=oi.max_pain)
+        mode = "oi_credit"
+        if not action:
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=f"OI sell: {reason}",
+                confidence=0.0,
+                strategy_mode="wait",
+                **base,
+            )
+    else:
+        action, reason, mode = pick_auto_credit(
+            regime,
+            cross,
+            ema_fast=cfg.ema_fast_period,
+            ema_slow=cfg.ema_slow_period,
+            frame=df,
+            trend15=trend15,
+        )
+        if not action:
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=reason or f"No CPR sell setup ({regime.day_bias}).",
+                confidence=0.0,
+                strategy_mode=mode or "wait",
+                **base,
+            )
 
-    if not action:
+    veto = _breakout_vetoes(action, df)
+    if veto:
         return StrategySignal(
             action="NO_TRADE",
-            reason=reason or f"No CPR sell setup ({regime.day_bias}).",
+            reason=f"Sell vetoed — {veto}.",
             confidence=0.0,
-            strategy_mode=mode or "wait",
+            strategy_mode="wait",
             **base,
         )
 

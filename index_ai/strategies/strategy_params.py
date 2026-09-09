@@ -63,6 +63,9 @@ class StrategyParams:
     sell_trend_interval_min: int = 15
     sell_trend15_swing_lookback: int = 6
     sell_require_trend15: bool = True
+    sell_oi_primary: bool = (
+        True  # OI walls + max pain pick the sell direction; CPR only when the chain is down
+    )
     ml_gate_sell_min: float = 0.45
     ml_gate_sell_max: float = 0.65
     ml_gate_buy_min: float = 0.50
@@ -150,6 +153,7 @@ def get_strategy_params() -> StrategyParams:
         sell_trend_interval_min=_int("SELL_TREND_INTERVAL_MIN", 15),
         sell_trend15_swing_lookback=_int("SELL_TREND15_SWING_LOOKBACK", 6),
         sell_require_trend15=_bool("SELL_REQUIRE_TREND15", True),
+        sell_oi_primary=_bool("SELL_OI_PRIMARY", True),
         ml_gate_sell_min=_float("ML_GATE_SELL_MIN", 0.45),
         ml_gate_sell_max=_float("ML_GATE_SELL_MAX", 0.65),
         ml_gate_buy_min=_float("ML_GATE_BUY_MIN", 0.50),
@@ -240,6 +244,7 @@ def strategy_tuning_summary() -> dict[str, object]:
         "sell_setup_interval_min": p.sell_setup_interval_min,
         "sell_trend_interval_min": p.sell_trend_interval_min,
         "sell_require_trend15": p.sell_require_trend15,
+        "sell_oi_primary": p.sell_oi_primary,
         "sell_timeframe_note": (
             f"Sell lane: {p.sell_setup_interval_min}m setup + {p.sell_trend_interval_min}m "
             "trend / swing S&R. Buy lane stays on the fast interval."
