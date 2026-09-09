@@ -57,7 +57,9 @@ def crypto_status() -> dict:
             "lots": s.lots,
             "deploy_cap_usd": s.deploy_usd,
             "leverage": s.leverage,
-            "max_concurrent": s.max_concurrent,
+            "max_concurrent": s.max_concurrent,          # per strategy
+            "max_open_total": s.max_open_total,          # 0 = unlimited
+            "max_hold_days": s.max_hold_days,
             "paper_bankroll_usd": s.paper_bankroll_usd,
         },
         "session_ist": {"start": s.ny_start, "end": s.ny_end},
@@ -374,6 +376,8 @@ def set_config(
     deploy_cap_usd: float | None = Body(None, embed=True),
     deploy_usd: float | None = Body(None, embed=True),  # legacy alias for deploy_cap_usd
     max_concurrent: int | None = Body(None, embed=True),
+    max_open_total: int | None = Body(None, embed=True),
+    max_hold_days: int | None = Body(None, embed=True),
     ny_n_break_enabled: bool | None = Body(None, embed=True),
     ichimoku_enabled: bool | None = Body(None, embed=True),
     fvg_scalp_enabled: bool | None = Body(None, embed=True),
@@ -401,6 +405,10 @@ def set_config(
         values["CRYPTO_DEPLOY_USD"] = str(max(0.0, float(cap)))
     if max_concurrent is not None:
         values["CRYPTO_MAX_CONCURRENT"] = str(min(10, max(1, int(max_concurrent))))
+    if max_open_total is not None:
+        values["CRYPTO_MAX_OPEN_TOTAL"] = str(min(50, max(0, int(max_open_total))))
+    if max_hold_days is not None:
+        values["CRYPTO_MAX_HOLD_DAYS"] = str(min(7, max(1, int(max_hold_days))))
     if ny_n_break_enabled is not None:
         values["CRYPTO_NY_NBREAK_ENABLED"] = "true" if ny_n_break_enabled else "false"
     if ichimoku_enabled is not None:

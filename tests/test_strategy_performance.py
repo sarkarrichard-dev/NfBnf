@@ -59,6 +59,7 @@ def test_india_rows_group_and_net(monkeypatch):
             "option": {},
         },
     ]
+    monkeypatch.setattr(sp, "data_epoch", lambda: None)
     monkeypatch.setattr(sp, "recent_trades", lambda limit=0: trades, raising=False)
     import index_ai.learning as learning
 
@@ -116,6 +117,7 @@ def test_crypto_rows_use_journal_fees(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr("crypto.journal.JOURNAL_PATH", j)
+    monkeypatch.setattr(sp, "data_epoch", lambda: None)
 
     rows = sp._crypto_rows()
     nb = next(r for r in rows if r["strategy"] == "ny_n_break")

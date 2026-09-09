@@ -76,7 +76,9 @@ class CryptoSettings:
     lots: int                  # universal lot count, min 1
     deploy_usd: float          # optional per-trade margin cap in USD; 0 = no cap
     leverage: float            # fixed 100x for crypto; clamped per-product at runtime
-    max_concurrent: int
+    max_concurrent: int        # open positions allowed PER STRATEGY (each strategy trades its own book)
+    max_open_total: int        # portfolio-wide safety cap across all strategies; 0 = unlimited
+    max_hold_days: int         # force-close a position open across more than this many day boundaries (crypto has no session)
     paper_bankroll_usd: float
     # lanes — the section runs when any strategy is enabled. ny_n_break,
     # ichimoku and fvg_scalp default on. The 3 video strategies
@@ -138,6 +140,8 @@ def crypto_settings() -> CryptoSettings:
         deploy_usd=max(0.0, _f("CRYPTO_DEPLOY_USD", 0.0)),
         leverage=max(1.0, _f("CRYPTO_LEVERAGE", 100.0)),
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
+        max_open_total=max(0, _i("CRYPTO_MAX_OPEN_TOTAL", 0)),
+        max_hold_days=max(1, _i("CRYPTO_MAX_HOLD_DAYS", 1)),
         paper_bankroll_usd=max(100.0, _f("CRYPTO_PAPER_BANKROLL", 2000.0)),
         ny_nbreak_enabled=_b("CRYPTO_NY_NBREAK_ENABLED", True),
         ichimoku_enabled=_b("CRYPTO_ICHIMOKU_ENABLED", True),
@@ -200,6 +204,7 @@ if __name__ == "__main__":  # self-check
     assert s.lots >= 1
     assert s.deploy_usd >= 0.0
     assert s.leverage >= 1.0
+    assert s.max_concurrent >= 1 and s.max_open_total >= 0 and s.max_hold_days >= 1
     assert s.stop_pnl_pct > 0 and s.tp_trigger_pnl_pct > 0
     assert s.base_url.startswith("https://")
     assert not s.base_url.endswith("/")
