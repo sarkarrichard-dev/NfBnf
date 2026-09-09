@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from index_ai.options_oi import OptionOiContext
 from index_ai.strategies.buy_strategy import evaluate_buy_signal
 from index_ai.strategies.cpr_regime import CprRegime, analyze_cpr_regime
 from index_ai.strategies.credit_spread import CREDIT_ACTIONS
@@ -106,6 +107,7 @@ def evaluate_dual_opportunities(
     allow_option_buying: bool = True,
     sell_today: pd.DataFrame | None = None,
     sell_trend15: pd.DataFrame | None = None,
+    oi: OptionOiContext | None = None,
 ) -> DualRouteResult:
     """``today`` drives the buy lane (fast interval). When ``sell_today`` (a 5m
     frame) and ``sell_trend15`` (a 15m frame) are supplied, the sell lane is
@@ -153,10 +155,10 @@ def evaluate_dual_opportunities(
             )
             t15 = summarize_trend15(sell_trend15, params) if sell_trend15 is not None else None
             sell = evaluate_sell_signal(
-                s_frame, previous_day, sell_regime, s_cross, params=params, trend15=t15
+                s_frame, previous_day, sell_regime, s_cross, params=params, trend15=t15, oi=oi
             )
         else:
-            sell = evaluate_sell_signal(frame, previous_day, regime, cross, params=params)
+            sell = evaluate_sell_signal(frame, previous_day, regime, cross, params=params, oi=oi)
 
     primary = _pick_primary(buy, sell)
     return DualRouteResult(

@@ -72,3 +72,101 @@ def test_dual_opportunities_split_sell_frame_populates_sell_regime(monkeypatch) 
         "SELL_BEAR_CALL_SPREAD",
         "SELL_IRON_CONDOR",
     }
+
+
+def _oi(pw, cw, mp=None):
+    from index_ai.options_oi import OptionOiContext
+
+    return OptionOiContext(
+        spot=0.0,
+        atm_strike=0.0,
+        total_call_oi=1,
+        total_put_oi=1,
+        pcr=1.0,
+        max_call_oi_strike=cw,
+        max_put_oi_strike=pw,
+        bias="balanced",
+        note="",
+        confidence_adjustment=0.0,
+        max_pain=mp,
+    )
+
+
+def _sell_signal(frame, oi, **kw):
+    from index_ai.strategies.cpr_regime import analyze_cpr_regime
+    from index_ai.strategies.sell_strategy import evaluate_sell_signal
+    from index_ai.strategies.strategy import add_indicators
+
+    prev = pd.DataFrame([{"open": 100, "high": 110, "low": 90, "close": 100}])
+    df = add_indicators(frame, fast=5, slow=10)
+    row = df.iloc[-1]
+    reg = analyze_cpr_regime(
+        df,
+        prev,
+        price=float(row["close"]),
+        ema_fast=float(row["ema_fast"]),
+        ema_slow=float(row["ema_slow"]),
+    )
+    return evaluate_sell_signal(df, prev, reg, oi=oi, **kw)
+
+
+def test_oi_primary_picks_the_sell_direction():
+    flat = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-05-25 09:15", periods=40, freq="5min"),
+            "open": [100.0] * 40,
+            "high": [101.0] * 40,
+            "low": [99.0] * 40,
+            "close": [100.0] * 40,
+            "volume": [5000.0] * 40,
+        }
+    )
+    # spot 100, put wall 95, call wall 108 → mid 101.5, leaning the floor → bull put
+    sig = _sell_signal(flat, _oi(95.0, 108.0))
+    assert sig.action == "SELL_BULL_PUT_SPREAD" and "OI:" in sig.reason
+    # jam the walls around spot the other way → bear call
+    sig = _sell_signal(flat, _oi(92.0, 101.0))
+    assert sig.action == "SELL_BEAR_CALL_SPREAD"
+    # spot pinned at max pain → no directional credit
+    sig = _sell_signal(flat, _oi(95.0, 108.0, mp=100.0))
+    assert sig.action == "NO_TRADE" and "pinned" in sig.reason
+
+
+def test_breakout_veto_catches_a_still_holding_break():
+    from index_ai.strategies.sell_strategy import _breakout_vetoes
+
+    # price sat above the pre-break range for the last few bars — still holding
+    closes = [100.0] * 24 + [104.0, 104.5, 104.2]
+    frame = pd.DataFrame(
+        {
+            "high": [c + 0.5 for c in closes],
+            "low": [c - 0.5 for c in closes],
+            "close": closes,
+        }
+    )
+    assert "breakout holding" in _breakout_vetoes("SELL_BEAR_CALL_SPREAD", frame)
+    assert (
+        _breakout_vetoes("SELL_BULL_PUT_SPREAD", frame) == ""
+    )  # bull put isn't fighting an up-break
+
+    dn = [100.0] * 24 + [96.0, 95.5, 95.8]
+    down = pd.DataFrame({"high": [c + 0.5 for c in dn], "low": [c - 0.5 for c in dn], "close": dn})
+    assert "breakdown holding" in _breakout_vetoes("SELL_BULL_PUT_SPREAD", down)
+    assert _breakout_vetoes("SELL_BEAR_CALL_SPREAD", down) == ""
+
+
+def test_oi_path_reapplies_the_tape_veto():
+    # a selling-off 5m tape (lower highs/lows) — OI leaning bull-put must be blocked
+    closes = [100.0 - i * 0.6 for i in range(30)]
+    frame = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-05-25 09:15", periods=30, freq="5min"),
+            "open": closes,
+            "high": [c + 0.3 for c in closes],
+            "low": [c - 0.3 for c in closes],
+            "close": closes,
+            "volume": [5000.0] * 30,
+        }
+    )
+    sig = _sell_signal(frame, _oi(closes[-1] - 5, closes[-1] + 20))  # walls put spot near the floor
+    assert sig.action == "NO_TRADE" and "tape is DOWN" in sig.reason

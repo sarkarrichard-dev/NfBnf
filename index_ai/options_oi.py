@@ -19,6 +19,7 @@ class OptionOiContext:
     bias: str
     note: str
     confidence_adjustment: float
+    max_pain: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -50,7 +51,7 @@ def analyze_option_chain(
     *,
     spot: float,
     instrument: IndexInstrument,
-    strike_window: int = 5,
+    strike_window: int = 11,  # ~5 strikes each side of ATM — wide enough to see the real OI walls
 ) -> OptionOiContext:
     """Summarize OI around ATM from Dhan option chain."""
     rows = (chain.get("data") or {}).get("oc") or {}
@@ -97,6 +98,14 @@ def analyze_option_chain(
     pcr = round(total_put_oi / max(total_call_oi, 1), 3)
     atm = nearest_strike(spot, instrument)
 
+    mp: float | None = None
+    try:
+        from index_ai.market_context.oi_flow import max_pain as _max_pain
+
+        mp = _max_pain({strike: row for strike, row in parsed})
+    except Exception:
+        mp = None
+
     if pcr > 1.15:
         bias = "put_heavy"
         note = f"Put OI dominant near ATM (PCR {pcr:.2f})."
@@ -118,6 +127,7 @@ def analyze_option_chain(
         bias=bias,
         note=note,
         confidence_adjustment=0.0,
+        max_pain=mp,
     )
 
 
