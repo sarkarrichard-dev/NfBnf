@@ -1096,6 +1096,28 @@ def futures_paper_status_api() -> dict[str, Any]:  # sync
     return futures_paper_status()
 
 
+@app.get("/api/futures/backtest", include_in_schema=False)
+def futures_backtest_api() -> dict[str, Any]:
+    """Static replay results for the Futures tab — the stock-futures backtest
+    (`scripts/backtest_stock_futures`) and the index one, whichever have been run.
+    Empty sub-objects when a backtest hasn't produced a file yet."""
+    import json as _json
+    from pathlib import Path
+
+    def _load(p: str) -> dict[str, Any]:
+        f = Path(p)
+        try:
+            return _json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+        except (OSError, ValueError):
+            return {}
+
+    return {
+        "stock": _load("research/stock_futures/summary.json"),
+        "index": _load("research/futures/summary.json"),
+        "generated_at_ist": format_ist_display(now_ist_iso()),
+    }
+
+
 @app.get("/api/options-cpr/status", include_in_schema=False)
 def options_cpr_paper_status_api() -> dict[str, Any]:  # sync
     from index_ai.strategies.options_cpr.paper import options_cpr_paper_status
