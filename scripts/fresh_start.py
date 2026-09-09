@@ -48,25 +48,62 @@ _TRADE_ARTIFACTS = [
 _TRADE_ARTIFACT_GLOBS = ["trade_memory.sqlite.bak-*"]
 
 
+class _SafetyProbeFailed(RuntimeError):
+    """A pre-flight check could not run — treat as unsafe, never as clear."""
+
+
 def _live_positions_open() -> list[str]:
+    """Any unresolved LIVE position — index or crypto. Raises rather than
+    returning [] if a probe can't run (e.g. the DB is locked by the server)."""
     out: list[str] = []
     try:
-        from index_ai.learning import recent_trades
+        from index_ai.learning import open_trades
 
-        for t in recent_trades(limit=500):
-            if t.get("pnl") is None and str(t.get("status") or "").upper() == "LIVE_TRADED":
-                out.append(f"index {t.get('instrument')} {t.get('action')}")
-    except Exception:
-        pass
+        for t in open_trades():  # pnl IS NULL, not rejected/failed
+            if str(t.get("mode") or "").upper() == "LIVE" or str(t.get("status") or "").upper().startswith(
+                "LIVE"
+            ):
+                out.append(f"index {t.get('instrument')} {t.get('action')} ({t.get('status')})")
+    except Exception as exc:
+        raise _SafetyProbeFailed(f"could not read the index journal: {exc}") from exc
     try:
         from crypto.day_review import open_positions
 
         for p in open_positions():
             if str(p.get("mode") or "").lower() == "live":
                 out.append(f"crypto {p.get('asset')} {p.get('side')}")
-    except Exception:
-        pass
+    except Exception as exc:
+        raise _SafetyProbeFailed(f"could not read the crypto state: {exc}") from exc
     return out
+
+
+def _server_running() -> bool:
+    """True if a uvicorn server holds the OS lock on memory/.server.lock. Moving
+    the SQLite file out from under its open connection corrupts it, so we refuse."""
+    lock = MEMORY_DIR / ".server.lock"
+    if not lock.is_file():
+        return False
+    try:
+        fh = open(lock, "a+")  # noqa: SIM115
+    except OSError:
+        return True
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        return False  # we got the lock → no server
+    except OSError:
+        return True  # someone else holds it
+    finally:
+        fh.close()
 
 
 def _targets() -> list[Path]:
@@ -85,7 +122,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--commit", action="store_true", help="actually move the files")
     args = ap.parse_args(argv)
 
-    live = _live_positions_open()
+    if _server_running():
+        print("REFUSING — a server is running (holds memory/.server.lock).")
+        print("Stop it first: the launcher's \"Stop server\", or kill the "
+              "`python -m index_ai.server` / uvicorn process. Then run this, then restart.")
+        return 1
+
+    try:
+        live = _live_positions_open()
+    except _SafetyProbeFailed as exc:
+        print(f"REFUSING — a safety check could not run: {exc}")
+        print("A check that cannot run is not a check that passed. Resolve it and retry.")
+        return 1
     if live:
         print("REFUSING — live positions are open:")
         for x in live:
@@ -122,8 +170,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\nDone. {len(targets)} items → {archive}")
     print(f"Data epoch set: {epoch}")
-    print("Fresh trade_memory.sqlite + crypto_journal.jsonl created. The lanes "
-          "keep running; they now log into empty journals.")
+    print("Fresh trade_memory.sqlite + crypto_journal.jsonl created.")
+    print("Start the server now — the lanes log into the empty journals from here.")
     return 0
 
 

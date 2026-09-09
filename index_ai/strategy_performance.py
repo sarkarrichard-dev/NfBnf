@@ -24,9 +24,20 @@ import json
 from collections import defaultdict
 from typing import Any
 
+from index_ai.data_epoch import data_epoch
 from index_ai.market_clock import now_ist_iso
 
 _MEANINGLESS_MODE = {"", "none", "wait", "conflict"}
+
+
+def _after_epoch(when: str | None, epoch: str | None) -> bool:
+    """Keep a row only if its timestamp is at/after the data epoch. Missing epoch
+    keeps everything; missing row timestamp is kept (fail open). Both timestamps
+    are ISO-8601 IST, so a lexical compare of the ``YYYY-MM-DDTHH:MM:SS`` prefix
+    is an ordering compare."""
+    if not epoch or not when:
+        return True
+    return str(when)[:19] >= epoch[:19]
 
 
 def _india_strategy(trade: dict[str, Any]) -> str:
@@ -103,9 +114,10 @@ def _finish(key: tuple[str, str, str], b: dict[str, Any], currency: str) -> dict
 def _india_rows() -> list[dict[str, Any]]:
     from index_ai.learning import recent_trades
 
+    epoch = data_epoch()
     buckets: dict[tuple[str, str, str], dict[str, Any]] = defaultdict(_blank_bucket)
     for t in recent_trades(limit=1_000_000):
-        if t.get("pnl") is None:
+        if t.get("pnl") is None or not _after_epoch(t.get("created_at"), epoch):
             continue
         strat = _india_strategy(t)
         inst = str(t.get("instrument") or "?")
@@ -130,6 +142,7 @@ def _india_rows() -> list[dict[str, Any]]:
 def _crypto_rows() -> list[dict[str, Any]]:
     from crypto.journal import JOURNAL_PATH
 
+    epoch = data_epoch()
     buckets: dict[tuple[str, str, str], dict[str, Any]] = defaultdict(_blank_bucket)
     if not JOURNAL_PATH.is_file():
         return []
@@ -140,6 +153,8 @@ def _crypto_rows() -> list[dict[str, Any]]:
         try:
             r = json.loads(line)
         except ValueError:
+            continue
+        if not _after_epoch(r.get("closed_at") or r.get("day"), epoch):
             continue
         strat = str(r.get("strategy") or "?")
         asset = str(r.get("asset") or "?")
