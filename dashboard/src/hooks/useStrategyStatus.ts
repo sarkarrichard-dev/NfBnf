@@ -28,7 +28,6 @@ export type LiveStatus = {
 export function useStrategyStatus(): Record<string, LiveStatus> {
   const poll = usePollMs(30_000)
   const futures = useQuery({ queryKey: ['futures', 'status'], queryFn: () => api<LaneStatus>('/api/futures/status'), refetchInterval: poll })
-  const optionsCpr = useQuery({ queryKey: ['options-cpr', 'status'], queryFn: () => api<LaneStatus>('/api/options-cpr/status'), refetchInterval: poll })
   const crypto = useQuery({ queryKey: ['crypto', 'status'], queryFn: () => api<CryptoStatus>('/api/crypto/status'), refetchInterval: poll })
 
   const lane = (d: LaneStatus | undefined): LiveStatus => ({
@@ -50,7 +49,9 @@ export function useStrategyStatus(): Record<string, LiveStatus> {
 
   return {
     futures: lane(futures.data),
-    options_cpr: lane(optionsCpr.data),
+    // Index options run through the legacy execution engine; today's P&L lives in
+    // Trade History / Reports, not a lane status endpoint.
+    index_options: { enabled: true, mode: 'PAPER', instruments: ['NIFTY', 'BANKNIFTY', 'SENSEX'], open: 0 },
     ny_n_break: cLane('ny_n_break'),
     ichimoku: cLane('ichimoku'),
     fvg_scalp: cLane('fvg_scalp'),

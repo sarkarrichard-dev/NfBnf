@@ -98,6 +98,35 @@ def _enforce_regime_gate() -> bool:
     return True if raw is None else raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _require_viable() -> bool:
+    raw = os.getenv("OPTIONS_REQUIRE_VIABLE")
+    return True if raw is None else raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _viable_sell_blocks(instrument: str) -> tuple[bool, str]:
+    """Block the credit-sell lane on an index whose measured gross edge cannot
+    cover its measured round-trip cost floor (options_cpr/viability.py). Sell lane
+    only — the buy lane keeps its own liquidity + confidence gates. Never raises;
+    an unmeasured or errored verdict does not block."""
+    if not _require_viable():
+        return False, ""
+    try:
+        from index_ai.strategies.options_cpr.config import config_for, with_overrides
+        from index_ai.strategies.options_cpr.viability import NOT_VIABLE, viability
+        from index_ai.strategies.strategy_params import get_strategy_params
+
+        cfg = with_overrides(
+            config_for(instrument),
+            sell_naked=not get_strategy_params().apex_use_hedged_spreads,
+        )
+        v = viability(instrument, "sell", cfg=cfg)
+        if v.verdict == NOT_VIABLE:
+            return True, f"not viable on {instrument} — {v.reason}"
+    except Exception:
+        return False, ""
+    return False, ""
+
+
 def regime_blocks_lane(read: dict[str, Any] | None, lane: str) -> tuple[bool, str]:
     """Brain market-regime veto (index_ai/brain/regime.py): QUIET stands both
     lanes down, RANGE blocks buying, HIGH_VOL blocks selling, TREND allows all.
@@ -140,6 +169,11 @@ def check(
     blocked, why = regime_blocks_lane(regime_read, lane)
     if blocked:
         return True, why
+
+    if lane == "sell":
+        blocked, why = _viable_sell_blocks(inst)
+        if blocked:
+            return True, why
 
     trades = _todays_trades(inst, mode, lane)
 
@@ -195,6 +229,16 @@ if __name__ == "__main__":  # self-check (pure logic — no journal read)
         {"regime": "HIGH_VOL", "allow_buy": True, "allow_sell": False}, "buy"
     )[0]
     assert not regime_blocks_lane(None, "buy")[0]
+
+    # viability sell gate: BANKNIFTY hedged spread on a wide book is NOT_VIABLE
+    os.environ["SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY"] = "4.06"
+    assert _viable_sell_blocks("BANKNIFTY")[0]
+    assert not _viable_sell_blocks("NIFTY")[0]
+    os.environ["OPTIONS_REQUIRE_VIABLE"] = "false"
+    assert not _viable_sell_blocks("BANKNIFTY")[0]
+    del os.environ["OPTIONS_REQUIRE_VIABLE"]
+    del os.environ["SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY"]
+
     os.environ["ENFORCE_REGIME_GATE"] = "false"
     assert not regime_blocks_lane(
         {"regime": "QUIET", "allow_buy": False, "allow_sell": False}, "buy"

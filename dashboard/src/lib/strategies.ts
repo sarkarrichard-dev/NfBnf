@@ -5,7 +5,7 @@
  *  mirrors the frozen config dataclass in `crypto/strategies/*.py` /
  *  `index_ai/` so the Builder can render a parameter form and the "READS"
  *  sentence without a round-trip. Live status is layered on at render time
- *  from `/api/{futures,options-cpr,crypto}/status`.
+ *  from `/api/{futures,crypto}/status` (index options report via Trade History).
  *
  *  When Phase 4 adds per-user custom strategies, this becomes the seed list
  *  and saved permutations come from the user store.
@@ -31,7 +31,7 @@ export type StrategyDef = {
   name: string
   kind: 'crypto' | 'index'
   /** which lane / status block reports it */
-  statusKey: 'ny_n_break' | 'ichimoku' | 'fvg_scalp' | 'ema_pivot' | 'options_cpr' | 'futures'
+  statusKey: 'ny_n_break' | 'ichimoku' | 'fvg_scalp' | 'ema_pivot' | 'index_options' | 'futures'
   engine: string
   instrument: string
   timeframe: string
@@ -158,16 +158,16 @@ export const STRATEGIES: StrategyDef[] = [
     ],
   },
   {
-    id: 'options_cpr',
-    name: 'Options CPR',
+    id: 'index_options',
+    name: 'Index Options',
     kind: 'index',
-    statusKey: 'options_cpr',
-    engine: 'CPR + EMA + Supertrend + OI',
+    statusKey: 'index_options',
+    engine: 'CPR + EMA + Supertrend + OI · premium-trail exits',
     instrument: 'NIFTY · BANKNIFTY · SENSEX',
-    timeframe: '5m',
+    timeframe: 'buy fast · sell 5m setup + 15m trend',
     blurb:
-      'The index options lane — naked single-leg buying and directional selling off a CPR + EMA + Supertrend signal with an OI confirm. Gated by the measured cost floor per structure (viability.py); BANKNIFTY 4-leg structures stay blocked.',
-    reads: 'Tuned through Settings → Strategy tuning (.env), not the Builder.',
+      'The live index-options engine — naked single-leg buying (60% confidence, OI + liquidity gated) and directional credit selling (5m setup, 15m trend/S&R, premium-trail owns the exit). Chop brakes and the per-index viability cost floor gate the sell lane; BANKNIFTY 4-leg structures stay blocked. Runs through the executor → Trade History.',
+    reads: 'Tuned through Settings → Strategy tuning (.env), not the Builder. P&L is in Trade History / Reports (source: index).',
     backtest: { window: 'full history', net: 'net-negative after costs', trades: 0, note: 'friction is the binding constraint — see strategy-findings' },
     paperDefault: true,
     builder: false,

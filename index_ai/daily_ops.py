@@ -196,10 +196,7 @@ def run_eod() -> dict[str, Any]:
     except Exception as exc:
         report["viability"] = {"error": str(exc)[:200]}
 
-    for name, path in (
-        ("options_cpr", "index_ai.strategies.options_cpr.paper:options_cpr_paper_status"),
-        ("futures", "index_ai.strategies.futures.paper:futures_paper_status"),
-    ):
+    for name, path in (("futures", "index_ai.strategies.futures.paper:futures_paper_status"),):
         try:
             mod_name, attr = path.split(":")
             mod = __import__(mod_name, fromlist=[attr])
@@ -296,7 +293,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     else:
         lines.append(f"- Not retrained: {b.get('reason')}")
 
-    for lane in ("options_cpr", "futures"):
+    for lane in ("futures",):
         d = report.get(lane) or {}
         if d.get("enabled"):
             t, a = d.get("today") or {}, d.get("all_time") or {}
@@ -352,7 +349,7 @@ if __name__ == "__main__":  # ponytail self-check
                 "gate_armed": False,
                 "walk_forward": {"oos_static_rupees": 100, "oos_gated_rupees": 50},
             },
-            "options_cpr": {
+            "futures": {
                 "enabled": True,
                 "today": {"closed": 2, "net_rupees": 300.0},
                 "all_time": {"closed": 9, "net_rupees": -120.0},

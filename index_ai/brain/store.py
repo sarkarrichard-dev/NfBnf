@@ -2,9 +2,9 @@
 One dataset from every lane's journal.
 
 Sources:
-  * options-sell / options-buy  -> SQLite ``trades`` table (index_ai.learning)
+  * index options (buy + sell)  -> SQLite ``trades`` table (index_ai.learning)
   * directional futures         -> memory/futures_journal.jsonl
-  * CPR options (buy + sell)    -> memory/options_cpr_journal.jsonl
+  * CPR options backtest        -> research/options_cpr/ (seed data only)
 
 Rows are normalised through ``brain.features.unified_features`` so the model sees
 one vector regardless of origin. Backtest output can be folded in as *seed* data
@@ -23,8 +23,9 @@ from index_ai.config import MEMORY_DIR
 
 _JSONL_LANES: dict[str, str] = {
     "futures": "futures_journal.jsonl",
-    "options_cpr": "options_cpr_journal.jsonl",
 }
+# options_cpr is backtest-only now — its research dir still seeds the model, but the
+# retired paper lane no longer produces a live journal.
 _BACKTEST_DIRS = ("research/futures", "research/options_cpr")
 
 
@@ -105,16 +106,24 @@ def build_dataset(*, include_backtest: bool = False) -> dict[str, Any]:
             continue
         xs.append([feats[k] for k in FEATURES])
         ys.append(y)
-        meta.append({
-            "source": source,
-            "is_backtest": is_bt,
-            "instrument": str(trade.get("instrument") or ""),
-            "when": str(trade.get("exit_time") or trade.get("session") or trade.get("closed_at") or ""),
-            "net_rupees": trade.get("net_rupees") if trade.get("net_rupees") is not None else trade.get("pnl"),
-        })
+        meta.append(
+            {
+                "source": source,
+                "is_backtest": is_bt,
+                "instrument": str(trade.get("instrument") or ""),
+                "when": str(
+                    trade.get("exit_time") or trade.get("session") or trade.get("closed_at") or ""
+                ),
+                "net_rupees": trade.get("net_rupees")
+                if trade.get("net_rupees") is not None
+                else trade.get("pnl"),
+            }
+        )
         by_source[source] = by_source.get(source, 0) + 1
 
-    order = sorted(range(len(meta)), key=lambda i: meta[i]["when"])  # chronological for walk-forward
+    order = sorted(
+        range(len(meta)), key=lambda i: meta[i]["when"]
+    )  # chronological for walk-forward
     return {
         "feature_names": list(FEATURES),
         "X": [xs[i] for i in order],
@@ -133,4 +142,6 @@ if __name__ == "__main__":  # ponytail self-check
     assert all(len(row) == len(FEATURES) for row in ds["X"])
     whens = [m["when"] for m in ds["meta"]]
     assert whens == sorted(whens), "dataset must be chronological for walk-forward"
-    print(f"store.py self-check ok — {ds['total_rows']} rows ({ds['live_rows']} live) {ds['counts']}")
+    print(
+        f"store.py self-check ok — {ds['total_rows']} rows ({ds['live_rows']} live) {ds['counts']}"
+    )

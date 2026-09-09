@@ -1127,13 +1127,6 @@ def futures_backtest_api() -> dict[str, Any]:
     }
 
 
-@app.get("/api/options-cpr/status", include_in_schema=False)
-def options_cpr_paper_status_api() -> dict[str, Any]:  # sync
-    from index_ai.strategies.options_cpr.paper import options_cpr_paper_status
-
-    return options_cpr_paper_status()
-
-
 @app.get("/api/reconcile", include_in_schema=False)
 async def reconcile_api(repair: bool = Query(False)) -> dict[str, Any]:
     """Broker-vs-journal drift check. Read-only unless repair=true (journal only)."""

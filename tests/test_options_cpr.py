@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 
-from index_ai.strategies.options_cpr import paper
 from index_ai.strategies.options_cpr.backtest import replay_session
 from index_ai.strategies.options_cpr.config import config_for, with_overrides
 from index_ai.strategies.options_cpr.engine import (
@@ -103,44 +102,6 @@ def test_kill_switch_stops_new_entries(monkeypatch):
     assert isinstance(trades, list)
 
 
-def test_close_journals_and_status(tmp_path, monkeypatch):
-    monkeypatch.setattr(paper, "JOURNAL_PATH", tmp_path / "j.jsonl")
-    monkeypatch.setattr(paper, "STATE_PATH", tmp_path / "s.json")
-    monkeypatch.setenv("ENABLE_OPTIONS_CPR_PAPER", "true")
-    cfg = config_for("NIFTY")
-    state = {"NIFTY": {"position": None}}
-    ctr = {"date": "2026-01-02", "trades": 1, "consec_losses": 0, "daily_pnl": 0.0, "kill": False}
-    state["NIFTY"]["day"] = ctr
-    pos = {
-        "side": "CE",
-        "is_call": True,
-        "strike": 24000.0,
-        "entry_spot": 24010.0,
-        "entry_premium": 120.0,
-        "entry_time": "t0",
-        "sl_premium": 96.0,
-        "r_unit": 24.0,
-        "target_premium": 168.0,
-        "qty_open": cfg.lot_size,
-        "stage": 0,
-        "peak_premium": 120.0,
-        "peak_spot": 24010.0,
-        "partial_booked": False,
-    }
-    tr = paper._close(pos, 168.0, "target", 24120.0, cfg, ctr, state)
-    assert tr["side"] == "CE" and tr["net_rupees"] == round(
-        48.0 * cfg.lot_size - tr["friction_rupees"], 2
-    )
-    assert (tmp_path / "j.jsonl").read_text().strip()
-    st = paper.options_cpr_paper_status()
-    assert st["all_time"]["closed"] == 1
-
-
-def test_scan_empty_when_disabled(monkeypatch):
-    monkeypatch.setenv("ENABLE_OPTIONS_CPR_PAPER", "false")
-    assert paper.scan_options_cpr_paper(object()) == []
-
-
 def test_sell_spread_is_directional_and_credit_positive():
     from index_ai.strategies.options_cpr.sell import replay_sell_session
 
@@ -174,8 +135,7 @@ def test_build_spread_wing_fits_margin_budget():
     assert sp["credit"] > 0
 
 
-def test_live_chain_quotes_and_real_charges(monkeypatch):
-    from index_ai.strategies.options_cpr import paper
+def test_live_chain_quote_fills_at_ask_and_bid():
     from index_ai.strategies.options_cpr.live_chain import ChainBook
 
     rows = {
@@ -191,16 +151,9 @@ def test_live_chain_quotes_and_real_charges(monkeypatch):
     }
     book = ChainBook("2026-09-02", rows)
     q = book.quote(24000.0, is_call=True)
-    assert q.fill("BUY") == 122.0 and q.fill("SELL") == 119.0
-
-    cfg = config_for("NIFTY")
-    # real (dhan_ltp) fills: spread is in the price, so no extra half-spread term
-    real, br = paper._leg_friction(122.0, 119.0, cfg.lot_size, cfg, "dhan_ltp", "BUY")
-    proxy, _ = paper._leg_friction(122.0, 119.0, cfg.lot_size, cfg, "bs_proxy", "BUY")
-    assert proxy > real
-    # a Dhan contract note: two ₹20 orders dominate a small-premium leg
-    assert 35 <= br["brokerage"] <= 40
-    assert br["stt"] > 0 and br["total"] == round(sum(v for k, v in br.items() if k != "total"), 2)
+    # BUY lifts the ask, SELL hits the bid, LTP otherwise
+    assert q.fill("BUY") == 122.0 and q.fill("SELL") == 119.0 and q.ltp == 120.0
+    assert q.security_id == 1
 
 
 def test_walk_forward_gate_never_worse_on_separable_data():
@@ -249,12 +202,11 @@ def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch):
     assert legs_naked == 2 and floor_naked < b.friction_floor_rupees
 
 
-def test_viability_gate_is_opt_out(monkeypatch):
-    from index_ai.strategies.options_cpr.paper import _viability_block, require_viable
+def test_entry_guard_viability_blocks_wide_book_sell(monkeypatch):
+    from index_ai.entry_guard import _viable_sell_blocks
 
     monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY", "4.06")
-    cfg = config_for("BANKNIFTY")
-    assert require_viable() is True
-    assert _viability_block("BANKNIFTY", "sell", cfg) is not None
-    monkeypatch.setenv("OPTIONS_CPR_REQUIRE_VIABLE", "false")
-    assert _viability_block("BANKNIFTY", "sell", cfg) is None
+    assert _viable_sell_blocks("BANKNIFTY")[0] is True
+    assert _viable_sell_blocks("NIFTY")[0] is False  # NIFTY sell clears its floor
+    monkeypatch.setenv("OPTIONS_REQUIRE_VIABLE", "false")
+    assert _viable_sell_blocks("BANKNIFTY")[0] is False

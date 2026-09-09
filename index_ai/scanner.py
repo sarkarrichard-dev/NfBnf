@@ -317,22 +317,6 @@ async def _run_futures_paper(client: DhanClient) -> None:
         _log("futures_paper_error", error=_friendly_error(exc))
 
 
-async def _run_options_cpr_paper(client: DhanClient) -> None:
-    """CPR + EMA option-buying paper strategy — separate from the options-sell path."""
-    try:
-        from index_ai.strategies.options_cpr.paper import enabled, scan_options_cpr_paper
-
-        if not enabled():
-            return
-        events = await asyncio.to_thread(scan_options_cpr_paper, client)
-        for e in events:
-            if e.get("event") in {"entry", "exit", "partial"}:
-                _log("options_cpr_paper", kind=e.get("event"), **_without_event(e))
-    except Exception as exc:  # never let this break the options scanner
-        _note_auth_failure(exc)
-        _log("options_cpr_paper_error", error=_friendly_error(exc))
-
-
 async def _sample_spreads(client: DhanClient) -> None:
     """Measure the live option book — runs whether or not any lane is trading."""
     from index_ai.daily_ops import sample_spreads
@@ -756,7 +740,7 @@ async def _run_loop() -> None:
             # The paper lanes fetch an option chain + intraday history per
             # index; under Dhan rate-limiting that can run past the 60s
             # default and trip the breaker. Give them room.
-            _slow = {"options_cpr_paper": 150.0, "futures_paper": 150.0}
+            _slow = {"futures_paper": 150.0}
             for name, factory in (
                 ("market_context", _run_market_context_if_due),
                 ("live_order_sync", _sync_live),
@@ -764,7 +748,6 @@ async def _run_loop() -> None:
                 ("stale_positions", lambda: _close_stale_session_positions(client, cfg)),
                 ("trails", lambda: _check_trails(client, cfg)),
                 ("futures_paper", lambda: _run_futures_paper(client)),
-                ("options_cpr_paper", lambda: _run_options_cpr_paper(client)),
                 ("reconcile", lambda: _run_reconcile(client, cfg)),
                 ("spread_sampling", lambda: _sample_spreads(client)),
                 ("eod_report", _run_eod_if_due),
