@@ -38,11 +38,6 @@ def map_premium_sell_to_hedged_credit(action: str) -> str | None:
     return None
 
 
-def map_apex_to_hedged_credit(action: str) -> str | None:
-    """Backward-compatible alias."""
-    return map_premium_sell_to_hedged_credit(action)
-
-
 def credit_spread_entry_ready(option: dict[str, Any], *, action: str = "") -> tuple[bool, str]:
     """Require full Dhan legs before journal or broker entry."""
     act = str(action or "").upper()

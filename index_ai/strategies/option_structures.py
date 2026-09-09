@@ -271,7 +271,7 @@ def build_atm_short_option(
     signal: StrategySignal,
     instrument: IndexInstrument,
 ) -> dict[str, Any]:
-    """Sell nearest ATM call or put (Apex Pivot-Trend / naked premium sell)."""
+    """Sell nearest ATM call or put (naked premium sell)."""
     action = str(signal.action or "").upper()
     if not is_premium_sell_action(action):
         raise ValueError(f"Not a premium sell action: {action}")
@@ -295,7 +295,7 @@ def build_atm_short_option(
         "quantity": instrument.lot_size,
         "ltp": leg.get("ltp"),
         "legs": [leg],
-        "hedge_note": "Short ATM premium (Apex Pivot-Trend). Defined risk only if hedged spread mode is on.",
+        "hedge_note": "Short ATM premium. Defined risk only if hedged spread mode is on.",
     }
 
 

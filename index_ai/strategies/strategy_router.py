@@ -20,7 +20,7 @@ from index_ai.strategies.strategy_params import get_strategy_params
 
 def strategy_style() -> str:
     raw = os.getenv("STRATEGY_STYLE", "AUTO").strip().upper()
-    if raw not in {"AUTO", "BUY", "CREDIT", "APEX"}:
+    if raw not in {"AUTO", "BUY", "CREDIT"}:
         return "AUTO"
     return raw
 
@@ -127,24 +127,6 @@ def evaluate_dual_opportunities(
         ema_fast=float(row["ema_fast"]),
         ema_slow=float(row["ema_slow"]),
     )
-
-    if style == "APEX":
-        from index_ai.strategies.apex_pivot_trend import apex_pivot_trend_signal
-
-        apex = apex_pivot_trend_signal(frame, previous_day)
-        sell = copy_signal(
-            apex,
-            cpr_regime=regime.day_bias,
-            pivot=regime.pivot,
-            bc=regime.bc,
-            tc=regime.tc,
-            strategy_mode=apex.strategy_mode or "apex",
-        )
-        buy = _empty_buy(regime, row, reason="APEX mode — sell only.")
-        primary = sell if sell.action != "NO_TRADE" else buy
-        return DualRouteResult(
-            primary=primary, buy=buy, sell=sell, regime=regime, cross=cross, sell_regime=regime
-        )
 
     buy = _empty_buy(regime, row)
     sell = _empty_sell(regime, row)
