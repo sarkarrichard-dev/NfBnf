@@ -142,8 +142,12 @@ def test_tape_veto_blocks_bull_put_when_the_day_is_selling_off(monkeypatch) -> N
     # the 1m EMA flickered bull, and a bull-put spread fired while price fell all
     # session. With the tape (candle structure + Supertrend) pointing DOWN, the
     # bullish credit must be vetoed.
-    for k in ("SUPERTREND_PERIOD", "SUPERTREND_MULTIPLIER", "CREDIT_MIN_VOLUME_RATIO",
-              "CREDIT_VOLUME_LOOKBACK_BARS"):
+    for k in (
+        "SUPERTREND_PERIOD",
+        "SUPERTREND_MULTIPLIER",
+        "CREDIT_MIN_VOLUME_RATIO",
+        "CREDIT_VOLUME_LOOKBACK_BARS",
+    ):
         monkeypatch.delenv(k, raising=False)
     reload_strategy_params()
     frame = _downtrend_frame()
@@ -164,3 +168,57 @@ def test_tape_veto_blocks_bull_put_when_the_day_is_selling_off(monkeypatch) -> N
         _regime("TRENDING_BEAR"), {"aligned": "bear"}, ema_fast=8, ema_slow=20, frame=up
     )
     assert action2 is None and mode2 == "conflict" and "sell calls into it" in reason2
+
+
+def test_trend15_disagreement_blocks_the_trend_override(monkeypatch) -> None:
+    # A clean 5m downtrend would trigger a trend-override bear-call, but a 15m read
+    # that is still pointing UP must veto it.
+    for k in (
+        "SUPERTREND_PERIOD",
+        "SUPERTREND_MULTIPLIER",
+        "CREDIT_MIN_VOLUME_RATIO",
+        "CREDIT_VOLUME_LOOKBACK_BARS",
+        "SELL_ALLOW_TREND_OVERRIDE",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    reload_strategy_params()
+    frame = _downtrend_frame()
+    ok, _r, mode = pick_auto_credit(
+        _regime("TRENDING_BULL"),
+        {"aligned": "bear"},
+        ema_fast=8,
+        ema_slow=20,
+        frame=frame,
+        trend15={"direction": -1},
+    )
+    assert ok == "SELL_BEAR_CALL_SPREAD" and mode == "cpr_trend_override"
+    blocked, _r2, _m2 = pick_auto_credit(
+        _regime("TRENDING_BULL"),
+        {"aligned": "bear"},
+        ema_fast=8,
+        ema_slow=20,
+        frame=frame,
+        trend15={"direction": 1},
+    )
+    assert blocked != "SELL_BEAR_CALL_SPREAD"
+
+
+def test_summarize_trend15_needs_ema_and_supertrend_to_agree() -> None:
+    from index_ai.strategies.strategy_mode import summarize_trend15
+    from index_ai.strategies.strategy_params import get_strategy_params
+
+    n = 40
+    closes = [100.0 + i for i in range(n)]  # clean uptrend
+    up = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-01-02 09:15", periods=n, freq="15min"),
+            "open": closes,
+            "high": [c + 1 for c in closes],
+            "low": [c - 1 for c in closes],
+            "close": closes,
+            "volume": [1000.0] * n,
+        }
+    )
+    t = summarize_trend15(up, get_strategy_params())
+    assert t["direction"] == 1 and t["swing_low"] < t["swing_high"]
+    assert summarize_trend15(up.head(5), get_strategy_params())["direction"] == 0

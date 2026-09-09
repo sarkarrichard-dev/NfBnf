@@ -1,4 +1,4 @@
-"""Premium selling — CPR support/resistance + 1m EMA + volume (no Apex)."""
+"""Premium selling — CPR support/resistance + 5m EMA + volume + 15m trend (no Apex)."""
 
 from __future__ import annotations
 
@@ -74,6 +74,36 @@ def _naked_at_cpr_boundary(
     return None, ""
 
 
+_BULL_SELL = {"SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"}
+
+
+def _trend15_block(
+    action: str, price: float, trend15: dict[str, Any] | None, cfg: StrategyParams
+) -> str | None:
+    """Reason the 15m trend / swing S&R vetoes this credit, or None.
+
+    A bullish credit (short puts) needs the 15m trend not to be down and price
+    not to have broken the 15m swing low; mirror for a bearish credit.
+    """
+    if not trend15 or not trend15.get("ready") or not cfg.sell_require_trend15:
+        return None
+    bull = action in _BULL_SELL
+    want = 1 if bull else -1
+    d = int(trend15.get("direction") or 0)
+    struct = str(trend15.get("structure") or "RANGE")
+    if (d != 0 and d != want) or struct == ("DOWN" if bull else "UP"):
+        return (
+            f"15m trend opposes the {'bullish' if bull else 'bearish'} credit "
+            f"(15m dir {d:+d}, structure {struct})."
+        )
+    lo, hi = float(trend15.get("swing_low") or 0.0), float(trend15.get("swing_high") or 0.0)
+    if bull and lo > 0 and price < lo:
+        return f"price {price:.0f} broke the 15m swing low {lo:.0f} — support gone."
+    if not bull and hi > 0 and price > hi:
+        return f"price {price:.0f} broke the 15m swing high {hi:.0f} — resistance gone."
+    return None
+
+
 def evaluate_sell_signal(
     frame: pd.DataFrame,
     previous_day: pd.DataFrame,
@@ -81,8 +111,15 @@ def evaluate_sell_signal(
     cross: dict[str, Any] | None = None,
     *,
     params: StrategyParams | None = None,
+    trend15: dict[str, Any] | None = None,
 ) -> StrategySignal:
-    """Option selling from CPR levels + 1m EMA + volume only."""
+    """Option selling from CPR levels + 5m EMA + volume, gated by the 15m trend.
+
+    ``trend15`` is ``strategy_mode.summarize_trend15`` output (direction + swing
+    S/R from the 15-minute frame). When present and ``sell_require_trend15`` is
+    set, a credit whose direction the 15m trend opposes — or one being sold
+    straight through the 15m swing level — is dropped.
+    """
     _ = previous_day
     cfg = params or get_strategy_params()
     df = (
@@ -120,6 +157,7 @@ def evaluate_sell_signal(
         ema_fast=cfg.ema_fast_period,
         ema_slow=cfg.ema_slow_period,
         frame=df,
+        trend15=trend15,
     )
 
     if not action:
@@ -147,6 +185,16 @@ def evaluate_sell_signal(
             **base,
         )
 
+    blocked_15m = _trend15_block(action, price, trend15, cfg)
+    if blocked_15m:
+        return StrategySignal(
+            action="NO_TRADE",
+            reason=f"CPR sell skipped: {blocked_15m}",
+            confidence=0.0,
+            strategy_mode="wait",
+            **base,
+        )
+
     vol_ok, vol_stats = volume_confirms(
         df,
         min_ratio=cfg.credit_min_volume_ratio,
@@ -156,7 +204,7 @@ def evaluate_sell_signal(
         return StrategySignal(
             action="NO_TRADE",
             reason=(
-                f"CPR sell skipped: 1m volume {vol_stats.get('last_bar_volume', 0):,} "
+                f"CPR sell skipped: 5m volume {vol_stats.get('last_bar_volume', 0):,} "
                 f"({float(vol_stats.get('ratio') or 0):.2f}x avg) below gate."
             ),
             confidence=0.0,

@@ -15,15 +15,15 @@ class OptionsCprConfig:
     key: str
     lot_size: int
     strike_step: int
-    exchange: str = "NSE"              # SENSEX -> BSE
+    exchange: str = "NSE"  # SENSEX -> BSE
 
     # --- account / risk (Section 4, 8) ---
     capital: float = 140_000.0
-    max_loss_pct_of_utilized_capital: float = 5.0   # per-trade hard cap
-    risk_reward_ratio: float = 2.0                   # 1:2 fixed
-    max_daily_loss_pct: float = 5.0                  # of capital deployed that day
-    daily_loss_cap_rupees: float = 0.0              # >0 overrides the pct circuit breaker
-    max_consecutive_losses: int = 3                  # kill switch
+    max_loss_pct_of_utilized_capital: float = 5.0  # per-trade hard cap
+    risk_reward_ratio: float = 2.0  # 1:2 fixed
+    max_daily_loss_pct: float = 5.0  # of capital deployed that day
+    daily_loss_cap_rupees: float = 0.0  # >0 overrides the pct circuit breaker
+    max_consecutive_losses: int = 3  # kill switch
     max_trades_per_day: int = 3
 
     # --- indicators (Section 1) ---
@@ -31,26 +31,31 @@ class OptionsCprConfig:
     ema_slow: int = 21
     atr_period: int = 14
     volume_lookback: int = 10
-    warmup_bars: int = 21                            # 5m bars (prev-day tail) before signals are trusted
+    warmup_bars: int = 21  # 5m bars (prev-day tail) before signals are trusted
+
+    # --- 15m trend / swing S&R for the directional-sell lane ---
+    st_period: int = 10
+    st_multiplier: float = 3.0
+    trend15_swing_lookback: int = 6  # 15m bars bounding the swing high/low
 
     # --- CPR width class (Section 1, 2) ---
     cpr_narrow_threshold_pct: float = 0.3
     cpr_wide_threshold_pct: float = 0.5
-    wide_cpr_confirm_bars: int = 2                   # consecutive closes required on a WIDE-CPR day
-    whipsaw_lookback_bars: int = 3                   # skip if price crossed the CPR line and reversed within N bars
+    wide_cpr_confirm_bars: int = 2  # consecutive closes required on a WIDE-CPR day
+    whipsaw_lookback_bars: int = 3  # skip if price crossed the CPR line and reversed within N bars
 
     # --- stops / targets (Section 5, 6, 7) ---
-    initial_sl_premium_pct: float = 20.0            # fallback premium stop
-    trail_stage1_trigger_r: float = 1.0            # -> breakeven
-    trail_stage2_trigger_r: float = 1.5            # -> lock +0.5R
-    trail_stage3_trigger_r: float = 2.0            # -> switch to ATR / EMA trail
+    initial_sl_premium_pct: float = 20.0  # fallback premium stop
+    trail_stage1_trigger_r: float = 1.0  # -> breakeven
+    trail_stage2_trigger_r: float = 1.5  # -> lock +0.5R
+    trail_stage3_trigger_r: float = 2.0  # -> switch to ATR / EMA trail
     atr_multiplier: float = 1.5
-    partial_book_fraction: float = 0.5             # book this much of the position at target_1
+    partial_book_fraction: float = 0.5  # book this much of the position at target_1
 
     # --- strike / premium model ---
-    strike_selection: str = "ATM"                  # "ATM" | "OTM1"
-    iv: float = 0.13                               # annualised, for the BS premium proxy
-    assumed_days_to_expiry: float = 3.0            # fixed DTE for the proxy (weekly ~ 3, monthly ~ 8)
+    strike_selection: str = "ATM"  # "ATM" | "OTM1"
+    iv: float = 0.13  # annualised, for the BS premium proxy
+    assumed_days_to_expiry: float = 3.0  # fixed DTE for the proxy (weekly ~ 3, monthly ~ 8)
 
     # --- directional-sell lane (hedged credit spread) ---
     # Always long a far-OTM wing: converts the naked short into defined risk, so the
@@ -58,13 +63,15 @@ class OptionsCprConfig:
     # small account. The wing is sized to the widest distance whose max loss still
     # fits ``sell_margin_budget_rupees``; a cheaper (further-OTM) wing keeps more
     # credit but widens max loss, so there is a sweet spot, not "as far as possible".
-    sell_short_delta: float = 0.30                 # target delta of the short leg (near-OTM)
-    sell_wing_pct: float = 0.04                    # desired long-wing distance from spot, fraction
-    sell_margin_budget_rupees: float = 45000.0     # cap on defined-risk max loss (~ margin) per trade
-    sell_credit_capture_target: float = 0.50       # exit when this fraction of the entry credit is decayed
-    sell_stop_credit_mult: float = 1.6            # exit when mark-to-close debit >= this x entry credit
-    sell_min_credit_pts: float = 5.0             # skip if the modelled net credit is thinner than this
-    sell_naked: bool = False                     # True = single short leg, no wing (not deployable at small capital)
+    sell_short_delta: float = 0.30  # target delta of the short leg (near-OTM)
+    sell_wing_pct: float = 0.04  # desired long-wing distance from spot, fraction
+    sell_margin_budget_rupees: float = 45000.0  # cap on defined-risk max loss (~ margin) per trade
+    sell_credit_capture_target: float = (
+        0.50  # exit when this fraction of the entry credit is decayed
+    )
+    sell_stop_credit_mult: float = 1.6  # exit when mark-to-close debit >= this x entry credit
+    sell_min_credit_pts: float = 5.0  # skip if the modelled net credit is thinner than this
+    sell_naked: bool = False  # True = single short leg, no wing (not deployable at small capital)
 
     # --- session, IST (Section 2) ---
     market_open: time = time(9, 15)

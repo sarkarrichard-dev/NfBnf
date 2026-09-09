@@ -54,11 +54,7 @@ def instruments() -> list[str]:
     from index_ai.instruments import index_paused
 
     raw = os.getenv("OPTIONS_CPR_PAPER_INSTRUMENTS", "NIFTY,BANKNIFTY,SENSEX")
-    return [
-        x.strip().upper()
-        for x in raw.split(",")
-        if x.strip() and not index_paused(x.strip())
-    ]
+    return [x.strip().upper() for x in raw.split(",") if x.strip() and not index_paused(x.strip())]
 
 
 def _cfg(key: str) -> OptionsCprConfig:
@@ -621,6 +617,7 @@ def _spread_quote(book, short_k, long_k, is_put, cfg, *, spot, ts, open_ts, mode
 
 def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     """Directional wide-spread (or naked, per config) selling — mirrors sell.replay_sell_session."""
+    from index_ai.strategies.options_cpr.engine import trend15_read
     from index_ai.strategies.options_cpr.sell import _build_spread
 
     cfg = _cfg(key)
@@ -636,7 +633,9 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
         return {"instrument": key, "lane": "sell", "event": "need_two_sessions"}
     today, prev = days[-1], days[-2]
     today5, prev5 = d5[today], d5[prev]
-    d15_dir = _dir_15m(d15[prev], d15[today], cfg)
+    t15 = trend15_read(d15[prev], d15[today], cfg)  # 15m trend + swing S&R
+    d15_dir = int(t15["direction"])  # full consensus — entry gate
+    d15_ema = int(t15["ema_dir"])  # looser EMA-only — exit trend-flip
     cpr = cpr_context(prev5, cfg)
     df = add_indicators(
         pd.concat([prev5.tail(cfg.warmup_bars + 5), today5], ignore_index=True), cfg
@@ -671,7 +670,7 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
             mode="mark",
         )
         broke = (spot < cpr.tc) if is_put else (spot > cpr.bc)
-        flip = d15_dir != 0 and d15_dir != (1 if is_put else -1)
+        flip = d15_ema != 0 and d15_ema != (1 if is_put else -1)
         reason = None
         if debit >= cfg.sell_stop_credit_mult * pos["entry_credit"]:
             reason = "spread_stop"
@@ -761,7 +760,13 @@ def tick_sell(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, 
         return _log_decision(key, lane_tag, out)
     bullish = side == "CE"
     if d15_dir != 0 and d15_dir != (1 if bullish else -1):
-        out["reason"] = "15m EMA not aligned"
+        out["reason"] = "15m trend opposes the credit direction"
+        return _log_decision(key, lane_tag, out)
+    if bullish and t15["swing_low"] > 0 and spot < t15["swing_low"]:
+        out["reason"] = f"price {spot:.0f} below the 15m swing low {t15['swing_low']:.0f}"
+        return _log_decision(key, lane_tag, out)
+    if not bullish and t15["swing_high"] > 0 and spot > t15["swing_high"]:
+        out["reason"] = f"price {spot:.0f} above the 15m swing high {t15['swing_high']:.0f}"
         return _log_decision(key, lane_tag, out)
     is_put = bullish
     structure = (

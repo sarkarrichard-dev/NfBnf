@@ -9,14 +9,62 @@ import pandas as pd
 from index_ai.strategies.bar_volume import volume_confirms
 from index_ai.strategies.candlestick_sr import intraday_candle_trend
 from index_ai.strategies.cpr_regime import CprRegime
-from index_ai.strategies.ema_cross import credit_action_for_cross
-from index_ai.strategies.strategy_params import get_strategy_params
+from index_ai.strategies.ema_cross import analyze_ema_cross, credit_action_for_cross
+from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
 from index_ai.strategies.supertrend import supertrend_snapshot
+
+
+def summarize_trend15(frame15: pd.DataFrame | None, params: StrategyParams) -> dict[str, Any]:
+    """15-minute trend + swing S/R context for the option-sell lanes.
+
+    ``direction`` is decisive (+1 / -1) only when the 15m EMA alignment and the
+    15m Supertrend agree, and the candle structure does not contradict it;
+    otherwise 0. ``swing_high`` / ``swing_low`` bound the last N closed 15m bars —
+    the levels a credit should not be sold straight through.
+    """
+    empty = {
+        "direction": 0,
+        "structure": "RANGE",
+        "swing_high": 0.0,
+        "swing_low": 0.0,
+        "ready": False,
+    }
+    if frame15 is None or len(frame15) < params.ema_slow_period + 2:
+        return empty
+    cross = analyze_ema_cross(frame15, fast=params.ema_fast_period, slow=params.ema_slow_period)
+    st = supertrend_snapshot(
+        frame15, period=params.supertrend_period, multiplier=params.supertrend_multiplier
+    )
+    aligned = str(cross.get("aligned") or "")
+    ema_dir = 1 if aligned == "bull" else -1 if aligned == "bear" else 0
+    st_dir = int(st.get("direction") or 0)
+    structure = intraday_candle_trend(frame15, lookback=15)
+    direction = ema_dir if ema_dir != 0 and ema_dir == st_dir else 0
+    if direction == 1 and structure == "DOWN":
+        direction = 0
+    elif direction == -1 and structure == "UP":
+        direction = 0
+    # swing S/R from *today's* 15m bars — the levels a live move just broke; falls
+    # back to the whole frame only when today is still too thin.
+    n_swing = max(2, params.sell_trend15_swing_lookback)
+    today = frame15
+    if "datetime" in frame15.columns:
+        d = pd.to_datetime(frame15["datetime"]).dt.date
+        today = frame15[d == d.iloc[-1]]
+    swing_src = today if len(today) >= 2 else frame15
+    tail = swing_src.tail(n_swing)
+    return {
+        "direction": direction,
+        "structure": structure,
+        "swing_high": float(tail["high"].astype(float).max()),
+        "swing_low": float(tail["low"].astype(float).min()),
+        "ready": True,
+    }
 
 
 def _volume_wait_reason(stats: dict[str, Any], *, min_ratio: float) -> str:
     return (
-        f"AUTO: 1m bar volume {stats.get('last_bar_volume', 0):,} is "
+        f"AUTO: 5m bar volume {stats.get('last_bar_volume', 0):,} is "
         f"{float(stats.get('ratio') or 0):.2f}× recent avg "
         f"(need ≥{min_ratio:.2f}×) — wait for participation."
     )
@@ -29,11 +77,14 @@ def pick_auto_credit(
     ema_fast: int,
     ema_slow: int,
     frame: pd.DataFrame | None = None,
+    trend15: dict[str, Any] | None = None,
 ) -> tuple[str | None, str, str]:
     """
     Choose hedged credit for AUTO (intelligent switching).
 
-    Uses CPR regime + 1m EMA cross/alignment + bar volume vs recent average.
+    Uses CPR regime + 5m EMA cross/alignment + 5m bar volume vs recent average.
+    ``trend15`` (from ``summarize_trend15``) is the 15m trend read — when given,
+    the trend-override path also requires it to agree.
     Returns (action, reason, strategy_mode).
     """
     params = get_strategy_params()
@@ -45,8 +96,9 @@ def pick_auto_credit(
     # The intraday tape, independent of the day-old CPR bias. Used to VETO a
     # credit that fights the way the day is actually moving — CPR read
     # TRENDING_BULL off a prior-day pivot while price bled down all session, and
-    # a flickering 1m EMA let a bull-put spread through (BANKNIFTY, 2026-09-08,
+    # a flickering EMA let a bull-put spread through (BANKNIFTY, 2026-09-08,
     # −₹580). A bearish credit needs the tape not to be UP, and vice versa.
+    # ``frame`` is the 5m setup frame, so lookback=15 is 75 min of structure.
     _st = (
         supertrend_snapshot(
             frame, period=params.supertrend_period, multiplier=params.supertrend_multiplier
@@ -66,12 +118,12 @@ def pick_auto_credit(
         the structure alone rather than waiting for Supertrend to also agree."""
         if action == "SELL_BULL_PUT_SPREAD" and _tape == "DOWN":
             return (
-                "AUTO: bull-put credit blocked — 1m structure is DOWN; "
+                "AUTO: bull-put credit blocked — 5m structure is DOWN; "
                 "the day is selling off, don't sell puts into it."
             )
         if action == "SELL_BEAR_CALL_SPREAD" and _tape == "UP":
             return (
-                "AUTO: bear-call credit blocked — 1m structure is UP; "
+                "AUTO: bear-call credit blocked — 5m structure is UP; "
                 "the day is rallying, don't sell calls into it."
             )
         return None
@@ -91,7 +143,7 @@ def pick_auto_credit(
             vol_note = ""
             if stats.get("ready"):
                 vol_note = (
-                    f" 1m vol {stats['last_bar_volume']:,} "
+                    f" 5m vol {stats['last_bar_volume']:,} "
                     f"({stats['ratio']:.2f}× avg {stats['avg_bar_volume']:,})."
                 )
             return action, f"{reason}{vol_note}", mode
@@ -123,7 +175,7 @@ def pick_auto_credit(
         label = "bullish" if cross_action == "SELL_BULL_PUT_SPREAD" else "bearish"
         return _gate_volume(
             cross_action,
-            (f"AUTO [EMA cross]: {ema_fast}/{ema_slow} {label} cross on 1m spot. {regime.note}"),
+            (f"AUTO [EMA cross]: {ema_fast}/{ema_slow} {label} cross on 5m spot. {regime.note}"),
             "ema_cross",
         )
 
@@ -131,7 +183,7 @@ def pick_auto_credit(
         return _gate_volume(
             "SELL_BULL_PUT_SPREAD",
             (
-                f"AUTO [trend]: Bullish CPR + EMA {ema_fast}/{ema_slow} aligned on 1m — "
+                f"AUTO [trend]: Bullish CPR + EMA {ema_fast}/{ema_slow} aligned on 5m — "
                 "bull put spread."
             ),
             "cpr_trend",
@@ -140,25 +192,26 @@ def pick_auto_credit(
         return _gate_volume(
             "SELL_BEAR_CALL_SPREAD",
             (
-                f"AUTO [trend]: Bearish CPR + EMA {ema_fast}/{ema_slow} aligned on 1m — "
+                f"AUTO [trend]: Bearish CPR + EMA {ema_fast}/{ema_slow} aligned on 5m — "
                 "bear call spread."
             ),
             "cpr_trend",
         )
 
     # Trend override — a strong, confirmed intraday trend overrides a conflicting
-    # or flat daily CPR bias. Needs all three of EMA alignment + Supertrend +
-    # candle structure to agree (plus the volume gate below). It trades the
-    # confirmed break, never a range: a merely-flat SIDEWAYS day produces nothing.
+    # or flat daily CPR bias. Needs 5m EMA alignment + Supertrend + candle
+    # structure to agree, and — when a 15m read is supplied — the 15m trend not to
+    # oppose it. Trades the confirmed break, never a range.
     st_dir, trend = _st_dir, _tape
-    strong_down = ema_bear and st_dir == -1 and trend == "DOWN"
-    strong_up = ema_bull and st_dir == 1 and trend == "UP"
+    d15 = int((trend15 or {}).get("direction") or 0)
+    strong_down = ema_bear and st_dir == -1 and trend == "DOWN" and d15 <= 0
+    strong_up = ema_bull and st_dir == 1 and trend == "UP" and d15 >= 0
     if params.sell_allow_trend_override:
         if strong_down and bias in ("TRENDING_BULL", "SIDEWAYS"):
             return _gate_volume(
                 "SELL_BEAR_CALL_SPREAD",
                 (
-                    f"AUTO [trend-override]: CPR {bias.lower()} but 1m EMA bear + "
+                    f"AUTO [trend-override]: CPR {bias.lower()} but 5m EMA bear + "
                     "Supertrend down + candles DOWN — confirmed break, bear call spread."
                 ),
                 "cpr_trend_override",
@@ -167,7 +220,7 @@ def pick_auto_credit(
             return _gate_volume(
                 "SELL_BULL_PUT_SPREAD",
                 (
-                    f"AUTO [trend-override]: CPR {bias.lower()} but 1m EMA bull + "
+                    f"AUTO [trend-override]: CPR {bias.lower()} but 5m EMA bull + "
                     "Supertrend up + candles UP — confirmed break, bull put spread."
                 ),
                 "cpr_trend_override",

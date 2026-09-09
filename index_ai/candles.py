@@ -2,6 +2,50 @@ from __future__ import annotations
 
 import pandas as pd
 
+_RULE_MIN = {"1min": 1, "3min": 3, "5min": 5, "15min": 15, "25min": 25, "30min": 30, "60min": 60}
+
+
+def resample_ohlcv(frame: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Downsample a naive-IST OHLCV frame to ``rule`` (e.g. ``"5min"``, ``"15min"``),
+    grouped by session date so a bar never straddles the overnight gap.
+
+    Returns a fresh frame with the same columns; ``datetime`` is the bar-open
+    timestamp. The still-forming final bin is dropped — a live feed is polled to
+    ``now``, so its last group holds only a fraction of a bar and would flicker
+    the EMA / breakout / volume reads that depend on a *closed* bar. If the source
+    is already at or coarser than ``rule`` it is returned unchanged.
+    """
+    if frame is None or getattr(frame, "empty", True):
+        return frame
+    df = frame.copy()
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    df = df.sort_values("datetime").reset_index(drop=True)
+    target = _RULE_MIN.get(rule, 5)
+    src_min = 1.0
+    if len(df) >= 2:
+        gaps = df["datetime"].diff().dt.total_seconds().dropna()
+        src_min = (gaps.mode().iloc[0] if len(gaps.mode()) else gaps.median()) / 60.0
+        if src_min >= target:
+            return df
+    # a bin [t, t+rule) is closed once the source covers up to t+rule, i.e. the
+    # last source bar opens at or after t+rule-src_interval
+    covered_to = df["datetime"].iloc[-1] + pd.Timedelta(minutes=src_min)
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last"}
+    if "volume" in df.columns:
+        agg["volume"] = "sum"
+    parts = [
+        g.set_index("datetime")
+        .resample(rule, origin="start_day", label="left", closed="left")
+        .agg(agg)
+        .dropna(subset=["open", "high", "low", "close"])
+        .reset_index()
+        for _, g in df.groupby(df["datetime"].dt.date, sort=True)
+    ]
+    out = pd.concat(parts, ignore_index=True) if parts else df.iloc[0:0]
+    if len(out) and out["datetime"].iloc[-1] + pd.Timedelta(rule) > covered_to:
+        out = out.iloc[:-1]
+    return out[[c for c in df.columns if c in out.columns]]
+
 
 def latest_two_sessions(candles: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if candles.empty:
@@ -52,3 +96,38 @@ def prepare_intraday_signal_frames(
             "Try again after more bars form, or download intraday history first."
         )
     return rolling.reset_index(drop=True), previous
+
+
+if __name__ == "__main__":  # ponytail self-check
+    _n = 30
+    _one = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-01-02 09:15", periods=_n, freq="1min"),
+            "open": range(_n),
+            "high": [x + 2 for x in range(_n)],
+            "low": [x - 2 for x in range(_n)],
+            "close": [x + 1 for x in range(_n)],
+            "volume": [100.0] * _n,
+        }
+    )
+    _five = resample_ohlcv(_one, "5min")
+    assert len(_five) == 6, len(_five)
+    assert _five.iloc[0]["open"] == 0 and _five.iloc[0]["high"] == 6 and _five.iloc[0]["close"] == 5
+    assert _five.iloc[0]["volume"] == 500.0
+    # already coarse -> passthrough (same object rows)
+    assert len(resample_ohlcv(_five, "5min")) == 6
+    assert len(resample_ohlcv(_one, "15min")) == 2
+    # a still-forming final 5m bin is dropped: 33 1m bars end mid-bin
+    _n2 = 33
+    _one2 = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-01-02 09:15", periods=_n2, freq="1min"),
+            "open": range(_n2),
+            "high": [x + 2 for x in range(_n2)],
+            "low": [x - 2 for x in range(_n2)],
+            "close": [x + 1 for x in range(_n2)],
+            "volume": [100.0] * _n2,
+        }
+    )
+    assert len(resample_ohlcv(_one2, "5min")) == 6, len(resample_ohlcv(_one2, "5min"))
+    print("candles.py self-check ok")
