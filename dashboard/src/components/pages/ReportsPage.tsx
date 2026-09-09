@@ -96,6 +96,9 @@ export function ReportsPage({
       peak = Math.max(peak, equity)
       maxDd = Math.min(maxDd, equity - peak)
     }
+    const caps = scoped
+      .map((t) => Number(t.capital_deployed))
+      .filter((c) => Number.isFinite(c) && c > 0)
     return {
       net: grossWin - grossLoss,
       count: pnls.length,
@@ -104,6 +107,8 @@ export function ReportsPage({
       avgLoss: losses.length ? -grossLoss / losses.length : 0,
       pf: grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? Infinity : 0,
       maxDd,
+      avgCapital: caps.length ? caps.reduce((s, c) => s + c, 0) / caps.length : null,
+      roc: caps.length ? (grossWin - grossLoss) / caps.reduce((s, c) => s + c, 0) : null,
     }
   }, [scoped])
 
@@ -168,7 +173,7 @@ export function ReportsPage({
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
         <Tile label="Realised P&L" value={money(m.net)} cls={pnlClass(m.net)} />
         <Tile label="Trades" value={String(m.count)} />
         <Tile label="Win rate" value={pctRate(m.winRate)} />
@@ -178,6 +183,19 @@ export function ReportsPage({
           label="Profit factor"
           value={m.pf === Infinity ? '∞' : m.pf ? m.pf.toFixed(2) : '—'}
           cls={m.pf >= 1 ? 'text-[var(--up)]' : 'text-[var(--down)]'}
+        />
+        <Tile
+          label="Avg capital / trade"
+          value={
+            m.avgCapital != null
+              ? `₹${Math.round(m.avgCapital).toLocaleString('en-IN')}`
+              : '—'
+          }
+        />
+        <Tile
+          label="Return on capital"
+          value={m.roc != null ? `${(m.roc * 100).toFixed(1)}%` : '—'}
+          cls={(m.roc ?? 0) >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'}
         />
       </div>
 

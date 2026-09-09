@@ -589,6 +589,8 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
                 "is_live": ui.get("is_live"),
                 "expiry": ui.get("expiry"),
                 "broker_order_id": leg.get("broker_order_id"),
+                "capital_deployed": ui.get("capital_deployed") if idx == 0 else None,
+                "capital_kind": ui.get("capital_kind") if idx == 0 else None,
                 "broker_status_line": ui.get("broker_status_line") if idx == 0 else None,
                 "mtm_updated_at_ist": ui.get("mtm_updated_at_ist") if is_open else None,
                 "entry_session_ok": ui.get("entry_session_ok"),
@@ -659,6 +661,9 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
     is_open = pnl is None and (not is_live_trade(trade) or is_broker_filled_open(trade))
     _, effective_qty = resolve_trade_lot_size(trade)
     qty = effective_qty or int(option.get("quantity") or 1)
+    from index_ai.capital_required import capital_deployed_rupees
+
+    _cap_deployed, _cap_kind = capital_deployed_rupees(option, qty)
     entry_price = signal.get("price")
     strike = option.get("strike")
     entry_ltp = (
@@ -795,6 +800,8 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
         "entry_strike": strike,
         "entry_option_ltp": entry_ltp,
         "quantity": qty,
+        "capital_deployed": _cap_deployed,
+        "capital_kind": _cap_kind,
         "configured_lot_size": leg.get("configured_lot_size"),
         "lot_label": leg.get("lot_label"),
         "segment": segment,
