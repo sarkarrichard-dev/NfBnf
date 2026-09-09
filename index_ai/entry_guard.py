@@ -230,7 +230,9 @@ if __name__ == "__main__":  # self-check (pure logic — no journal read)
     )[0]
     assert not regime_blocks_lane(None, "buy")[0]
 
-    # viability sell gate: BANKNIFTY hedged spread on a wide book is NOT_VIABLE
+    # viability sell gate: BANKNIFTY hedged spread on a wide book is NOT_VIABLE;
+    # NIFTY (measured, tight book) is VIABLE; an unmeasured index never blocks
+    os.environ["SLIPPAGE_HALF_SPREAD_POINTS_NIFTY"] = "0.20"
     os.environ["SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY"] = "4.06"
     assert _viable_sell_blocks("BANKNIFTY")[0]
     assert not _viable_sell_blocks("NIFTY")[0]
@@ -238,6 +240,7 @@ if __name__ == "__main__":  # self-check (pure logic — no journal read)
     assert not _viable_sell_blocks("BANKNIFTY")[0]
     del os.environ["OPTIONS_REQUIRE_VIABLE"]
     del os.environ["SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY"]
+    del os.environ["SLIPPAGE_HALF_SPREAD_POINTS_NIFTY"]
 
     os.environ["ENFORCE_REGIME_GATE"] = "false"
     assert not regime_blocks_lane(

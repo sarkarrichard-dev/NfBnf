@@ -41,7 +41,11 @@ UNMEASURED = "UNMEASURED"
 VIABLE_MULTIPLE = 1.30
 MARGINAL_MULTIPLE = 1.00
 
-# per-trade gross edge observed in backtest (rupees). Update when re-measured.
+# per-trade gross edge observed in backtest (rupees), last measured 2026-08-29.
+# NOTE: the friction floor below is live-measured (spread_calib), but this side is
+# a fixed constant. Now that entry_guard uses this verdict to gate the LIVE sell
+# lane, a spread widening can flip an index to NOT_VIABLE against a stale edge
+# number — re-measure from the SQLite journal when live volume allows.
 OBSERVED_GROSS_PER_TRADE: dict[tuple[str, str], float] = {
     ("NIFTY", "sell"): 211.0,
     ("BANKNIFTY", "sell"): 229.0,
@@ -66,17 +70,21 @@ class Viability:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "instrument": self.instrument, "lane": self.lane, "legs": self.legs,
+            "instrument": self.instrument,
+            "lane": self.lane,
+            "legs": self.legs,
             "friction_floor_rupees": round(self.friction_floor_rupees, 2),
             "gross_per_trade_rupees": self.gross_per_trade_rupees,
             "edge_multiple": self.edge_multiple,
-            "verdict": self.verdict, "spread_source": self.spread_source,
+            "verdict": self.verdict,
+            "spread_source": self.spread_source,
             "reason": self.reason,
         }
 
 
-def friction_floor(cfg: OptionsCprConfig, *, lane: str = "sell",
-                   typical_premium: float | None = None) -> tuple[float, int, str]:
+def friction_floor(
+    cfg: OptionsCprConfig, *, lane: str = "sell", typical_premium: float | None = None
+) -> tuple[float, int, str]:
     """(round-trip cost in rupees, leg count, spread source) for one lot."""
     from index_ai.market_context.spread_calib import bucket_half_spreads, calibrated_half_spread
 
@@ -86,51 +94,95 @@ def friction_floor(cfg: OptionsCprConfig, *, lane: str = "sell",
     prem = typical_premium if typical_premium is not None else max(cfg.strike_step * 1.2, 60.0)
 
     if lane == "buy":
-        charges = (leg_charge_rupees(prem, lot, "BUY", exchange=cfg.exchange)
-                   + leg_charge_rupees(prem, lot, "SELL", exchange=cfg.exchange))
+        charges = leg_charge_rupees(prem, lot, "BUY", exchange=cfg.exchange) + leg_charge_rupees(
+            prem, lot, "SELL", exchange=cfg.exchange
+        )
         return charges + near_hs * lot * 2, 1, src
 
     legs = 1 if cfg.sell_naked else 2
-    charges = (leg_charge_rupees(prem, lot, "SELL", exchange=cfg.exchange)
-               + leg_charge_rupees(prem, lot, "BUY", exchange=cfg.exchange))
+    charges = leg_charge_rupees(prem, lot, "SELL", exchange=cfg.exchange) + leg_charge_rupees(
+        prem, lot, "BUY", exchange=cfg.exchange
+    )
     slip = near_hs * lot * 2
     if legs == 2:
         wing_prem = max(prem * 0.05, 2.0)
-        charges += (leg_charge_rupees(wing_prem, lot, "BUY", exchange=cfg.exchange)
-                    + leg_charge_rupees(wing_prem, lot, "SELL", exchange=cfg.exchange))
+        charges += leg_charge_rupees(
+            wing_prem, lot, "BUY", exchange=cfg.exchange
+        ) + leg_charge_rupees(wing_prem, lot, "SELL", exchange=cfg.exchange)
         slip += wing_hs * lot * 2
     return charges + slip, legs * 2, src
 
 
-def viability(instrument: str, lane: str = "sell",
-              *, cfg: OptionsCprConfig | None = None,
-              gross_per_trade: float | None = None) -> Viability:
+def viability(
+    instrument: str,
+    lane: str = "sell",
+    *,
+    cfg: OptionsCprConfig | None = None,
+    gross_per_trade: float | None = None,
+) -> Viability:
     c = cfg or config_for(instrument)
     key = c.key
     floor, legs, src = friction_floor(c, lane=lane)
-    gross = (gross_per_trade if gross_per_trade is not None
-             else OBSERVED_GROSS_PER_TRADE.get((key, lane)))
+    gross = (
+        gross_per_trade
+        if gross_per_trade is not None
+        else OBSERVED_GROSS_PER_TRADE.get((key, lane))
+    )
 
     if "default" in src:
-        return Viability(key, lane, legs, floor, gross, None, UNMEASURED, src,
-                         f"{key} spread is a default, not an observation — cost is a guess "
-                         f"until the live book is sampled")
+        return Viability(
+            key,
+            lane,
+            legs,
+            floor,
+            gross,
+            None,
+            UNMEASURED,
+            src,
+            f"{key} spread is a default, not an observation — cost is a guess "
+            f"until the live book is sampled",
+        )
     if gross is None:
-        return Viability(key, lane, legs, floor, None, None, UNMEASURED, src,
-                         "no measured gross edge for this lane yet")
+        return Viability(
+            key,
+            lane,
+            legs,
+            floor,
+            None,
+            None,
+            UNMEASURED,
+            src,
+            "no measured gross edge for this lane yet",
+        )
     if gross <= 0:
-        return Viability(key, lane, legs, floor, gross, 0.0, NOT_VIABLE, src,
-                         f"gross edge is negative (Rs {gross:.0f}/trade) — no cost level saves it")
+        return Viability(
+            key,
+            lane,
+            legs,
+            floor,
+            gross,
+            0.0,
+            NOT_VIABLE,
+            src,
+            f"gross edge is negative (Rs {gross:.0f}/trade) — no cost level saves it",
+        )
 
     mult = gross / max(floor, 1e-9)
     if mult >= VIABLE_MULTIPLE:
         verdict, why = VIABLE, f"gross Rs {gross:.0f}/trade covers Rs {floor:.0f} floor {mult:.2f}x"
     elif mult >= MARGINAL_MULTIPLE:
-        verdict, why = MARGINAL, f"gross Rs {gross:.0f}/trade barely clears Rs {floor:.0f} floor ({mult:.2f}x)"
+        verdict, why = (
+            MARGINAL,
+            f"gross Rs {gross:.0f}/trade barely clears Rs {floor:.0f} floor ({mult:.2f}x)",
+        )
     else:
-        verdict, why = NOT_VIABLE, (
-            f"gross Rs {gross:.0f}/trade cannot cover Rs {floor:.0f} floor "
-            f"({legs} orders on a {'wide' if floor > 400 else 'normal'} book)")
+        verdict, why = (
+            NOT_VIABLE,
+            (
+                f"gross Rs {gross:.0f}/trade cannot cover Rs {floor:.0f} floor "
+                f"({legs} orders on a {'wide' if floor > 400 else 'normal'} book)"
+            ),
+        )
     return Viability(key, lane, legs, floor, gross, round(mult, 3), verdict, src, why)
 
 
@@ -157,6 +209,7 @@ if __name__ == "__main__":  # ponytail self-check
     assert viability("NIFTY", "buy").verdict == NOT_VIABLE
     # naked halves the order count
     from index_ai.strategies.options_cpr.config import with_overrides
+
     naked = with_overrides(config_for("BANKNIFTY"), sell_naked=True)
     assert friction_floor(naked, lane="sell")[1] == 2
     assert friction_floor(naked, lane="sell")[0] < b.friction_floor_rupees

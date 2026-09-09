@@ -205,8 +205,15 @@ def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch):
 def test_entry_guard_viability_blocks_wide_book_sell(monkeypatch):
     from index_ai.entry_guard import _viable_sell_blocks
 
+    # both measured: NIFTY clears its floor (VIABLE), BANKNIFTY's wide book doesn't
+    monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_NIFTY", "0.20")
     monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY", "4.06")
-    assert _viable_sell_blocks("BANKNIFTY")[0] is True
-    assert _viable_sell_blocks("NIFTY")[0] is False  # NIFTY sell clears its floor
+    blocked, why = _viable_sell_blocks("BANKNIFTY")
+    assert blocked is True and "not viable" in why
+    assert _viable_sell_blocks("NIFTY")[0] is False  # measured VIABLE — not blocked
+    # an UNMEASURED verdict never blocks
+    monkeypatch.delenv("SLIPPAGE_HALF_SPREAD_POINTS_SENSEX", raising=False)
+    assert _viable_sell_blocks("SENSEX")[0] is False
+    # and the whole gate is opt-out
     monkeypatch.setenv("OPTIONS_REQUIRE_VIABLE", "false")
     assert _viable_sell_blocks("BANKNIFTY")[0] is False

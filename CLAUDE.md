@@ -43,8 +43,10 @@ SENSEX — all three, never just one.
   Use `asyncio.to_thread`. This has bitten twice.
 - Read-modify-write on a shared file or the lots setting needs a lock, and the
   client should send an absolute value, not a delta.
-- Paper lanes default ON (`ENABLE_OPTIONS_CPR_PAPER` / `ENABLE_FUTURES_PAPER`);
-  paper cannot send an order regardless.
+- The futures paper lanes default ON (`ENABLE_FUTURES_PAPER` /
+  `ENABLE_STOCK_FUTURES_PAPER`); paper cannot send an order regardless. The index
+  options paper/live lane is the legacy `planner` → `executor` path (see below);
+  the old `options_cpr` paper lane was retired — `options_cpr/` is backtest-only.
 
 ## Strategy state (don't relitigate)
 
@@ -56,9 +58,22 @@ directional edge at all. Directional selling has a small real gross edge that
 trustworthy (the option backtest uses a Black-Scholes proxy — relative
 comparisons only, never absolute rupees).
 
-Lanes are gated by `options_cpr/viability.py`: a structure that can't clear its
-measured cost floor is blocked. BANKNIFTY's option book is ~20× NIFTY's, so
-4-leg structures never work there no matter the tuning.
+The credit-sell lane is gated by `options_cpr/viability.py` (via
+`entry_guard._viable_sell_blocks`, env `OPTIONS_REQUIRE_VIABLE`, default on): an
+index whose measured gross edge can't clear its measured cost floor is blocked.
+BANKNIFTY's option book is ~20× NIFTY's, so 4-leg structures never work there no
+matter the tuning.
+
+## Which Indian-options engine
+
+The **legacy path** — `scanner._scan_index` → `planner.plan_instrument` →
+`strategy_router` / `sell_strategy` / `strategy_mode` → `plan_builder` →
+`executor.execute_plan` → `dhan_orders` → `learning` SQLite — is the **one**
+Indian-options engine: it places live orders and feeds Trade History / Reports /
+`brain`. `index_ai/strategies/options_cpr/` is **backtest-only tooling** now
+(`scripts/backtest_options_cpr.py`); its paper lane was retired 2026-09-09. Any
+change to how index options trade goes in the legacy modules. See
+`memory/indian-options-engine.md`.
 
 ## Reference
 

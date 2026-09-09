@@ -1541,28 +1541,6 @@
         }
       }
     },
-    "/api/options-cpr/status": {
-      "get": {
-        "operationId": "getOptionsCprPaperStatus",
-        "summary": "CPR options paper lane status",
-        "tags": [
-          "Market context"
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/outcome": {
       "post": {
         "operationId": "recordOutcome",
