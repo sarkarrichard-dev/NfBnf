@@ -4,17 +4,28 @@ import pandas as pd
 from index_ai.strategies.options_cpr import paper
 from index_ai.strategies.options_cpr.backtest import replay_session
 from index_ai.strategies.options_cpr.config import config_for, with_overrides
-from index_ai.strategies.options_cpr.engine import add_indicators, cpr_context, evaluate_entry
+from index_ai.strategies.options_cpr.engine import (
+    add_indicators,
+    cpr_context,
+    evaluate_entry,
+    trend15_read,
+)
 from index_ai.strategies.options_cpr.premium import bs_price_delta, select_strike
 
 
 def _day(closes, start, freq="5min", vol=1000.0):
     c = np.asarray(closes, dtype=float)
     v = np.full(len(c), vol)
-    return pd.DataFrame({
-        "datetime": pd.date_range(start, periods=len(c), freq=freq),
-        "open": c, "high": c + 2, "low": c - 2, "close": c, "volume": v,
-    })
+    return pd.DataFrame(
+        {
+            "datetime": pd.date_range(start, periods=len(c), freq=freq),
+            "open": c,
+            "high": c + 2,
+            "low": c - 2,
+            "close": c,
+            "volume": v,
+        }
+    )
 
 
 def test_bs_atm_delta_and_decay():
@@ -42,6 +53,26 @@ def test_entry_needs_breakout_ema_and_volume():
     df.loc[df.index[-1], "volume"] = 400.0
     df = add_indicators(df, cfg)
     assert evaluate_entry(df, len(df) - 1, cpr, cfg)[0] is None
+
+
+def test_trend15_read_agreement_and_swing():
+    cfg = config_for("NIFTY")
+    n = 40
+    up = _day(list(range(24000, 24000 + n)), "2026-01-02 09:15", freq="15min")
+    t = trend15_read(up.head(0).reindex(columns=up.columns), up, cfg)
+    assert t["direction"] == 1.0
+    assert t["swing_low"] < t["swing_high"]
+    # a flat, choppy series -> no decisive direction
+    flat = _day([24000] * n, "2026-01-02 09:15", freq="15min")
+    assert trend15_read(flat.head(0).reindex(columns=flat.columns), flat, cfg)["direction"] == 0.0
+    # at_ts trims to bars closed by that time
+    early = trend15_read(
+        up.head(0).reindex(columns=up.columns),
+        up,
+        cfg,
+        at_ts=up["datetime"].iloc[5],
+    )
+    assert early["direction"] == 0.0  # too few closed bars
 
 
 def test_whipsaw_filter_blocks_churn():
@@ -81,13 +112,25 @@ def test_close_journals_and_status(tmp_path, monkeypatch):
     ctr = {"date": "2026-01-02", "trades": 1, "consec_losses": 0, "daily_pnl": 0.0, "kill": False}
     state["NIFTY"]["day"] = ctr
     pos = {
-        "side": "CE", "is_call": True, "strike": 24000.0, "entry_spot": 24010.0,
-        "entry_premium": 120.0, "entry_time": "t0", "sl_premium": 96.0, "r_unit": 24.0,
-        "target_premium": 168.0, "qty_open": cfg.lot_size, "stage": 0,
-        "peak_premium": 120.0, "peak_spot": 24010.0, "partial_booked": False,
+        "side": "CE",
+        "is_call": True,
+        "strike": 24000.0,
+        "entry_spot": 24010.0,
+        "entry_premium": 120.0,
+        "entry_time": "t0",
+        "sl_premium": 96.0,
+        "r_unit": 24.0,
+        "target_premium": 168.0,
+        "qty_open": cfg.lot_size,
+        "stage": 0,
+        "peak_premium": 120.0,
+        "peak_spot": 24010.0,
+        "partial_booked": False,
     }
     tr = paper._close(pos, 168.0, "target", 24120.0, cfg, ctr, state)
-    assert tr["side"] == "CE" and tr["net_rupees"] == round(48.0 * cfg.lot_size - tr["friction_rupees"], 2)
+    assert tr["side"] == "CE" and tr["net_rupees"] == round(
+        48.0 * cfg.lot_size - tr["friction_rupees"], 2
+    )
     assert (tmp_path / "j.jsonl").read_text().strip()
     st = paper.options_cpr_paper_status()
     assert st["all_time"]["closed"] == 1
@@ -136,8 +179,15 @@ def test_live_chain_quotes_and_real_charges(monkeypatch):
     from index_ai.strategies.options_cpr.live_chain import ChainBook
 
     rows = {
-        24000.0: {"ce": {"last_price": 120.0, "top_bid_price": 119.0, "top_ask_price": 122.0,
-                         "security_id": 1, "greeks": {"delta": 0.5}}},
+        24000.0: {
+            "ce": {
+                "last_price": 120.0,
+                "top_bid_price": 119.0,
+                "top_ask_price": 122.0,
+                "security_id": 1,
+                "greeks": {"delta": 0.5},
+            }
+        },
     }
     book = ChainBook("2026-09-02", rows)
     q = book.quote(24000.0, is_call=True)
@@ -160,11 +210,13 @@ def test_walk_forward_gate_never_worse_on_separable_data():
     trades = []
     for k in range(180):
         good = k % 2 == 0
-        trades.append({
-            "session": f"2026-0{k % 6 + 1}-{k % 27 + 1:02d}",
-            "net_rupees": rng.normal(400 if good else -350, 150),
-            "features": {f: (1.5 if good else -1.5) + rng.normal(0, 0.4) for f in _FEATURES},
-        })
+        trades.append(
+            {
+                "session": f"2026-0{k % 6 + 1}-{k % 27 + 1:02d}",
+                "net_rupees": rng.normal(400 if good else -350, 150),
+                "features": {f: (1.5 if good else -1.5) + rng.normal(0, 0.4) for f in _FEATURES},
+            }
+        )
     out = walk_forward_gate(trades)
     assert out["oos_gated_net"] >= out["oos_static_net"] - 2000  # gate helps or is ~neutral
 

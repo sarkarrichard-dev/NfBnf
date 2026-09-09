@@ -4,7 +4,11 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from index_ai.candles import latest_two_sessions, prepare_intraday_signal_frames
+from index_ai.candles import (
+    latest_two_sessions,
+    prepare_intraday_signal_frames,
+    resample_ohlcv,
+)
 from index_ai.config import AppSettings, candle_interval_minutes
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.dhan_errors import classify_http_error
@@ -80,14 +84,32 @@ def plan_instrument(
         candles,
         min_ema_bars=sp.ema_slow_period + 2,
     )
+
+    # Buy runs on the fast interval above; selling runs slower — 5m for the setup,
+    # 15m for the trend and swing S&R — resampled from the same download so there
+    # is no extra Dhan call. The 5m setup frame gets the same prev-day EMA warm-up
+    # the buy frame does; the 15m frame keeps prev day for Supertrend warm-up.
+    sell_today = sell_trend15 = None
+    try:
+        sell_today, _ = prepare_intraday_signal_frames(
+            resample_ohlcv(candles, f"{sp.sell_setup_interval_min}min"),
+            min_ema_bars=sp.ema_slow_period + 2,
+        )
+        sell_trend15 = resample_ohlcv(candles, f"{sp.sell_trend_interval_min}min")
+    except (ValueError, KeyError):
+        pass  # thin history — fall back to single-frame sell evaluation
+
     dual = evaluate_dual_opportunities(
         ema_frame,
         previous,
         allow_option_selling=app_settings.risk.allow_option_selling,
         allow_option_buying=app_settings.risk.allow_option_buying,
+        sell_today=sell_today,
+        sell_trend15=sell_trend15,
     )
     signal = dual.primary
     cpr_regime = dual.regime
+    sell_regime = dual.sell_regime
 
     today_session, prev_session = latest_two_sessions(candles)
     regime_read: dict[str, Any] | None = None
@@ -144,12 +166,12 @@ def plan_instrument(
         chain=chain,
         oi=oi,
         expiry=expiry,
-        cpr_regime=cpr_regime,
+        cpr_regime=sell_regime,
         lane="sell",
     )
 
     open_range_pct = (regime_read or {}).get("open_range_pct")
-    for opp in (buy_opp, sell_opp):
+    for opp, opp_regime in ((buy_opp, cpr_regime), (sell_opp, sell_regime)):
         if not opp:
             continue
         sig = opp.get("signal")
@@ -161,7 +183,7 @@ def plan_instrument(
             continue
         tgt, label = _pivot_target(
             previous,
-            cpr_regime,
+            opp_regime,
             str((sig or {}).get("action") or ""),
             float((sig or {}).get("price") or 0),
         )
@@ -219,6 +241,8 @@ def plan_instrument(
             "today_session": len(today_session),
             "ema_bars": len(ema_frame),
             "interval_minutes": iv,
+            "sell_interval_minutes": sp.sell_setup_interval_min if sell_today is not None else iv,
+            "trend_interval_minutes": sp.sell_trend_interval_min,
             "from": str(candles.iloc[0]["datetime"]) if not candles.empty else None,
             "to": str(candles.iloc[-1]["datetime"]) if not candles.empty else None,
         },

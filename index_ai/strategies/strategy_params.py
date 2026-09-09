@@ -59,6 +59,12 @@ class StrategyParams:
     credit_volume_lookback_bars: int = 20
     credit_min_reward_to_risk: float = 0.05
     sell_allow_trend_override: bool = True
+    # Option selling runs slower than buying: 5m for the entry setup, 15m for the
+    # trend read and swing support/resistance. Buying keeps the fast interval.
+    sell_setup_interval_min: int = 5
+    sell_trend_interval_min: int = 15
+    sell_trend15_swing_lookback: int = 6
+    sell_require_trend15: bool = True
     ml_gate_sell_min: float = 0.45
     ml_gate_sell_max: float = 0.65
     ml_gate_buy_min: float = 0.50
@@ -146,6 +152,10 @@ def get_strategy_params() -> StrategyParams:
         credit_volume_lookback_bars=_int("CREDIT_VOLUME_LOOKBACK_BARS", 20),
         credit_min_reward_to_risk=_float("CREDIT_MIN_REWARD_TO_RISK", 0.05),
         sell_allow_trend_override=_bool("SELL_ALLOW_TREND_OVERRIDE", True),
+        sell_setup_interval_min=_int("SELL_SETUP_INTERVAL_MIN", 5),
+        sell_trend_interval_min=_int("SELL_TREND_INTERVAL_MIN", 15),
+        sell_trend15_swing_lookback=_int("SELL_TREND15_SWING_LOOKBACK", 6),
+        sell_require_trend15=_bool("SELL_REQUIRE_TREND15", True),
         ml_gate_sell_min=_float("ML_GATE_SELL_MIN", 0.45),
         ml_gate_sell_max=_float("ML_GATE_SELL_MAX", 0.65),
         ml_gate_buy_min=_float("ML_GATE_BUY_MIN", 0.50),
@@ -245,6 +255,13 @@ def strategy_tuning_summary() -> dict[str, object]:
         "credit_volume_lookback_bars": p.credit_volume_lookback_bars,
         "credit_min_reward_to_risk": p.credit_min_reward_to_risk,
         "sell_allow_trend_override": p.sell_allow_trend_override,
+        "sell_setup_interval_min": p.sell_setup_interval_min,
+        "sell_trend_interval_min": p.sell_trend_interval_min,
+        "sell_require_trend15": p.sell_require_trend15,
+        "sell_timeframe_note": (
+            f"Sell lane: {p.sell_setup_interval_min}m setup + {p.sell_trend_interval_min}m "
+            "trend / swing S&R. Buy lane stays on the fast interval."
+        ),
         "ml_gate_sell_min": p.ml_gate_sell_min,
         "ml_gate_sell_max": p.ml_gate_sell_max,
         "ml_gate_buy_min": p.ml_gate_buy_min,
@@ -316,6 +333,10 @@ def strategy_tuning_summary() -> dict[str, object]:
             "CREDIT_VOLUME_LOOKBACK_BARS",
             "CREDIT_MIN_REWARD_TO_RISK",
             "SELL_ALLOW_TREND_OVERRIDE",
+            "SELL_SETUP_INTERVAL_MIN",
+            "SELL_TREND_INTERVAL_MIN",
+            "SELL_TREND15_SWING_LOOKBACK",
+            "SELL_REQUIRE_TREND15",
             "BUY_MIN_VOLUME_RATIO",
             "BUY_MIN_LEG_OI",
             "BUY_MIN_LEG_VOLUME",

@@ -23,13 +23,13 @@ from typing import Any
 import pandas as pd
 
 from index_ai.charges import leg_charge_rupees
-from index_ai.strategies.options_cpr.backtest import _align15
 from index_ai.strategies.options_cpr.config import OptionsCprConfig, config_for
 from index_ai.strategies.options_cpr.engine import (
     add_indicators,
     cpr_context,
     entry_features,
     evaluate_entry,
+    trend15_read,
 )
 from index_ai.strategies.options_cpr.premium import bs_price_delta, strike_for_delta
 
@@ -51,9 +51,7 @@ def _spread_mark(
     return short_px - long_px
 
 
-def _build_spread(
-    spot: float, cfg: OptionsCprConfig, is_put: bool, mte: float
-) -> dict[str, Any]:
+def _build_spread(spot: float, cfg: OptionsCprConfig, is_put: bool, mte: float) -> dict[str, Any]:
     """Short leg by delta + a far-OTM long wing, wing tightened inward until the
     defined-risk max loss fits ``sell_margin_budget_rupees``.
     """
@@ -62,8 +60,14 @@ def _build_spread(
     short_k = strike_for_delta(spot, step, call, iv, mte, cfg.sell_short_delta)
     short_px = bs_price_delta(spot, short_k, t, iv, call)[0]
     if cfg.sell_naked:
-        return {"short_k": short_k, "long_k": None, "short_px": short_px, "long_px": 0.0,
-                "credit": short_px, "max_loss_rupees": None}
+        return {
+            "short_k": short_k,
+            "long_k": None,
+            "short_px": short_px,
+            "long_px": 0.0,
+            "credit": short_px,
+            "max_loss_rupees": None,
+        }
 
     want = spot * (1.0 - cfg.sell_wing_pct) if is_put else spot * (1.0 + cfg.sell_wing_pct)
     long_k = round(want / step) * step
@@ -76,9 +80,15 @@ def _build_spread(
         max_loss = (width - credit) * cfg.lot_size
         if max_loss <= cfg.sell_margin_budget_rupees or width <= step:
             break
-        long_k += step if is_put else -step         # pull the wing one strike closer to the short
-    return {"short_k": short_k, "long_k": long_k, "short_px": short_px, "long_px": long_px,
-            "credit": credit, "max_loss_rupees": round(max_loss, 2)}
+        long_k += step if is_put else -step  # pull the wing one strike closer to the short
+    return {
+        "short_k": short_k,
+        "long_k": long_k,
+        "short_px": short_px,
+        "long_px": long_px,
+        "credit": credit,
+        "max_loss_rupees": round(max_loss, 2),
+    }
 
 
 def _sell_friction(short_px: float, long_px: float, lot: int, cfg: OptionsCprConfig) -> float:
@@ -120,7 +130,12 @@ def replay_sell_session(
     cpr = cpr_context(prev_day_ohlc, cfg)
     n_tail = len(bars5_prev_tail)
     df = add_indicators(pd.concat([bars5_prev_tail, bars5_today], ignore_index=True), cfg)
-    align15 = _align15(bars15_prev, bars15_today, cfg) if require_15m_alignment else (lambda _ts: 0)
+    _blank15 = {"direction": 0.0, "swing_high": 0.0, "swing_low": 0.0}
+
+    def t15_at(ts: pd.Timestamp) -> dict[str, float]:
+        if not require_15m_alignment:
+            return _blank15
+        return trend15_read(bars15_prev, bars15_today, cfg, at_ts=ts)
 
     ts_all = pd.to_datetime(df["datetime"])
     open_ts = ts_all.iloc[n_tail] if len(df) > n_tail else None
@@ -131,7 +146,7 @@ def replay_sell_session(
     consec_losses = trades_today = 0
     daily_pnl = 0.0
     kill = False
-    loss_cap = (cfg.daily_loss_cap_rupees or cfg.max_daily_loss_pct / 100.0 * cfg.capital)
+    loss_cap = cfg.daily_loss_cap_rupees or cfg.max_daily_loss_pct / 100.0 * cfg.capital
 
     def mte(ts: pd.Timestamp) -> float:
         return max(0.0, expiry_total - (ts - open_ts).total_seconds() / 60.0)
@@ -142,17 +157,29 @@ def replay_sell_session(
         fric = _sell_friction(pos["short_px"], pos["long_px"], cfg.lot_size, cfg)
         net = gross - fric
         daily_pnl += net
-        trades.append({
-            "instrument": cfg.key, "lane": "sell", "structure": pos["structure"],
-            "reason": reason, "entry_time": str(pos["entry_time"]), "exit_time": str(ts),
-            "entry_spot": round(pos["entry_spot"], 2), "exit_spot": round(spot, 2),
-            "short_strike": pos["short_k"], "long_strike": pos["long_k"],
-            "entry_credit": round(pos["entry_credit"], 2), "exit_debit": round(debit, 2),
-            "wing_pts": round(pos["wing_pts"], 1), "max_loss_rupees": pos["max_loss_rupees"],
-            "qty": cfg.lot_size,
-            "gross_rupees": round(gross, 2), "friction_rupees": round(fric, 2),
-            "net_rupees": round(net, 2), "features": pos["features"],
-        })
+        trades.append(
+            {
+                "instrument": cfg.key,
+                "lane": "sell",
+                "structure": pos["structure"],
+                "reason": reason,
+                "entry_time": str(pos["entry_time"]),
+                "exit_time": str(ts),
+                "entry_spot": round(pos["entry_spot"], 2),
+                "exit_spot": round(spot, 2),
+                "short_strike": pos["short_k"],
+                "long_strike": pos["long_k"],
+                "entry_credit": round(pos["entry_credit"], 2),
+                "exit_debit": round(debit, 2),
+                "wing_pts": round(pos["wing_pts"], 1),
+                "max_loss_rupees": pos["max_loss_rupees"],
+                "qty": cfg.lot_size,
+                "gross_rupees": round(gross, 2),
+                "friction_rupees": round(fric, 2),
+                "net_rupees": round(net, 2),
+                "features": pos["features"],
+            }
+        )
         if net > 0:
             consec_losses = 0
         else:
@@ -168,17 +195,21 @@ def replay_sell_session(
 
         if pos is not None:
             is_put = pos["structure"] in ("SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT")
-            adverse_spot = low if is_put else h            # short puts hurt by a drop
+            adverse_spot = low if is_put else h  # short puts hurt by a drop
             m = mte(ts)
             debit_now = _spread_mark(c, pos["short_k"], pos["long_k"], is_put, cfg.iv, m)
-            debit_adverse = _spread_mark(adverse_spot, pos["short_k"], pos["long_k"], is_put, cfg.iv, m)
+            debit_adverse = _spread_mark(
+                adverse_spot, pos["short_k"], pos["long_k"], is_put, cfg.iv, m
+            )
 
             broke_struct = (c < cpr.tc) if is_put else (c > cpr.bc)
-            d15 = align15(ts)
+            d15 = int(t15_at(ts)["direction"])
             trend_flip = d15 != 0 and d15 != (1 if is_put else -1)
 
             if debit_adverse >= cfg.sell_stop_credit_mult * pos["entry_credit"]:
-                close_pos(cfg.sell_stop_credit_mult * pos["entry_credit"], "spread_stop", ts, adverse_spot)
+                close_pos(
+                    cfg.sell_stop_credit_mult * pos["entry_credit"], "spread_stop", ts, adverse_spot
+                )
             elif debit_now <= (1.0 - cfg.sell_credit_capture_target) * pos["entry_credit"]:
                 close_pos(debit_now, "credit_capture", ts, c)
             elif broke_struct:
@@ -199,25 +230,41 @@ def replay_sell_session(
         if side is None:
             continue
         bullish = side == "CE"
-        d15 = align15(ts)
+        tr15 = t15_at(ts)
+        d15 = int(tr15["direction"])
         if d15 != 0 and d15 != (1 if bullish else -1):
+            continue
+        if bullish and tr15["swing_low"] > 0 and c < tr15["swing_low"]:
+            continue  # selling puts under support that just broke
+        if not bullish and tr15["swing_high"] > 0 and c > tr15["swing_high"]:
             continue
 
         m = mte(ts)
         is_put = bullish
         naked = cfg.sell_naked
-        structure = ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL") if naked else (
-            "SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD")
+        structure = (
+            ("SELL_ATM_PUT" if is_put else "SELL_ATM_CALL")
+            if naked
+            else ("SELL_BULL_PUT_SPREAD" if bullish else "SELL_BEAR_CALL_SPREAD")
+        )
         sp = _build_spread(c, cfg, is_put, m)
         if sp["credit"] < cfg.sell_min_credit_pts:
             continue
-        if sp["max_loss_rupees"] is not None and sp["max_loss_rupees"] > cfg.sell_margin_budget_rupees * 1.05:
+        if (
+            sp["max_loss_rupees"] is not None
+            and sp["max_loss_rupees"] > cfg.sell_margin_budget_rupees * 1.05
+        ):
             continue  # even the tightest wing can't fit the margin budget
 
         pos = {
-            "structure": structure, "entry_spot": c, "entry_time": ts,
-            "short_k": sp["short_k"], "long_k": sp["long_k"], "entry_credit": sp["credit"],
-            "short_px": sp["short_px"], "long_px": sp["long_px"],
+            "structure": structure,
+            "entry_spot": c,
+            "entry_time": ts,
+            "short_k": sp["short_k"],
+            "long_k": sp["long_k"],
+            "entry_credit": sp["credit"],
+            "short_px": sp["short_px"],
+            "long_px": sp["long_px"],
             "wing_pts": abs(sp["short_k"] - sp["long_k"]) if sp["long_k"] is not None else 0.0,
             "max_loss_rupees": sp["max_loss_rupees"],
             "features": entry_features(df, i, cpr, prev_day_ohlc),
@@ -227,8 +274,14 @@ def replay_sell_session(
     if pos is not None:
         is_put = pos["structure"] in ("SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT")
         last_c = float(df.iloc[-1]["close"])
-        close_pos(_spread_mark(last_c, pos["short_k"], pos["long_k"], is_put, cfg.iv, mte(ts_all.iloc[-1])),
-                  "session_end", ts_all.iloc[-1], last_c)
+        close_pos(
+            _spread_mark(
+                last_c, pos["short_k"], pos["long_k"], is_put, cfg.iv, mte(ts_all.iloc[-1])
+            ),
+            "session_end",
+            ts_all.iloc[-1],
+            last_c,
+        )
     return trades
 
 
@@ -258,8 +311,9 @@ def run_sell(
         if today5.empty or prev5.empty or prev15.empty:
             continue
         tail = prev5.tail(cfg.warmup_bars + 5)
-        for t in replay_sell_session(tail, today5, prev15, today15, prev5, cfg,
-                                     require_15m_alignment=require_15m_alignment):
+        for t in replay_sell_session(
+            tail, today5, prev15, today15, prev5, cfg, require_15m_alignment=require_15m_alignment
+        ):
             t["session"] = str(d)
             out.append(t)
     return out
@@ -269,28 +323,49 @@ if __name__ == "__main__":  # ponytail self-check
     import numpy as np
 
     cfg = config_for("NIFTY")
-    prev = pd.DataFrame({
-        "datetime": pd.date_range("2026-01-01 09:15", periods=26, freq="15min"),
-        "open": 24000.0, "high": 24050.0, "low": 23950.0, "close": 24000.0, "volume": 0.0,
-    })
+    prev = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-01-01 09:15", periods=26, freq="15min"),
+            "open": 24000.0,
+            "high": 24050.0,
+            "low": 23950.0,
+            "close": 24000.0,
+            "volume": 0.0,
+        }
+    )
     cpr = cpr_context(prev, cfg)
     # clean uptrend breakout above TC -> expect a bull-put spread
     closes = list(np.full(25, cpr.tc - 5)) + list(np.linspace(cpr.tc - 5, cpr.tc + 60, 30))
-    t5 = pd.DataFrame({
-        "datetime": pd.date_range("2026-01-02 09:15", periods=len(closes), freq="5min"),
-        "open": closes, "high": [c + 5 for c in closes], "low": [c - 5 for c in closes],
-        "close": closes, "volume": 0.0,
-    })
+    t5 = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-01-02 09:15", periods=len(closes), freq="5min"),
+            "open": closes,
+            "high": [c + 5 for c in closes],
+            "low": [c - 5 for c in closes],
+            "close": closes,
+            "volume": 0.0,
+        }
+    )
     p15 = prev.assign(datetime=pd.date_range("2026-01-01 09:15", periods=26, freq="15min"))
-    t15 = pd.DataFrame({
-        "datetime": pd.date_range("2026-01-02 09:15", periods=26, freq="15min"),
-        "open": 24100.0, "high": 24160.0, "low": 24050.0, "close": 24140.0, "volume": 0.0,
-    })
-    trades = replay_sell_session(t5.head(0).reindex(columns=t5.columns), t5, p15, t15, prev, cfg,
-                                 require_15m_alignment=False)
+    t15 = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-01-02 09:15", periods=26, freq="15min"),
+            "open": 24100.0,
+            "high": 24160.0,
+            "low": 24050.0,
+            "close": 24140.0,
+            "volume": 0.0,
+        }
+    )
+    trades = replay_sell_session(
+        t5.head(0).reindex(columns=t5.columns), t5, p15, t15, prev, cfg, require_15m_alignment=False
+    )
     assert isinstance(trades, list)
     if trades:
         assert trades[0]["structure"] in ("SELL_BULL_PUT_SPREAD", "SELL_BEAR_CALL_SPREAD")
-        assert trades[0]["entry_credit"] > 0 and trades[0]["long_strike"] < trades[0]["short_strike"] \
-            if trades[0]["structure"] == "SELL_BULL_PUT_SPREAD" else trades[0]["long_strike"] > trades[0]["short_strike"]
+        assert (
+            trades[0]["entry_credit"] > 0 and trades[0]["long_strike"] < trades[0]["short_strike"]
+            if trades[0]["structure"] == "SELL_BULL_PUT_SPREAD"
+            else trades[0]["long_strike"] > trades[0]["short_strike"]
+        )
     print(f"sell.py self-check ok — {len(trades)} spread trade(s)")

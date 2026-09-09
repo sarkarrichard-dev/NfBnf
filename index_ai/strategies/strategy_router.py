@@ -10,10 +10,11 @@ import pandas as pd
 from index_ai.strategies.buy_strategy import evaluate_buy_signal
 from index_ai.strategies.cpr_regime import CprRegime, analyze_cpr_regime
 from index_ai.strategies.credit_spread import CREDIT_ACTIONS
-from index_ai.strategies.ema_cross import analyze_ema_cross
+from index_ai.strategies.ema_cross import analyze_ema_cross, min_ema_bars
 from index_ai.strategies.premium_sell import PREMIUM_SELL_ACTIONS, is_premium_sell_action
 from index_ai.strategies.sell_strategy import evaluate_sell_signal
 from index_ai.strategies.strategy import StrategySignal, add_indicators, copy_signal
+from index_ai.strategies.strategy_mode import summarize_trend15
 from index_ai.strategies.strategy_params import get_strategy_params
 
 
@@ -46,6 +47,7 @@ class DualRouteResult:
     sell: StrategySignal
     regime: CprRegime
     cross: dict
+    sell_regime: CprRegime  # 5m-frame CPR regime for the sell lane (== regime unless split)
 
 
 def _empty_buy(regime: CprRegime, row, *, reason: str = "Buy lane disabled.") -> StrategySignal:
@@ -91,11 +93,7 @@ def _pick_primary(buy: StrategySignal, sell: StrategySignal) -> StrategySignal:
         return buy
     return copy_signal(
         buy,
-        reason=(
-            f"Buy: {buy.reason} | Sell: {sell.reason}"
-            if sell.reason
-            else buy.reason
-        ),
+        reason=(f"Buy: {buy.reason} | Sell: {sell.reason}" if sell.reason else buy.reason),
         strategy_mode="wait",
     )
 
@@ -106,7 +104,13 @@ def evaluate_dual_opportunities(
     *,
     allow_option_selling: bool = True,
     allow_option_buying: bool = True,
+    sell_today: pd.DataFrame | None = None,
+    sell_trend15: pd.DataFrame | None = None,
 ) -> DualRouteResult:
+    """``today`` drives the buy lane (fast interval). When ``sell_today`` (a 5m
+    frame) and ``sell_trend15`` (a 15m frame) are supplied, the sell lane is
+    evaluated on those instead — its own CPR regime, EMA cross and a 15m trend
+    gate. Callers that pass neither keep the single-frame behaviour."""
     params = get_strategy_params()
     style = strategy_style()
     frame = (
@@ -114,9 +118,7 @@ def evaluate_dual_opportunities(
         if "ema_fast" not in today.columns
         else today
     )
-    cross = analyze_ema_cross(
-        frame, fast=params.ema_fast_period, slow=params.ema_slow_period
-    )
+    cross = analyze_ema_cross(frame, fast=params.ema_fast_period, slow=params.ema_slow_period)
     row = frame.iloc[-1]
     regime = analyze_cpr_regime(
         frame,
@@ -140,21 +142,44 @@ def evaluate_dual_opportunities(
         )
         buy = _empty_buy(regime, row, reason="APEX mode — sell only.")
         primary = sell if sell.action != "NO_TRADE" else buy
-        return DualRouteResult(primary=primary, buy=buy, sell=sell, regime=regime, cross=cross)
+        return DualRouteResult(
+            primary=primary, buy=buy, sell=sell, regime=regime, cross=cross, sell_regime=regime
+        )
 
     buy = _empty_buy(regime, row)
     sell = _empty_sell(regime, row)
+    sell_regime = regime
 
     if style in {"AUTO", "BUY"} and allow_option_buying:
         buy = evaluate_buy_signal(frame, previous_day, regime, params=params)
 
     if style in {"AUTO", "CREDIT"} and allow_option_selling and params.enable_credit_strategies:
-        sell = evaluate_sell_signal(
-            frame, previous_day, regime, cross, params=params
-        )
+        if sell_today is not None and len(sell_today) >= min_ema_bars(params.ema_slow_period):
+            s_frame = add_indicators(
+                sell_today, fast=params.ema_fast_period, slow=params.ema_slow_period
+            )
+            s_row = s_frame.iloc[-1]
+            sell_regime = analyze_cpr_regime(
+                s_frame,
+                previous_day,
+                price=float(s_row["close"]),
+                ema_fast=float(s_row["ema_fast"]),
+                ema_slow=float(s_row["ema_slow"]),
+            )
+            s_cross = analyze_ema_cross(
+                s_frame, fast=params.ema_fast_period, slow=params.ema_slow_period
+            )
+            t15 = summarize_trend15(sell_trend15, params) if sell_trend15 is not None else None
+            sell = evaluate_sell_signal(
+                s_frame, previous_day, sell_regime, s_cross, params=params, trend15=t15
+            )
+        else:
+            sell = evaluate_sell_signal(frame, previous_day, regime, cross, params=params)
 
     primary = _pick_primary(buy, sell)
-    return DualRouteResult(primary=primary, buy=buy, sell=sell, regime=regime, cross=cross)
+    return DualRouteResult(
+        primary=primary, buy=buy, sell=sell, regime=regime, cross=cross, sell_regime=sell_regime
+    )
 
 
 def route_intraday_signal(

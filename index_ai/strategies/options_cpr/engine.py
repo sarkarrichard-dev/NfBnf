@@ -13,8 +13,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from index_ai.strategies.candlestick_sr import intraday_candle_trend
 from index_ai.strategies.options_cpr.config import OptionsCprConfig
 from index_ai.strategies.strategy import previous_day_cpr
+from index_ai.strategies.supertrend import supertrend_snapshot
 
 
 @dataclass(frozen=True)
@@ -23,7 +25,7 @@ class CprContext:
     bc: float
     tc: float
     width_pct: float
-    width_class: str            # "NARROW" | "NORMAL" | "WIDE"
+    width_class: str  # "NARROW" | "NORMAL" | "WIDE"
 
 
 def cpr_context(prev_day: pd.DataFrame, cfg: OptionsCprConfig) -> CprContext:
@@ -36,6 +38,47 @@ def cpr_context(prev_day: pd.DataFrame, cfg: OptionsCprConfig) -> CprContext:
     else:
         cls = "NORMAL"
     return CprContext(pivot, bc, tc, round(width_pct, 4), cls)
+
+
+def trend15_read(
+    prev15: pd.DataFrame, today15: pd.DataFrame, cfg: OptionsCprConfig, *, at_ts=None
+) -> dict[str, float]:
+    """15-minute trend + swing S&R for the directional-sell lane.
+
+    ``direction`` is +1 / -1 only when the 15m EMA (fast/slow), Supertrend
+    (``cfg.st_period`` / ``cfg.st_multiplier``) and candle structure all agree on
+    the bar closed by ``at_ts`` (or the last closed bar when ``at_ts`` is None);
+    otherwise 0. ``swing_high`` / ``swing_low`` bound the last
+    ``cfg.trend15_swing_lookback`` bars.
+    """
+    full = pd.concat([prev15, today15], ignore_index=True)
+    if at_ts is not None:
+        ts = pd.Timestamp(at_ts)
+        closed = pd.to_datetime(full["datetime"]) + pd.Timedelta("15min") <= ts
+        full = full[closed.to_numpy()].reset_index(drop=True)
+    if len(full) < max(cfg.ema_slow, cfg.st_period) + 2:
+        return {"direction": 0.0, "swing_high": 0.0, "swing_low": 0.0}
+    ef = float(full["close"].ewm(span=cfg.ema_fast, adjust=False).mean().iloc[-1])
+    es = float(full["close"].ewm(span=cfg.ema_slow, adjust=False).mean().iloc[-1])
+    ema_dir = 1 if ef > es else -1 if ef < es else 0
+    st_dir = int(
+        supertrend_snapshot(full, period=cfg.st_period, multiplier=cfg.st_multiplier).get(
+            "direction"
+        )
+        or 0
+    )
+    struct = intraday_candle_trend(full, lookback=15)
+    direction = ema_dir if ema_dir != 0 and ema_dir == st_dir else 0
+    if direction == 1 and struct == "DOWN":
+        direction = 0
+    elif direction == -1 and struct == "UP":
+        direction = 0
+    tail = full.tail(max(2, cfg.trend15_swing_lookback))
+    return {
+        "direction": float(direction),
+        "swing_high": float(tail["high"].astype(float).max()),
+        "swing_low": float(tail["low"].astype(float).min()),
+    }
 
 
 def add_indicators(df: pd.DataFrame, cfg: OptionsCprConfig) -> pd.DataFrame:
@@ -102,7 +145,10 @@ def evaluate_entry(
             return None, f"{side}: {level:.0f} whipsawed within {wl} bars — wait for a clean break"
         kind = "breakout above TC" if bullish else "breakdown below BC"
         tag = f" ({confirm} closes, WIDE CPR)" if is_wide else ""
-        return side, f"{side} buy: {kind}{tag}, EMA aligned, volume {row['volume'] / max(row['vol_avg'], 1):.1f}x"
+        return (
+            side,
+            f"{side} buy: {kind}{tag}, EMA aligned, volume {row['volume'] / max(row['vol_avg'], 1):.1f}x",
+        )
 
     return None, "no CPR breakout with EMA + volume confirmation"
 
@@ -140,7 +186,11 @@ if __name__ == "__main__":  # ponytail self-check
     prev = pd.DataFrame(
         {
             "datetime": pd.date_range("2026-01-01 09:15", periods=25, freq="15min"),
-            "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1000.0,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+            "volume": 1000.0,
         }
     )
     cpr = cpr_context(prev, cfg)
@@ -150,13 +200,29 @@ if __name__ == "__main__":  # ponytail self-check
     df = pd.DataFrame(
         {
             "datetime": pd.date_range("2026-01-02 09:15", periods=len(closes), freq="5min"),
-            "open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-            "close": closes, "volume": [1000.0] * (len(closes) - 1) + [5000.0],
+            "open": closes,
+            "high": [c + 1 for c in closes],
+            "low": [c - 1 for c in closes],
+            "close": closes,
+            "volume": [1000.0] * (len(closes) - 1) + [5000.0],
         }
     )
     df = add_indicators(df, cfg)
     side, why = evaluate_entry(df, len(df) - 1, cpr, cfg)
     assert side == "CE", (side, why)
+    # trend15_read: a clean 15m uptrend reads +1 with a sane swing band
+    up15 = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-01-02 09:15", periods=40, freq="15min"),
+            "open": np.linspace(100, 140, 40),
+            "high": np.linspace(101, 141, 40),
+            "low": np.linspace(99, 139, 40),
+            "close": np.linspace(100, 140, 40),
+            "volume": 1000.0,
+        }
+    )
+    t15 = trend15_read(up15.head(0).reindex(columns=up15.columns), up15, cfg)
+    assert t15["direction"] == 1.0 and t15["swing_low"] < t15["swing_high"], t15
     # no volume spike -> blocked
     df2 = df.copy()
     df2.loc[df2.index[-1], "volume"] = 500.0
