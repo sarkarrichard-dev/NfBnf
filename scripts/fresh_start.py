@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from index_ai.config import MEMORY_DIR
@@ -157,9 +158,45 @@ def main(argv: list[str] | None = None) -> int:
         print("\nDry run. Re-run with --commit to do it.")
         return 0
 
+    import gc
+
+    gc.collect()  # drop any sqlite handle the safety probes left open
+
     archive.mkdir(parents=True, exist_ok=True)
+    # copy everything first, verify, then delete the originals — so a locked
+    # file can't leave us with a half-archive.
     for p in targets:
-        shutil.move(str(p), str(archive / p.name))
+        dst = archive / p.name
+        if p.is_dir():
+            shutil.copytree(p, dst)
+        else:
+            shutil.copy2(p, dst)
+        if not dst.exists():
+            print(f"ABORT — copy of {p.name} did not land. Nothing deleted.")
+            return 1
+
+    stuck: list[str] = []
+    for p in targets:
+        for attempt in range(4):
+            try:
+                if p.is_dir():
+                    shutil.rmtree(p)
+                else:
+                    p.unlink()
+                break
+            except PermissionError:
+                gc.collect()
+                time.sleep(0.5)
+        else:
+            stuck.append(p.name)
+
+    if stuck:
+        print(f"\nArchived OK to {archive}, but could not delete: {', '.join(stuck)}")
+        print("Something still has them open. The archive is complete — delete the "
+              "originals manually, or reboot. NOT setting the data epoch until the "
+              "originals are gone (a stale trade_memory.sqlite would be read again).")
+        return 1
+
     epoch = set_data_epoch()
 
     # recreate an empty trades DB with the right schema so the app starts clean

@@ -28,7 +28,10 @@ _schema_initialized = False
 def init_db() -> None:
     global _schema_initialized
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH, timeout=30) as db:
+    # explicit close — `with sqlite3.connect(...)` commits but does NOT close, and
+    # a leaked handle blocks a later file move of the DB on Windows.
+    db = sqlite3.connect(DB_PATH, timeout=30)
+    try:
         db.execute("PRAGMA journal_mode=WAL")
         db.executescript(
             """
@@ -61,6 +64,9 @@ def init_db() -> None:
                 ON trades(instrument, action, created_at);
             """
         )
+        db.commit()
+    finally:
+        db.close()
     _schema_initialized = True
 
 
