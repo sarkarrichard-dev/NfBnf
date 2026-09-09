@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from crypto.strategies import bb_reversal, ema_jaguar, ema_pivot, fvg_scalp, vp_edge
+from crypto.strategies import ak_roxx_pro, bb_reversal, ema_jaguar, ema_pivot, fvg_scalp, vp_edge
 from crypto.strategies.fairvalue import find_fvgs
 from crypto.strategies.pivots import standard_pivots
 from crypto.strategies.volprofile import profile
@@ -213,6 +213,34 @@ def test_ema_pivot_enters_on_a_pivot_break_with_a_stacked_fan():
     # a dead-flat market: fan never stacks/slopes → no entry
     flat = df.assign(open=100.0, high=100.4, low=99.6, close=100.0)
     saw2, _ = _run(ema_pivot, ema_pivot.EmaPivotConfig(slope_lookback=2), flat, 300)
+    assert saw2["enter"] == 0
+
+
+def test_ak_roxx_pro_enters_on_a_stacked_ribbon_beyond_the_hourly_cpr():
+    n = 900
+    idx = pd.date_range("2026-09-06 00:00", periods=n, freq="5min", tz="UTC")
+    px = np.concatenate(
+        [
+            100.0 + np.sin(np.linspace(0, 6, 360)) * 2,  # base — sets the early CPR
+            np.linspace(100.0, 130.0, n - 360),  # clean rally through it
+        ]
+    )
+    df = pd.DataFrame(
+        {
+            "datetime": idx,
+            "open": px,
+            "high": px + 0.3,
+            "low": px - 0.3,
+            "close": px,
+            "volume": [10.0] * n,
+        }
+    )
+    saw, side = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(slope_lookback=2), df, 400)
+    assert saw["enter"] >= 1 and side == "long"
+
+    # inside the range / no ribbon: a dead-flat tape never trades
+    flat = df.assign(open=100.0, high=100.4, low=99.6, close=100.0)
+    saw2, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(slope_lookback=2), flat, 400)
     assert saw2["enter"] == 0
 
 

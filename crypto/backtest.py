@@ -26,6 +26,7 @@ from crypto.delta.products import Contract
 from crypto.session import in_ny_window, ny_session_date
 from crypto.sizing import size_position
 from crypto.strategies import (
+    ak_roxx_pro,
     bb_reversal,
     ema_jaguar,
     ema_pivot,
@@ -53,8 +54,10 @@ _SIMPLE = {
                   lambda s, **kw: fvg_scalp.FvgScalpConfig(trail=_trail(s), **kw)),
     "ema_pivot": (ema_pivot, "5m",
                   lambda s, **kw: ema_pivot.EmaPivotConfig(trail=_trail(s), **kw)),
+    "ak_roxx_pro": (ak_roxx_pro, "5m",
+                    lambda s, **kw: ak_roxx_pro.AkRoxxConfig(trail=_trail(s), **kw)),
 }
-_WIN_N = {"ichimoku": 220, "ema_pivot": 340}  # ema_pivot needs a full prior UTC day for pivots
+_WIN_N = {"ichimoku": 220, "ema_pivot": 340, "ak_roxx_pro": 220}  # ema_pivot needs a full prior UTC day; ak_roxx only the prior hour + 55 EMA
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 
 
