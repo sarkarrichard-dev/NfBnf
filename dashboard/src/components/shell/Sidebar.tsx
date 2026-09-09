@@ -84,6 +84,14 @@ export function Sidebar({
             </nav>
           </div>
         ))}
+        <div className="mt-6 border-t border-[var(--hair-soft)] px-2 pt-4">
+          <img
+            src="/quanthawk-logo.png"
+            alt="QuantHawk — data drives discipline"
+            className="w-full opacity-70"
+            loading="lazy"
+          />
+        </div>
       </aside>
     </>
   )

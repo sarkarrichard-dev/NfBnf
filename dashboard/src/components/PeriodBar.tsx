@@ -40,7 +40,9 @@ export function PeriodBar({ period, onPeriodChange, range, onRangeChange }: Prop
             onClick={() => onPeriodChange(p.id)}
             className={cn(
               'rounded-md px-3 py-1 text-xs font-medium transition',
-              period === p.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200',
+              period === p.id
+                ? 'bg-[var(--acc)] text-[var(--acc-ink)]'
+                : 'text-slate-400 hover:text-slate-200',
             )}
           >
             {p.label}

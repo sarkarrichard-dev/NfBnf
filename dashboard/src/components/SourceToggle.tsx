@@ -56,7 +56,9 @@ export function SourceToggle({
           onClick={() => onChange(o.id)}
           className={cn(
             'rounded-md px-3 py-1 text-xs font-medium transition',
-            value === o.id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200',
+            value === o.id
+              ? 'bg-[var(--acc)] text-[var(--acc-ink)]'
+              : 'text-slate-400 hover:text-slate-200',
           )}
         >
           {o.label}
