@@ -1195,6 +1195,15 @@ async def day_review_api(refresh: bool = Query(False)) -> dict[str, Any]:
     return await asyncio.to_thread(build_day_review, refresh=refresh)
 
 
+@app.get("/api/strategy-performance", include_in_schema=False)
+async def strategy_performance_api() -> dict[str, Any]:
+    """Per-(strategy, instrument) scorecard from the live journals — trades,
+    win rate, gross, the Dhan/Delta charges paid, and net. Read-only."""
+    from index_ai.strategy_performance import strategy_scorecard
+
+    return await asyncio.to_thread(strategy_scorecard)
+
+
 @app.get("/api/market-context", include_in_schema=False)
 async def market_context_api(refresh: bool = Query(False)) -> dict[str, Any]:
     """FII/DII/Pro/Client positioning, India VIX, IV term structure, OI walls, pinning."""
