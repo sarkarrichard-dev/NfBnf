@@ -220,6 +220,13 @@ def run_eod() -> dict[str, Any]:
     except Exception as exc:
         report["day_review"] = {"error": str(exc)[:200]}
 
+    try:  # daily snapshot of the confidence ladder so its trend is visible
+        from index_ai.strategy_learning import learning_report
+
+        report["strategy_learning"] = learning_report()
+    except Exception as exc:
+        report["strategy_learning"] = {"error": str(exc)[:200]}
+
     # Off-machine backup before the report is written, so the snapshot it uploads
     # is of a settled memory/ dir; the report's own backup status is one run behind.
     try:

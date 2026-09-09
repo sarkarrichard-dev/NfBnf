@@ -7,6 +7,88 @@ import {
   type PerfRow,
   type PerfTotals,
 } from '../../hooks/useStrategyPerformance'
+import { useStrategyLearning, type LearnRow } from '../../hooks/useStrategyLearning'
+
+const STATE_STYLE: Record<string, string> = {
+  watching: 'bg-white/[0.05] text-slate-400',
+  observing: 'bg-amber-500/15 text-amber-400',
+  ready: 'bg-emerald-500/15 text-emerald-400',
+}
+
+function LearningPanel() {
+  const q = useStrategyLearning(true)
+  const d = q.data
+  const rows: LearnRow[] = useMemo(
+    () => (d ? [...d.india, ...d.crypto].sort((a, b) => b.trades - a.trades) : []),
+    [d],
+  )
+  if (!d) return null
+
+  const total = rows.reduce((n, r) => n + r.trades, 0)
+
+  return (
+    <section className={cn(fx.panel, 'p-4')}>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-bold text-slate-100">Learning</h3>
+        <span className="font-mono text-[11px] text-slate-500">
+          {d.epoch ? `since ${d.epoch.slice(0, 16).replace('T', ' ')}` : 'no data epoch set'}
+        </span>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-[12.5px] text-slate-500">
+          No closed trades yet. The ladder starts at 15 — collecting.
+        </p>
+      ) : (
+        <>
+          <ul className="space-y-2">
+            {rows.map((r) => (
+              <li key={`${r.strategy}-${r.instrument}`} className="text-[12.5px]">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-medium text-slate-200">
+                    {r.strategy} · {r.instrument}
+                  </span>
+                  <span
+                    className={cn(
+                      'rounded px-1.5 py-0.5 font-mono text-[10px] uppercase',
+                      STATE_STYLE[r.state] || STATE_STYLE.watching,
+                    )}
+                  >
+                    {r.state}
+                  </span>
+                  {r.frozen ? (
+                    <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400">
+                      frozen · working
+                    </span>
+                  ) : null}
+                  <span className="font-mono text-[11px] text-slate-500">
+                    {r.trades} trades · {r.trading_days}d
+                  </span>
+                </div>
+                {r.observations.length > 0 ? (
+                  <ul className="mt-1 space-y-0.5 pl-3">
+                    {r.observations.map((o, i) => (
+                      <li key={i} className="text-[12px] text-slate-400">
+                        · {o}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-0.5 pl-3 text-[11.5px] text-slate-500">{r.next_step}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 border-t border-[var(--hair)] pt-2 text-[11px] leading-relaxed text-slate-500">
+            {total} closed trades so far. watching &lt;15 · observing 15–40 · ready 40+ and 15+ days.
+            Nothing here changes a strategy — at &ldquo;ready&rdquo; the tuner will *suggest* a
+            parameter change for you to approve.
+          </p>
+        </>
+      )}
+    </section>
+  )
+}
 
 function fmt(v: number | null | undefined, currency: 'INR' | 'USD', signed = false): string {
   if (v == null || Number.isNaN(Number(v))) return '—'
@@ -203,6 +285,8 @@ export function StrategyPerformancePage() {
           {q.error instanceof Error ? q.error.message : 'Failed to load'}
         </p>
       ) : null}
+
+      <LearningPanel />
 
       {best && (best.winners.length > 0 || best.losers.length > 0) ? (
         <div className="grid gap-3 sm:grid-cols-2">

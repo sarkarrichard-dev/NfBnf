@@ -1204,6 +1204,16 @@ async def strategy_performance_api() -> dict[str, Any]:
     return await asyncio.to_thread(strategy_scorecard)
 
 
+@app.get("/api/strategy-learning", include_in_schema=False)
+async def strategy_learning_api() -> dict[str, Any]:
+    """The confidence ladder per (strategy, instrument): how much data each has,
+    what state it's in (watching / observing / ready / frozen), and flagged
+    entry patterns. Nothing here changes a strategy. Read-only."""
+    from index_ai.strategy_learning import learning_report
+
+    return await asyncio.to_thread(learning_report)
+
+
 @app.get("/api/market-context", include_in_schema=False)
 async def market_context_api(refresh: bool = Query(False)) -> dict[str, Any]:
     """FII/DII/Pro/Client positioning, India VIX, IV term structure, OI walls, pinning."""
