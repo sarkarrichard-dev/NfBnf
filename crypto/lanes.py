@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -166,8 +167,27 @@ def _fx_rate(client: DeltaClient, s) -> float:
         return 88.0
 
 
-def _open_count(state: dict[str, Any]) -> int:
-    return sum(1 for k, v in state.items() if ":" in k and isinstance(v, dict) and v.get("position"))
+def _open_counts(state: dict[str, Any]) -> dict[str, int]:
+    """Open positions per strategy — each strategy trades its own independent book."""
+    out: dict[str, int] = defaultdict(int)
+    for k, v in state.items():
+        if ":" in k and isinstance(v, dict) and v.get("position"):
+            out[k.split(":", 1)[0]] += 1
+    return out
+
+
+def _hold_exceeded(pos: dict[str, Any], now_utc: datetime, max_days: int) -> bool:
+    """True once a position has been open across more than ``max_days`` UTC-day
+    boundaries. Crypto has no session — Richard: opened today may close tomorrow,
+    no more."""
+    opened = pos.get("opened_at")
+    if not opened:
+        return False
+    try:
+        od = datetime.fromisoformat(str(opened)).date()
+    except ValueError:
+        return False
+    return (now_utc.date() - od).days > max_days
 
 
 def scan_crypto_paper(client: DeltaClient | None = None) -> list[dict[str, Any]]:
@@ -202,7 +222,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
 
     st = journal.load_state()
     fx = _fx_rate(client, s)
-    open_slots = _open_count(st)
+    open_by_strat = _open_counts(st)
     now_utc = datetime.now(timezone.utc)
     in_ny = in_ny_window(s.ny_start, s.ny_end)
     ny_date = ny_session_date(s.ny_start, s.ny_end)
@@ -256,6 +276,24 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 slot["strategy"] = new_state
                 action = ev.get("event")
 
+                # crypto has no session — force-close a position held across more
+                # than max_hold_days UTC-day boundaries, whatever the strategy says
+                if (
+                    action not in ("enter", "exit")
+                    and slot.get("position")
+                    and _hold_exceeded(slot["position"], now_utc, s.max_hold_days)
+                ):
+                    action = "exit"
+                    ev = {
+                        "strategy": strat, "asset": sym, "event": "exit",
+                        "side": slot["position"]["side"],
+                        "price": float(frame["close"].iloc[-1]),
+                        "reason": f"{s.max_hold_days}-day max hold",
+                        "ts": str(frame["datetime"].iloc[-1]),
+                    }
+                    if isinstance(slot.get("strategy"), dict):
+                        slot["strategy"]["position"] = None
+
                 # a live position the strategy isn't closing this scan may have
                 # been closed on the exchange (bracket stop / manual / liq)
                 if (
@@ -267,17 +305,17 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                     slot["strategy"]["position"] = None
                     st[key] = slot
                     journal.save_state(st)
-                    open_slots = max(0, open_slots - 1)
+                    open_by_strat[strat] = max(0, open_by_strat.get(strat, 0) - 1)
                     events.append({"strategy": strat, "asset": sym, "event": "reaped",
                                    "reason": "closed on exchange"})
                     continue
 
                 if action == "enter":
                     _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
-                                 open_slots, frame, client=client, live=live,
-                                 live_wallet=live_wallet)
+                                 open_by_strat.get(strat, 0), sum(open_by_strat.values()),
+                                 frame, client=client, live=live, live_wallet=live_wallet)
                     if slot.get("position"):
-                        open_slots += 1
+                        open_by_strat[strat] = open_by_strat.get(strat, 0) + 1
                 elif action == "exit":
                     pos = slot.get("position") or {}
                     if pos.get("mode") == "live" and not _live_close(client, contract, pos, ev):
@@ -292,7 +330,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         journal.save_state(st)  # persist the close BEFORE journalling it
                         if not _already_journalled(row["exit_id"]):
                             journal.journal(row)
-                        open_slots = max(0, open_slots - 1)
+                        open_by_strat[strat] = max(0, open_by_strat.get(strat, 0) - 1)
                         ev.update(pnl_usd=row["pnl_usd"], pnl_inr=row["pnl_inr"])
             except Exception as exc:
                 events.append({"event": "error", "strategy": strat, "asset": sym, "error": str(exc)})
@@ -393,14 +431,18 @@ def _reap_exchange_close(client, slot: dict, strat: str, sym: str, fx: float, ev
     return True
 
 
-def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc, open_slots,
-                 frame=None, *, client=None, live=False, live_wallet=0.0):
+def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
+                 strat_open, total_open, frame=None, *, client=None, live=False, live_wallet=0.0):
     if slot.get("position"):  # defensive — the engine already guards, but never double-open
         ev.update(event="hold", reason="position already open")
         return
-    if open_slots >= s.max_concurrent:
+    if strat_open >= s.max_concurrent:
         new_state["position"] = None
-        ev.update(event="wait", reason=f"max {s.max_concurrent} concurrent positions")
+        ev.update(event="wait", reason=f"{strat}: max {s.max_concurrent} open (per strategy)")
+        return
+    if s.max_open_total and total_open >= s.max_open_total:
+        new_state["position"] = None
+        ev.update(event="wait", reason=f"portfolio cap: {s.max_open_total} open across all strategies")
         return
     entry_px = float(ev["price"])
     side = ev["side"]

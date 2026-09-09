@@ -66,8 +66,21 @@ direction **and** price is on the right side of the Kumo **and** the forward
 cloud agrees. Exit: `index_ai.strategies.ichimoku.cloud_reentry_exit` (price
 back into the cloud) or hard SL.
 
-They run as **independent lanes** — never share a position; both long BTC is two
-journal rows, capped by `CRYPTO_MAX_CONCURRENT`.
+## Each strategy trades its own book
+
+Strategies are fully **isolated** so their performance can be measured on its
+own (Strategy P&L page). `CRYPTO_MAX_CONCURRENT` is the open-position cap **per
+strategy** — one strategy holding its max can't block another. `CRYPTO_MAX_OPEN_TOTAL`
+(default 0 = unlimited) is a portfolio-wide safety cap across all strategies.
+Two strategies both long BTC is two independent journal rows.
+
+## No session, so a hard hold cap
+
+Delta perps trade 24/7 with no square-off. A position opened today may run
+overnight, but is **force-closed once it has been open across more than
+`CRYPTO_MAX_HOLD_DAYS` (default 1) UTC-day boundaries** — regardless of what the
+strategy says. Normal exits (take-profit, trailing stop) still fire first. The
+Indian side is different: strictly intraday, everything flat by 15:10 IST.
 
 ## Cost model (Phase 3)
 
