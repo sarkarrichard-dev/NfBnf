@@ -116,12 +116,9 @@ def _viable_sell_blocks(instrument: str) -> tuple[bool, str]:
     try:
         from index_ai.strategies.options_cpr.config import config_for, with_overrides
         from index_ai.strategies.options_cpr.viability import NOT_VIABLE, viability
-        from index_ai.strategies.strategy_params import get_strategy_params
 
-        cfg = with_overrides(
-            config_for(instrument),
-            sell_naked=not get_strategy_params().apex_use_hedged_spreads,
-        )
+        # the sell lane is 2-leg hedged directional only (no naked)
+        cfg = with_overrides(config_for(instrument), sell_naked=False)
         v = viability(instrument, "sell", cfg=cfg)
         if v.verdict == NOT_VIABLE:
             return True, f"not viable on {instrument} — {v.reason}"

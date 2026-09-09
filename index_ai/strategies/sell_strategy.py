@@ -1,4 +1,10 @@
-"""Directional credit selling — CPR support/resistance + 5m EMA + volume + 15m trend."""
+"""Directional credit selling — CPR support/resistance + 5m EMA + volume + 15m trend.
+
+**2-leg directional only** (Richard, 2026-09-10): the sell lane emits *only*
+``SELL_BULL_PUT_SPREAD`` / ``SELL_BEAR_CALL_SPREAD`` — one sold leg + one hedge,
+for credit. No range selling (iron condor), no naked single-leg. Fewer legs →
+less brokerage, STT and slippage.
+"""
 
 from __future__ import annotations
 
@@ -8,17 +14,16 @@ import pandas as pd
 
 from index_ai.strategies.bar_volume import volume_confirms
 from index_ai.strategies.cpr_regime import CprRegime
-from index_ai.strategies.credit_spread import map_premium_sell_to_hedged_credit
 from index_ai.strategies.ema_cross import analyze_ema_cross
 from index_ai.strategies.strategy import StrategySignal, add_indicators
 from index_ai.strategies.strategy_mode import pick_auto_credit
 from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
-from index_ai.strategies.premium_sell import PREMIUM_SELL_ACTIONS
+
+_ALLOWED_SELL_ACTIONS = frozenset({"SELL_BULL_PUT_SPREAD", "SELL_BEAR_CALL_SPREAD"})
 
 
 def _structure_for_bias(day_bias: str) -> str:
     return {
-        "SIDEWAYS": "IRON_CONDOR",
         "TRENDING_BULL": "BULL_PUT_SPREAD",
         "TRENDING_BEAR": "BEAR_CALL_SPREAD",
     }.get(day_bias, "")
@@ -52,29 +57,7 @@ def _credit_confidence(
     return round(base, 3)
 
 
-def _naked_at_cpr_boundary(
-    regime: CprRegime,
-    price: float,
-    *,
-    allow_naked: bool,
-) -> tuple[str | None, str]:
-    if not allow_naked:
-        return None, ""
-    tol = 0.0012
-    if regime.day_bias == "TRENDING_BULL" and price >= regime.tc * (1 - tol):
-        return (
-            "SELL_ATM_PUT",
-            f"CPR sell: price at/above TC {regime.tc:.0f} — bullish bias, naked put. {regime.note}",
-        )
-    if regime.day_bias == "TRENDING_BEAR" and price <= regime.bc * (1 + tol):
-        return (
-            "SELL_ATM_CALL",
-            f"CPR sell: price at/below BC {regime.bc:.0f} — bearish bias, naked call. {regime.note}",
-        )
-    return None, ""
-
-
-_BULL_SELL = {"SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT"}
+_BULL_SELL = {"SELL_BULL_PUT_SPREAD"}
 
 
 def _trend15_block(
@@ -149,8 +132,6 @@ def evaluate_sell_signal(
         ema_aligned=str(cross.get("aligned") or ""),
     )
 
-    allow_naked = not cfg.apex_use_hedged_spreads
-
     action, reason, mode = pick_auto_credit(
         regime,
         cross,
@@ -159,22 +140,6 @@ def evaluate_sell_signal(
         frame=df,
         trend15=trend15,
     )
-
-    if not action:
-        naked, naked_reason = _naked_at_cpr_boundary(regime, price, allow_naked=allow_naked)
-        if naked and cross.get("cross"):
-            # same tape veto pick_auto_credit applies — never let a vetoed hedged
-            # spread fall through to an *unhedged* short in the same direction
-            from index_ai.strategies.candlestick_sr import intraday_candle_trend
-
-            tape = intraday_candle_trend(df, lookback=15)
-            opposed = (naked == "SELL_ATM_PUT" and tape == "DOWN") or (
-                naked == "SELL_ATM_CALL" and tape == "UP"
-            )
-            if not opposed:
-                action = naked
-                reason = naked_reason
-                mode = "cpr_naked"
 
     if not action:
         return StrategySignal(
@@ -219,28 +184,16 @@ def evaluate_sell_signal(
         volume_ratio=float(vol_stats.get("ratio") or 1.0),
     )
 
-    if action in PREMIUM_SELL_ACTIONS and cfg.apex_use_hedged_spreads:
-        hedged = map_premium_sell_to_hedged_credit(action)
-        if hedged:
-            action = hedged
-            reason = f"{reason} (hedged spread, wings {cfg.credit_wing_strikes} steps)."
-            mode = "cpr_hedged"
-
-    if action == "SELL_IRON_CONDOR":
-        spread_pct = abs(ema_fast - ema_slow) / max(abs(price), 1.0) * 100.0
-        max_spread = max(0.0, float(cfg.max_sideways_ema_spread_pct))
-        if max_spread and spread_pct > max_spread:
-            return StrategySignal(
-                action="NO_TRADE",
-                reason=(
-                    f"Sideways CPR iron condor skipped: EMA spread {spread_pct:.3f}% "
-                    f"> gate {max_spread:.3f}%."
-                ),
-                confidence=0.0,
-                strategy_mode="wait",
-                ema_spread_pct=round(spread_pct, 4),
-                **base,
-            )
+    # hard stop: the sell lane is 2-leg directional only. pick_auto_credit is
+    # already directional-only, so this only fires if something upstream changes.
+    if action not in _ALLOWED_SELL_ACTIONS:
+        return StrategySignal(
+            action="NO_TRADE",
+            reason=f"Sell lane is 2-leg directional only — {action} is not allowed.",
+            confidence=0.0,
+            strategy_mode="wait",
+            **base,
+        )
 
     vol_note = ""
     if vol_stats.get("ready"):
