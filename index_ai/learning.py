@@ -1388,7 +1388,7 @@ def record_trade_outcome(trade_id: str, pnl: float, note: str | None = None) -> 
         )
     learned = update_learning()
     # True only when THIS call flipped an open row to CLOSED. A no-op (already
-    # closed, or lost a race) returns False so the caller can skip re-notifying
+    # closed, or lost a race) returns False so the caller reports ALREADY_CLOSED
     # — this is what stopped the "same EXIT re-journalled on every restart" loop.
     learned["_transitioned"] = transitioned
     return learned

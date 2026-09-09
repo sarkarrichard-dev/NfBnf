@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -249,37 +249,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     crypto_nightly_task = asyncio.create_task(_crypto_nightly_loop())
 
-    async def _crypto_day_summary_loop() -> None:
-        """Crypto end-of-day Telegram recap at 23:58 IST, once per IST day.
-        Lists anything still open. Opt-in, never fatal."""
-        try:
-            from crypto.config import CRYPTO_MEMORY
-            from crypto.day_review import send_day_summary
-            from crypto.lanes import enabled as crypto_enabled
-        except Exception:
-            return
-        ist = ZoneInfo("Asia/Kolkata")
-        _clog = logging.getLogger("crypto.lanes")
-        mark = CRYPTO_MEMORY / "crypto_day_summary.txt"
-        while True:
-            now = datetime.now(ist)
-            target = now.replace(hour=23, minute=58, second=0, microsecond=0)
-            if now >= target:
-                target += timedelta(days=1)
-            await asyncio.sleep(max(30.0, (target - now).total_seconds()))
-            try:
-                day = datetime.now(ist).date().isoformat()
-                done = mark.read_text(encoding="utf-8").strip() if mark.is_file() else ""
-                if crypto_enabled() and done != day:
-                    r = await asyncio.to_thread(send_day_summary)
-                    _clog.info("crypto day summary %s: %s", day, r)
-                    mark.parent.mkdir(parents=True, exist_ok=True)
-                    mark.write_text(day, encoding="utf-8")
-            except Exception:
-                _clog.warning("crypto day summary loop error", exc_info=True)
-
-    crypto_day_summary_task = asyncio.create_task(_crypto_day_summary_loop())
-
     async def _warm() -> None:
         """Spin up the thread pool and touch the modules the first UI action needs.
 
@@ -343,7 +312,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     warm_task.cancel()
     crypto_task.cancel()
     crypto_nightly_task.cancel()
-    crypto_day_summary_task.cancel()
     eod_catch_up_task.cancel()
     for task in (
         renew_task,
@@ -353,7 +321,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         warm_task,
         crypto_task,
         crypto_nightly_task,
-        crypto_day_summary_task,
         eod_catch_up_task,
     ):
         try:
