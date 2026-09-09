@@ -6,11 +6,14 @@ for credit. No range selling (iron condor), no naked single-leg.
 
 **Direction comes from the OI profile** (Richard's edge): the max call/put OI
 strikes are the ceiling and floor, max pain is the bias. CPR is kept only for
-target / stop pivots downstream. When the option chain is unavailable the lane
-falls back to the CPR + EMA read (``pick_auto_credit``).
+target / stop pivots downstream. When the chain is missing *or* carries no
+usable OI walls, the lane falls back to the CPR + EMA read
+(``pick_auto_credit``). The OI path still re-applies ``pick_auto_credit``'s 5m
+tape veto — a bull put credit is never sold into a selling-off day.
 
-A **failed breakout** is a *veto only* — the lane will not sell a spread that
-fights an intraday breakout that is still holding.
+A **breakout that is still holding** (price beyond the prior 20-bar range right
+now) is a *veto only* — the lane will not sell a spread that fights it. No
+reversal-entry logic.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ import pandas as pd
 
 from index_ai.options_oi import OptionOiContext
 from index_ai.strategies.bar_volume import volume_confirms
-from index_ai.strategies.breakout import detect_breakout
+from index_ai.strategies.candlestick_sr import intraday_candle_trend
 from index_ai.strategies.cpr_regime import CprRegime
 from index_ai.strategies.ema_cross import analyze_ema_cross
 from index_ai.strategies.oi_credit import decide as oi_decide
@@ -30,17 +33,35 @@ from index_ai.strategies.strategy_mode import pick_auto_credit
 from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
 
 _ALLOWED_SELL_ACTIONS = frozenset({"SELL_BULL_PUT_SPREAD", "SELL_BEAR_CALL_SPREAD"})
+_BULL_CREDIT = "SELL_BULL_PUT_SPREAD"
+_BEAR_CREDIT = "SELL_BEAR_CALL_SPREAD"
 
 
 def _breakout_vetoes(action: str, frame: pd.DataFrame) -> str:
-    """A live, still-holding breakout vetoes a credit spread that fights it."""
-    br = detect_breakout(frame, lookback=20)
-    if not br.get("ready"):
+    """A breakout that is *currently holding* — price beyond the range of the
+    bars *before* the break (last 3 bars excluded so a 1-3 bar break is measured
+    against the pre-break range) — vetoes a credit spread that fights it."""
+    if len(frame) < 24:
         return ""
-    if action == "SELL_BEAR_CALL_SPREAD" and br.get("break_res"):
-        return f"upside breakout over {br['range_high']:.0f} still holding"
-    if action == "SELL_BULL_PUT_SPREAD" and br.get("break_sup"):
-        return f"downside breakdown under {br['range_low']:.0f} still holding"
+    prior = frame.iloc[-24:-3]  # ~21 bars, ending 3 before now
+    hi, lo = float(prior["high"].max()), float(prior["low"].min())
+    last = float(frame["close"].iloc[-1])
+    if action == _BEAR_CREDIT and last > hi:
+        return f"price {last:.0f} above the prior range high {hi:.0f} — upside breakout holding"
+    if action == _BULL_CREDIT and last < lo:
+        return f"price {last:.0f} below the prior range low {lo:.0f} — breakdown holding"
+    return ""
+
+
+def _tape_opposes(action: str, frame: pd.DataFrame) -> str:
+    """The 5m HH/HL-vs-LH/LL tape read — same veto ``pick_auto_credit`` applies,
+    re-applied on the OI path so a bull put credit can't be sold into a
+    selling-off day (the 2026-09-08 BANKNIFTY loss)."""
+    tape = intraday_candle_trend(frame, lookback=15)
+    if action == _BULL_CREDIT and tape == "DOWN":
+        return "5m tape is DOWN — the day is selling off, don't sell puts into it"
+    if action == _BEAR_CREDIT and tape == "UP":
+        return "5m tape is UP — the day is rallying, don't sell calls into it"
     return ""
 
 
@@ -156,7 +177,10 @@ def evaluate_sell_signal(
         ema_aligned=str(cross.get("aligned") or ""),
     )
 
-    if cfg.sell_oi_primary and oi is not None:
+    oi_usable = (
+        oi is not None and oi.max_call_oi_strike is not None and oi.max_put_oi_strike is not None
+    )
+    if cfg.sell_oi_primary and oi_usable:
         action, reason = oi_decide(oi, price, max_pain=oi.max_pain)
         mode = "oi_credit"
         if not action:
@@ -165,6 +189,17 @@ def evaluate_sell_signal(
                 reason=f"OI sell: {reason}",
                 confidence=0.0,
                 strategy_mode="wait",
+                **base,
+            )
+        # the OI path bypasses pick_auto_credit — re-apply its 5m tape veto here,
+        # the one guard that stops selling into a wrong-way intraday move.
+        opp = _tape_opposes(action, df)
+        if opp:
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=f"OI sell blocked — {opp}.",
+                confidence=0.0,
+                strategy_mode="conflict",
                 **base,
             )
     else:

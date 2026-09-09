@@ -132,20 +132,41 @@ def test_oi_primary_picks_the_sell_direction():
     assert sig.action == "NO_TRADE" and "pinned" in sig.reason
 
 
-def test_failed_breakout_is_a_veto():
-    # 21 flat bars then a single bar that closes above the range → fresh upside breakout
-    closes = [100.0] * 21 + [104.0]
+def test_breakout_veto_catches_a_still_holding_break():
+    from index_ai.strategies.sell_strategy import _breakout_vetoes
+
+    # price sat above the pre-break range for the last few bars — still holding
+    closes = [100.0] * 24 + [104.0, 104.5, 104.2]
     frame = pd.DataFrame(
         {
-            "datetime": pd.date_range("2026-05-25 09:15", periods=22, freq="5min"),
-            "open": closes,
             "high": [c + 0.5 for c in closes],
             "low": [c - 0.5 for c in closes],
             "close": closes,
-            "volume": [5000.0] * 22,
         }
     )
-    # OI would say bear call (spot jammed under a near call wall) — but the upside
-    # breakout is still holding, so the lane must veto
-    sig = _sell_signal(frame, _oi(96.0, 105.0))
-    assert sig.action == "NO_TRADE" and "breakout" in sig.reason
+    assert "breakout holding" in _breakout_vetoes("SELL_BEAR_CALL_SPREAD", frame)
+    assert (
+        _breakout_vetoes("SELL_BULL_PUT_SPREAD", frame) == ""
+    )  # bull put isn't fighting an up-break
+
+    dn = [100.0] * 24 + [96.0, 95.5, 95.8]
+    down = pd.DataFrame({"high": [c + 0.5 for c in dn], "low": [c - 0.5 for c in dn], "close": dn})
+    assert "breakdown holding" in _breakout_vetoes("SELL_BULL_PUT_SPREAD", down)
+    assert _breakout_vetoes("SELL_BEAR_CALL_SPREAD", down) == ""
+
+
+def test_oi_path_reapplies_the_tape_veto():
+    # a selling-off 5m tape (lower highs/lows) — OI leaning bull-put must be blocked
+    closes = [100.0 - i * 0.6 for i in range(30)]
+    frame = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-05-25 09:15", periods=30, freq="5min"),
+            "open": closes,
+            "high": [c + 0.3 for c in closes],
+            "low": [c - 0.3 for c in closes],
+            "close": closes,
+            "volume": [5000.0] * 30,
+        }
+    )
+    sig = _sell_signal(frame, _oi(closes[-1] - 5, closes[-1] + 20))  # walls put spot near the floor
+    assert sig.action == "NO_TRADE" and "tape is DOWN" in sig.reason
