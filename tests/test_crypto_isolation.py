@@ -3,12 +3,12 @@ the max-hold cap."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
 
-from crypto import lanes
+from crypto import journal, lanes
 from crypto.config import crypto_settings
 from crypto.delta.products import Contract
 
@@ -163,3 +163,67 @@ def test_apply_entry_blocks_at_portfolio_cap(monkeypatch):
         frame=_frame(),
     )
     assert ev["event"] == "wait" and "portfolio cap" in ev["reason"]
+
+
+def test_scan_force_closes_a_stale_position_the_strategy_wont_exit(tmp_path, monkeypatch):
+    """End-to-end: a lane position opened 3 days ago, strategy says 'hold' →
+    the lane force-closes it and journals a 'max hold' row."""
+    monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
+    monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_FVG_SCALP_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_EMA_PIVOT_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD")
+    monkeypatch.setenv("CRYPTO_MAX_HOLD_DAYS", "1")
+    monkeypatch.setenv("CRYPTO_USDINR", "88")
+    monkeypatch.delenv("DELTA_API_KEY", raising=False)
+    monkeypatch.delenv("DELTA_API_SECRET", raising=False)
+    monkeypatch.setattr(journal, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(journal, "JOURNAL_PATH", tmp_path / "journal.jsonl")
+
+    contract = Contract("BTCUSD", 27, 0.001, 0.5, 1, 100)
+    monkeypatch.setattr(lanes.products, "all_contracts", lambda client=None: {"BTCUSD": contract})
+    monkeypatch.setattr(lanes.charges, "sample_spread", lambda *a, **k: None)
+    monkeypatch.setattr(lanes.market_data, "depth", lambda *a, **k: {})
+    fr = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-09-13", periods=30, freq="5min", tz="UTC"),
+            "open": [60000.0] * 30,
+            "high": [60100.0] * 30,
+            "low": [59900.0] * 30,
+            "close": [60500.0] * 30,
+            "volume": [10.0] * 30,
+        }
+    )
+    monkeypatch.setattr(lanes.market_data, "candles", lambda *a, **k: fr)
+    # strategy is happy to keep holding
+    monkeypatch.setattr(
+        lanes.nb,
+        "step",
+        lambda *a, **k: ({"position": {"side": "long"}}, {"event": "hold", "side": "long"}),
+    )
+
+    opened = (datetime.now(_UTC) - timedelta(days=4)).replace(microsecond=0).isoformat()
+    stale = {
+        "strategy": "ny_n_break",
+        "asset": "BTCUSD",
+        "side": "long",
+        "day": opened[:10],
+        "mode": "paper",
+        "entry_price": 60000.0,
+        "entry_time": opened,
+        "size": 1,
+        "contract_value": 0.001,
+        "leverage": 100.0,
+        "margin_total_usd": 5.0,
+        "notional_usd": 60.0,
+        "opened_at": opened,
+    }
+    journal.save_state(
+        {"ny_n_break:BTCUSD": {"strategy": {"position": {"side": "long"}}, "position": stale}}
+    )
+
+    events = lanes.scan_crypto_paper()
+    assert any("max hold" in str(e.get("reason", "")) for e in events), events
+    rows = journal.recent()
+    assert len(rows) == 1 and "max hold" in rows[0]["exit_reason"]
+    assert journal.load_state()["ny_n_break:BTCUSD"].get("position") is None

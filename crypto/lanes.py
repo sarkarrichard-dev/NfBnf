@@ -222,7 +222,6 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
 
     st = journal.load_state()
     fx = _fx_rate(client, s)
-    open_by_strat = _open_counts(st)
     now_utc = datetime.now(timezone.utc)
     in_ny = in_ny_window(s.ny_start, s.ny_end)
     ny_date = ny_session_date(s.ny_start, s.ny_end)
@@ -239,6 +238,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
 
     strategies = _enabled_strategies(s)
     _prune_removed_strategies(st, strategies, client, fx, now_utc, events)
+    open_by_strat = _open_counts(st)  # after prune — pruned positions must not count
 
     for strat in strategies:
         for sym in s.symbols:
@@ -277,9 +277,12 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 action = ev.get("event")
 
                 # crypto has no session — force-close a position held across more
-                # than max_hold_days UTC-day boundaries, whatever the strategy says
+                # than max_hold_days UTC-day boundaries, whatever the strategy
+                # says. `action != "exit"` (not `not in (enter, exit)`) so a
+                # strategy whose internal view desynced and keeps emitting
+                # `enter` on a lane position we already hold still gets closed.
                 if (
-                    action not in ("enter", "exit")
+                    action != "exit"
                     and slot.get("position")
                     and _hold_exceeded(slot["position"], now_utc, s.max_hold_days)
                 ):
