@@ -21,17 +21,12 @@ plus an optional max-pain reading and returns ``(action, reason)``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from index_ai.options_oi import OptionOiContext
 
-
-@dataclass(frozen=True)
-class OiCreditConfig:
-    wall_buffer_pct: float = 0.15  # spot must be at least this far the safe side of the near wall
-    room_min_pct: float = 0.25  # …and at least this much clear space to the opposing wall
-    max_pain_bias_pct: float = 0.40  # |spot-maxpain| beyond this tilts the call/put choice
-    pin_skip_pct: float = 0.20  # spot within this of max pain on expiry-ish → skip (chop)
+WALL_BUFFER_PCT = 0.15  # spot must be at least this far the safe side of the near wall
+ROOM_MIN_PCT = 0.25  # …and at least this much clear space either side of mid to lean
+MAX_PAIN_BIAS_PCT = 0.40  # |spot-maxpain| beyond this tilts the call/put choice
+PIN_SKIP_PCT = 0.20  # spot within this of max pain → skip (chop)
 
 
 def _pct_away(a: float, b: float) -> float:
@@ -43,10 +38,7 @@ def decide(
     price: float,
     *,
     max_pain: float | None = None,
-    pin_pressure: bool = False,
-    cfg: OiCreditConfig | None = None,
 ) -> tuple[str | None, str]:
-    c = cfg or OiCreditConfig()
     if oi is None or oi.max_put_oi_strike is None or oi.max_call_oi_strike is None:
         return None, "no OI walls — chain missing or flat"
 
@@ -55,19 +47,19 @@ def decide(
     if support >= resistance:
         return None, f"OI walls crossed (put {support:.0f} ≥ call {resistance:.0f})"
 
-    if pin_pressure or (max_pain and _pct_away(price, max_pain) < c.pin_skip_pct):
+    if max_pain and _pct_away(price, max_pain) < PIN_SKIP_PCT:
         return None, f"spot pinned near max pain {max_pain:.0f} — no directional credit"
 
     above_support = (price - support) / price * 100.0
     below_resistance = (resistance - price) / price * 100.0
 
     # inside the walls at all?
-    if above_support < c.wall_buffer_pct:
+    if above_support < WALL_BUFFER_PCT:
         return (
             None,
             f"OI: spot at/through the put wall {support:.0f} — floor breaking, no bull credit",
         )
-    if below_resistance < c.wall_buffer_pct:
+    if below_resistance < WALL_BUFFER_PCT:
         return (
             None,
             f"OI: spot at/through the call wall {resistance:.0f} — ceiling breaking, no bear credit",
@@ -75,16 +67,13 @@ def decide(
 
     # dead-centre between the walls → no lean
     mid = (support + resistance) / 2.0
-    if _pct_away(price, mid) < c.room_min_pct:
-        centred = True
-    else:
-        centred = False
+    centred = _pct_away(price, mid) < ROOM_MIN_PCT
     leaning_support = price < mid  # closer to the floor → sell the bull put spread under it
 
     # max-pain tilt — vetoes a fight against a strong pull, breaks a centred tie
     mp_dist = _pct_away(price, max_pain) if max_pain else 0.0
-    mp_up = max_pain is not None and price < max_pain and mp_dist >= c.max_pain_bias_pct
-    mp_down = max_pain is not None and price > max_pain and mp_dist >= c.max_pain_bias_pct
+    mp_up = max_pain is not None and price < max_pain and mp_dist >= MAX_PAIN_BIAS_PCT
+    mp_down = max_pain is not None and price > max_pain and mp_dist >= MAX_PAIN_BIAS_PCT
 
     if centred:
         if mp_up:

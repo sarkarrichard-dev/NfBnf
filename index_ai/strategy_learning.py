@@ -114,7 +114,7 @@ def _observations(rows: list[dict[str, Any]]) -> list[str]:
     if len(blocks) >= 2:
         blocks.sort(key=lambda x: x[1] or 0.0)
         b, wr, n = blocks[0]
-        rest = [p for r in rows if (r.get("_hour") or 0) // 3 != b for p in [r["_pnl"]]]
+        rest = [r["_pnl"] for r in rows if (r.get("_hour") or 0) // 3 != b]
         rw = _win_rate(rest)
         if wr is not None and rw is not None and rw - wr >= 0.20:
             out.append(
