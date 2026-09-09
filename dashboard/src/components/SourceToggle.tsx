@@ -1,22 +1,23 @@
 import { useCallback, useState } from 'react'
 import { cn } from '../lib/cn'
 
-/** All | Index | Crypto — which trades the Reports and Trade-history pages show.
- *  Persisted per browser so the choice survives a reload. */
-export type TradeSource = 'all' | 'index' | 'crypto'
+/** All | Index | Crypto | Futures — which trades the Reports and Trade-history
+ *  pages show. Persisted per browser so the choice survives a reload. */
+export type TradeSource = 'all' | 'index' | 'crypto' | 'futures'
 
 const KEY = 'qh.tradeSource'
 const OPTS: { id: TradeSource; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'index', label: 'Index' },
   { id: 'crypto', label: 'Crypto' },
+  { id: 'futures', label: 'Futures' },
 ]
 
 export function useTradeSource(): [TradeSource, (s: TradeSource) => void] {
   const [src, setSrc] = useState<TradeSource>(() => {
     try {
       const v = localStorage.getItem(KEY)
-      if (v === 'all' || v === 'index' || v === 'crypto') return v
+      if (v === 'all' || v === 'index' || v === 'crypto' || v === 'futures') return v
     } catch {
       /* ignore */
     }

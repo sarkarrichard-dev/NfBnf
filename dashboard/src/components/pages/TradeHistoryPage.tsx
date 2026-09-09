@@ -5,6 +5,7 @@ import { PeriodBar } from '../PeriodBar'
 import { SourceToggle, useTradeSource } from '../SourceToggle'
 import { TradeLogTable } from '../TradeLogTable'
 import { useCryptoJournal } from '../../hooks/useCryptoJournal'
+import { useFuturesJournal } from '../../hooks/useFuturesJournal'
 import { logRowsToCsv } from '../../lib/cryptoRows'
 import { logRowsForPeriod } from '../../lib/pnl'
 import type { DateRange, LogRow, PeriodKey, TradeRow } from '../../types/analytics'
@@ -23,19 +24,22 @@ export function TradeHistoryPage({
   const [period, setPeriod] = useState<PeriodKey>('month')
   const [range, setRange] = useState<DateRange>({ from: '', to: '' })
   const [source, setSource] = useTradeSource()
-  const crypto = useCryptoJournal(source !== 'index')
+  const crypto = useCryptoJournal(source === 'all' || source === 'crypto')
+  const futures = useFuturesJournal(source === 'all' || source === 'futures')
 
   const allLogRows = useMemo<LogRow[]>(() => {
     if (source === 'index') return logRows
     if (source === 'crypto') return crypto.logRows
-    return [...logRows, ...crypto.logRows]
-  }, [source, logRows, crypto.logRows])
+    if (source === 'futures') return futures.logRows
+    return [...logRows, ...crypto.logRows, ...futures.logRows]
+  }, [source, logRows, crypto.logRows, futures.logRows])
 
   const allTrades = useMemo<TradeRow[]>(() => {
     if (source === 'index') return trades
     if (source === 'crypto') return crypto.trades
-    return [...trades, ...crypto.trades]
-  }, [source, trades, crypto.trades])
+    if (source === 'futures') return futures.trades
+    return [...trades, ...crypto.trades, ...futures.trades]
+  }, [source, trades, crypto.trades, futures.trades])
 
   const serverExportUrl = (() => {
     const p = new URLSearchParams({ period })

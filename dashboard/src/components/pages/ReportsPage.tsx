@@ -7,6 +7,7 @@ import { SourceToggle, useTradeSource } from '../SourceToggle'
 import { EquityCurve } from '../charts/EquityCurve'
 import { PnlCalendar } from '../charts/PnlCalendar'
 import { useCryptoJournal } from '../../hooks/useCryptoJournal'
+import { useFuturesJournal } from '../../hooks/useFuturesJournal'
 import {
   dailySeriesFromTrades,
   mergeDailySeries,
@@ -69,13 +70,15 @@ export function ReportsPage({
   const [period, setPeriod] = useState<PeriodKey>('all')
   const [range, setRange] = useState<DateRange>({ from: '', to: '' })
   const [source, setSource] = useTradeSource()
-  const crypto = useCryptoJournal(source !== 'index')
+  const crypto = useCryptoJournal(source === 'all' || source === 'crypto')
+  const futures = useFuturesJournal(source === 'all' || source === 'futures')
 
   const allTrades = useMemo<TradeRow[]>(() => {
     if (source === 'index') return trades
     if (source === 'crypto') return crypto.trades
-    return [...trades, ...crypto.trades]
-  }, [source, trades, crypto.trades])
+    if (source === 'futures') return futures.trades
+    return [...trades, ...crypto.trades, ...futures.trades]
+  }, [source, trades, crypto.trades, futures.trades])
 
   const scoped = useMemo(
     () => tradesForPeriod(allTrades, period, range).filter((t) => t.pnl != null),
@@ -115,9 +118,10 @@ export function ReportsPage({
   const daily = useMemo<DailyPoint[]>(() => {
     const index = analytics?.daily_series ?? []
     if (source === 'index') return index
-    const cryptoDaily = dailySeriesFromTrades(crypto.trades)
-    return source === 'crypto' ? cryptoDaily : mergeDailySeries(index, cryptoDaily)
-  }, [source, analytics?.daily_series, crypto.trades])
+    if (source === 'crypto') return dailySeriesFromTrades(crypto.trades)
+    if (source === 'futures') return dailySeriesFromTrades(futures.trades)
+    return mergeDailySeries(index, dailySeriesFromTrades([...crypto.trades, ...futures.trades]))
+  }, [source, analytics?.daily_series, crypto.trades, futures.trades])
 
   const equity = useMemo(() => {
     if (!daily.length) return []

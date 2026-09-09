@@ -1,20 +1,26 @@
 """
-Live paper-trading for the directional index-futures strategy.
+Live paper-trading for the directional futures strategy.
 
-Runs inside the scanner loop (behind ENABLE_FUTURES_PAPER). Each tick pulls recent
-5m + 15m spot candles, runs the same engine as the backtest, and journals paper
-LONG/SHORT positions. State in memory/futures_paper.json, closed trades in
-memory/futures_journal.jsonl. Deliberately separate from the options executor /
-journal, which are option-legs shaped.
+Runs inside the scanner loop. Each tick pulls recent 5m + 15m spot candles, runs
+the same engine as the backtest, and journals paper LONG/SHORT positions. State
+in memory/futures_paper.json, closed trades in memory/futures_journal.jsonl.
+Deliberately separate from the options executor / journal, which are option-legs
+shaped.
 
-Signal + "fill" price use spot (futures track it with a small, decaying basis) —
-good enough for forward paper data.
+Two universes, each behind its own toggle:
+  * ENABLE_FUTURES_PAPER       — the 3 indices (FUTURES_PAPER_INSTRUMENTS)
+  * ENABLE_STOCK_FUTURES_PAPER — the 20-name NSE stock-futures universe
+For a stock the "spot" is the cash-equity candle (near-month basis is small and
+decays to zero by expiry); point-based stops scale to the stock's daily ATR.
+The backtest verdict on this signal is negative for both — this lane is forward
+paper only, never wired to live orders.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -29,10 +35,42 @@ from index_ai.candle_cache import to_ist_session_frame
 from index_ai.charges import futures_round_trip_rupees, futures_slippage_rupees
 from index_ai.strategies.futures.config import FuturesConfig, config_for, with_overrides
 from index_ai.strategies.futures.engine import FLAT, LONG, entry_trigger, trend_read
+from index_ai.strategies.futures.stock_config import daily_atr, stock_config
+from index_ai.strategies.futures.stock_universe import STOCK_FUTURES_UNIVERSE, load_universe_meta
 
 IST = ZoneInfo("Asia/Kolkata")
 STATE_PATH = MEMORY_DIR / "futures_paper.json"
 JOURNAL_PATH = MEMORY_DIR / "futures_journal.jsonl"
+_ATR_PATH = MEMORY_DIR / "stock_atr.json"
+
+# per-run caches, all fail-open
+_STOCK_META: dict[str, dict[str, int]] = {}
+_ATR_TODAY: dict[str, float] = {}
+_FRAME_CACHE: dict[tuple[str, str], tuple[float, pd.DataFrame]] = {}
+_FRAME_TTL_S = 240.0  # a 5m bar closes every 5 min — don't re-pull faster than that
+
+
+def _stock_meta() -> dict[str, dict[str, int]]:
+    global _STOCK_META
+    if not _STOCK_META:
+        try:
+            _STOCK_META = load_universe_meta()
+        except Exception:
+            _STOCK_META = {}
+    return _STOCK_META
+
+
+def _is_stock(key: str) -> bool:
+    return key.upper() in STOCK_FUTURES_UNIVERSE
+
+
+def stock_paper_enabled() -> bool:
+    return os.getenv("ENABLE_STOCK_FUTURES_PAPER", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def enabled() -> bool:
@@ -40,18 +78,92 @@ def enabled() -> bool:
 
 
 def instruments() -> list[str]:
+    """The configured indices (if ENABLE_FUTURES_PAPER) plus the stock universe
+    (if ENABLE_STOCK_FUTURES_PAPER). FUTURES_PAPER_INSTRUMENTS defaults empty, so
+    the default lane is the 20 stocks; add "NIFTY,BANKNIFTY" there for indices."""
     from index_ai.instruments import index_paused
 
-    raw = os.getenv("FUTURES_PAPER_INSTRUMENTS", "NIFTY,BANKNIFTY,SENSEX")
-    return [
-        x.strip().upper()
-        for x in raw.split(",")
-        if x.strip() and not index_paused(x.strip())
-    ]
+    out: list[str] = []
+    if enabled():
+        raw = os.getenv("FUTURES_PAPER_INSTRUMENTS", "")
+        out += [
+            x.strip().upper() for x in raw.split(",") if x.strip() and not index_paused(x.strip())
+        ]
+    if stock_paper_enabled():
+        out += [s for s in STOCK_FUTURES_UNIVERSE if s in _stock_meta()]
+    return out
+
+
+def _stock_instrument(key: str):
+    """Hand-built IndexInstrument for an NSE cash-equity security (candle fetch
+    reads only security_id / segment / instrument_type)."""
+    from index_ai.instruments import IndexInstrument
+
+    m = _stock_meta()[key.upper()]
+    return IndexInstrument(
+        key=key.upper(),
+        label=key.upper(),
+        underlying_security_id=int(m["security_id"]),
+        underlying_segment="NSE_EQ",
+        instrument_type="EQUITY",
+        option_segment="NSE_FNO",
+        strike_step=1,
+        lot_size=int(m["lot_size"]),
+        trail_activation_points=0.0,
+        trail_distance_points=0.0,
+        initial_stop_points=0.0,
+    )
+
+
+def _load_atr_cache() -> dict[str, Any]:
+    try:
+        return json.loads(_ATR_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def warm_stock_atr(client: DhanClient) -> None:
+    """Populate _ATR_TODAY for every stock — one daily-candle fetch per name per
+    IST day, cached on disk. Fail-open: a missing ATR falls back in _cfg."""
+    if not stock_paper_enabled():
+        return
+    today = now_ist().date().isoformat()
+    cache = _load_atr_cache()
+    changed = False
+    for sym in (s for s in STOCK_FUTURES_UNIVERSE if s in _stock_meta()):
+        row = cache.get(sym) or {}
+        if row.get("date") == today and row.get("atr"):
+            _ATR_TODAY[sym] = float(row["atr"])
+            continue
+        try:
+            now = now_ist()
+            raw = client.historical_daily(
+                _stock_instrument(sym),
+                from_date=(now - timedelta(days=120)).strftime("%Y-%m-%d"),
+                to_date=now.strftime("%Y-%m-%d"),
+            )
+            atr = daily_atr(chart_response_to_frame(raw))
+            if atr > 0:
+                _ATR_TODAY[sym] = atr
+                cache[sym] = {"atr": round(atr, 2), "date": today}
+                changed = True
+        except Exception:
+            continue
+    if changed:
+        try:
+            MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+            _ATR_PATH.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+        except OSError:
+            pass
 
 
 def _cfg(key: str) -> FuturesConfig:
-    cfg = config_for(key)
+    if _is_stock(key):
+        m = _stock_meta().get(key.upper(), {})
+        atr = _ATR_TODAY.get(key.upper()) or 15.0  # fallback if the daily fetch failed
+        cfg = stock_config(key, int(m.get("lot_size") or 1), atr)
+    else:
+        cfg = config_for(key)
     ov: dict[str, Any] = {}
     for field in cfg.__dataclass_fields__:
         env = os.getenv(f"FUT_{field.upper()}")
@@ -59,7 +171,9 @@ def _cfg(key: str) -> FuturesConfig:
             continue
         cur = getattr(cfg, field)
         try:
-            ov[field] = type(cur)(env) if not isinstance(cur, bool) else env.lower() in {"1", "true", "yes"}
+            ov[field] = (
+                type(cur)(env) if not isinstance(cur, bool) else env.lower() in {"1", "true", "yes"}
+            )
         except Exception:
             pass
     return with_overrides(cfg, **ov) if ov else cfg
@@ -86,7 +200,14 @@ def _journal(trade: dict[str, Any]) -> None:
 
 
 def _fetch(client: DhanClient, key: str, interval: str, days: int = 2) -> pd.DataFrame:
-    inst = get_instrument(key)
+    # a 5m bar closes every 5 min — with a 20-stock universe, don't re-pull the
+    # same 2-day window every scan cycle
+    ck = (key.upper(), interval)
+    hit = _FRAME_CACHE.get(ck)
+    if hit and time.monotonic() - hit[0] < _FRAME_TTL_S:
+        return hit[1]
+
+    inst = _stock_instrument(key) if _is_stock(key) else get_instrument(key)
     now = now_ist()
     start = now - timedelta(days=days)
     raw = client.intraday_history(
@@ -95,7 +216,9 @@ def _fetch(client: DhanClient, key: str, interval: str, days: int = 2) -> pd.Dat
         to_date=now.strftime("%Y-%m-%d %H:%M:%S"),
         interval=interval,
     )
-    return to_ist_session_frame(chart_response_to_frame(raw))
+    frame = to_ist_session_frame(chart_response_to_frame(raw))
+    _FRAME_CACHE[ck] = (time.monotonic(), frame)
+    return frame
 
 
 def _sessions(df: pd.DataFrame) -> dict[Any, pd.DataFrame]:
@@ -106,8 +229,9 @@ def _sessions(df: pd.DataFrame) -> dict[Any, pd.DataFrame]:
     return {d: g.drop(columns="_d").reset_index(drop=True) for d, g in df.groupby("_d")}
 
 
-def _close(pos: dict[str, Any], px: float, reason: str, cfg: FuturesConfig,
-           state: dict[str, Any]) -> dict[str, Any]:
+def _close(
+    pos: dict[str, Any], px: float, reason: str, cfg: FuturesConfig, state: dict[str, Any]
+) -> dict[str, Any]:
     d = 1 if pos["dir"] == "LONG" else -1
     pts = (px - pos["entry"]) * d
     gross = pts * cfg.lot_size
@@ -220,11 +344,25 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
         "armed": False,
         "trend_reason": tr.reason,
     }
-    verdict = _brain_check(
-        {**pos, "instrument": key, "lane": "futures",
-         "direction": pos["dir"], "entry_spot": price},
-        today5, d5.get(prev), prev15,
-    )
+    if _is_stock(key):
+        verdict = {
+            "allowed": True,
+            "reason": "stock — no index-brain gate",
+            "win_probability": None,
+        }
+    else:
+        verdict = _brain_check(
+            {
+                **pos,
+                "instrument": key,
+                "lane": "futures",
+                "direction": pos["dir"],
+                "entry_spot": price,
+            },
+            today5,
+            d5.get(prev),
+            prev15,
+        )
     if not verdict["allowed"]:
         out["reason"] = f"brain: {verdict['reason']}"
         return out
@@ -237,8 +375,9 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
 
 
 def scan_futures_paper(client: DhanClient) -> list[dict[str, Any]]:
-    if not enabled():
+    if not (enabled() or stock_paper_enabled()):
         return []
+    warm_stock_atr(client)
     state = _load_state()
     events = [tick(client, key, state) for key in instruments()]
     _save_state(state)
@@ -258,10 +397,12 @@ def futures_paper_status() -> dict[str, Any]:
     today = now_ist().date().isoformat()
     todays = [t for t in trades if str(t.get("exit_time", ""))[:10] == today]
     return {
-        "enabled": enabled(),
+        "enabled": enabled() or stock_paper_enabled(),
         "instruments": instruments(),
         "open_positions": {
-            k: v.get("position") for k, v in state.items() if isinstance(v, dict) and v.get("position")
+            k: v.get("position")
+            for k, v in state.items()
+            if isinstance(v, dict) and v.get("position")
         },
         "today": {
             "closed": len(todays),
