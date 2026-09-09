@@ -2,6 +2,11 @@
 // ===========================================================================
 //  NY-Session N-Break  —  BTC / ETH perpetuals, 5-min chart
 // ---------------------------------------------------------------------------
+//  ⚠ PASTE THE WHOLE FILE. Line 1 MUST be `//@version=6`. If the header or
+//    any lines are missing, TradingView falls back to Pine v3 and you get
+//    "Could not find function or function reference 'color.new'" (color.new
+//    only exists in v4+). Select-all in the Pine editor, paste this, Save.
+// ---------------------------------------------------------------------------
 //  Idea (discretionary model, mechanised):
 //   * Trade only crypto perps (apply on BINANCE:BTCUSDT.P and ETHUSDT.P), 5-min.
 //   * Only inside the New York session, expressed in IST -> 18:00–23:00 (~5h).
@@ -81,7 +86,15 @@ emaV  = ta.ema(close, emaLen)
 // Default: anchor VWAP to the BTC daily open (00:00 UTC ≈ 05:30 IST morning) so it
 // carries the whole day into the NY session. Toggle to session-anchored if preferred.
 vwapAnchorEvt = vwapAnchor == "NY session start" ? newSess : timeframe.change("1D")
-vwapV = ta.vwap(hlc3, vwapAnchorEvt)
+// hand-rolled anchored VWAP — no dependence on ta.vwap's optional-arg overloads
+var float _vwPV = 0.0
+var float _vwV  = 0.0
+if vwapAnchorEvt
+    _vwPV := 0.0
+    _vwV  := 0.0
+_vwPV += hlc3 * nz(volume)
+_vwV  += nz(volume)
+vwapV = _vwV > 0 ? _vwPV / _vwV : hlc3
 aboveBoth = close > emaV and close > vwapV
 belowBoth = close < emaV and close < vwapV
 

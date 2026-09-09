@@ -1,0 +1,240 @@
+//@version=6
+// ===========================================================================
+//  AK Roxx Pro — reconstruction  (independent Pine v6, from observed behaviour)
+// ---------------------------------------------------------------------------
+//  Rebuilt from the public inputs, plot list and release notes of the invite-
+//  only script "AK Algo Buy and Sell Signals" by Ahmad_Ali_Khan. NOT a copy of
+//  the protected source — a clean reimplementation of what it visibly does, so
+//  the logic can be backtested and ported. See ak_roxx_pro.md for the spec and
+//  the caveats (repaints, friction, guessed constants).
+//
+//  Core: 21/34/55 MA ribbon (stacked + sloping) → trend. Trade only when price
+//  is beyond the 1-hour CPR, not sitting on opposing volume-weighted S/R, and
+//  the signal candle isn't oversized. One position at a time, ride to a
+//  trailing stop, 1:2 target.
+// ===========================================================================
+indicator("AK Roxx Pro (reconstruction)", overlay = true,
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 200)
+
+// ─────────────────────────── colours ───────────────────────────
+cUp      = color.new(#12b886, 0)
+cDn      = color.new(#e03131, 0)
+cNeutral = color.new(#868e96, 0)
+cCpr     = color.new(#4c6ef5, 0)
+cSup     = color.new(#12b886, 70)
+cRes     = color.new(#e03131, 70)
+cZoneNo  = color.new(#495057, 88)
+
+// ─────────────────────────── inputs ────────────────────────────
+gT = "Trend ribbon"
+maType = input.string("EMA", "MA type", options = ["EMA", "HMA", "SMA", "WMA"], group = gT)
+lenA   = input.int(21, "Fast (A)", 2, 400, group = gT)
+lenB   = input.int(34, "Mid (B)",  2, 400, group = gT)
+lenC   = input.int(55, "Slow (C)", 2, 400, group = gT)
+reqSlope   = input.bool(true, "Require slope (all three MAs sloping the trade way)", group = gT)
+slopeBars  = input.int(3, "Slope lookback (bars)", 1, 20, group = gT)
+
+gC = "1-hour CPR gate"
+reqBeyondCpr = input.bool(true, "Require price beyond ALL 1H CPR levels", group = gC)
+showPivots   = input.bool(true, "Show 1H CPR + classic daily pivots", group = gC)
+
+gS = "Volume-weighted S/R"
+pvL      = input.int(12, "Swing left bars",  1, 60, group = gS)
+pvR      = input.int(3,  "Swing right bars", 1, 60, group = gS)
+srKeep   = input.int(4,  "S/R levels to keep each side", 1, 10, group = gS)
+nearPct  = input.float(0.20, "Block entry within % of opposing level", 0.0, 2.0, step = 0.05, group = gS)
+volBars  = input.int(6, "Bars of volume to tag a level", 1, 40, group = gS)
+
+gX = "Risk / exit"
+atrLen   = input.int(14, "ATR length", 2, 100, group = gX)
+bigCandleK = input.float(2.0, "Skip signal candle bigger than K × ATR", 0.5, 6.0, step = 0.1, group = gX)
+trailK   = input.float(2.5, "Trailing stop = K × ATR behind close", 0.5, 10.0, step = 0.1, group = gX)
+rr       = input.float(2.0, "Reward : risk", 0.5, 10.0, step = 0.5, group = gX)
+
+// ─────────────────────────── MA ribbon ─────────────────────────
+f_ma(src, len) =>
+    switch maType
+        "EMA" => ta.ema(src, len)
+        "HMA" => ta.hma(src, len)
+        "SMA" => ta.sma(src, len)
+        =>       ta.wma(src, len)
+
+maA = f_ma(close, lenA)
+maB = f_ma(close, lenB)
+maC = f_ma(close, lenC)
+
+risingAll  = maA > maA[slopeBars] and maB > maB[slopeBars] and maC > maC[slopeBars]
+fallingAll = maA < maA[slopeBars] and maB < maB[slopeBars] and maC < maC[slopeBars]
+
+trendUp   = maA > maB and maB > maC and (not reqSlope or risingAll)
+trendDown = maA < maB and maB < maC and (not reqSlope or fallingAll)
+
+// ─────────────────── 1-hour CPR (prev completed 1H bar) ────────
+f_cpr() =>
+    p  = (high + low + close) / 3.0
+    bc = (high + low) / 2.0
+    tc = 2.0 * p - bc
+    [p, math.min(bc, tc), math.max(bc, tc)]
+
+[pivRaw, bcRaw, tcRaw] = request.security(syminfo.tickerid, "60", f_cpr(),
+     lookahead = barmerge.lookahead_off)
+// use the *previous* completed hour's values so nothing is forward-looking
+pivot1H = pivRaw[1]
+bc1H    = bcRaw[1]
+tc1H    = tcRaw[1]
+
+beyondUp   = not na(tc1H) and close > tc1H
+beyondDn   = not na(bc1H) and close < bc1H
+insideCpr  = not na(bc1H) and not na(tc1H) and close <= tc1H and close >= bc1H
+noTradeZone = reqBeyondCpr and insideCpr
+
+// classic daily pivots (for display only)
+[dH, dL, dC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]],
+     lookahead = barmerge.lookahead_off)
+dPP = (dH + dL + dC) / 3.0
+dR1 = 2 * dPP - dL
+dS1 = 2 * dPP - dH
+dR2 = dPP + (dH - dL)
+dS2 = dPP - (dH - dL)
+dR3 = dH + 2 * (dPP - dL)
+dS3 = dL - 2 * (dH - dPP)
+
+// ─────────────────── volume-weighted S/R levels ───────────────
+ph = ta.pivothigh(high, pvL, pvR)
+pl = ta.pivotlow(low,  pvL, pvR)
+
+var float[] resLvls = array.new_float()
+var float[] supLvls = array.new_float()
+
+f_push(arr, v) =>
+    array.unshift(arr, v)
+    if array.size(arr) > srKeep
+        array.pop(arr)
+
+if not na(ph)
+    f_push(resLvls, ph)
+if not na(pl)
+    f_push(supLvls, pl)
+
+f_nearest_above(arr, px) =>
+    best = na
+    for i = 0 to array.size(arr) - 1
+        v = array.get(arr, i)
+        if v > px and (na(best) or v < best)
+            best := v
+    best
+
+f_nearest_below(arr, px) =>
+    best = na
+    for i = 0 to array.size(arr) - 1
+        v = array.get(arr, i)
+        if v < px and (na(best) or v > best)
+            best := v
+    best
+
+resAbove = f_nearest_above(resLvls, close)
+supBelow = f_nearest_below(supLvls, close)
+
+nearRes = not na(resAbove) and (resAbove - close) / close * 100.0 <= nearPct
+nearSup = not na(supBelow) and (close - supBelow) / close * 100.0 <= nearPct
+
+// net volume tag for the most recent swing (demand vs supply)
+volNet = math.sum(close >= open ? volume : -volume, volBars)
+
+// ─────────────────────────── filters ─────────────────────────
+atr        = ta.atr(atrLen)
+bigCandle  = (high - low) > bigCandleK * atr
+
+// ─────────────────────────── signals ─────────────────────────
+var int posDir = 0          // 0 flat · 1 long · -1 short
+var float trail = na
+var float tgt   = na
+
+flat = posDir == 0
+
+rawLong  = flat and trendUp   and beyondUp and not nearRes and not bigCandle and not noTradeZone
+rawShort = flat and trendDown and beyondDn and not nearSup and not bigCandle and not noTradeZone
+
+goLong  = rawLong  and barstate.isconfirmed
+goShort = rawShort and barstate.isconfirmed
+
+if goLong
+    posDir := 1
+    risk   = trailK * atr
+    trail  := close - risk
+    tgt    := close + rr * risk
+if goShort
+    posDir := -1
+    risk   = trailK * atr
+    trail  := close + risk
+    tgt    := close - rr * risk
+
+// manage the open position — ride to the trailing stop or the 1:2 target
+if posDir == 1
+    trail := math.max(trail, close - trailK * atr)
+    if low <= trail or high >= tgt
+        posDir := 0
+        trail  := na
+        tgt    := na
+if posDir == -1
+    trail := math.min(trail, close + trailK * atr)
+    if high >= trail or low <= tgt
+        posDir := 0
+        trail  := na
+        tgt    := na
+
+// rejection markers
+resHolds       = not na(ph) and na(pl) and close < open and trendDown
+supHolds       = not na(pl) and na(ph) and close > open and trendUp
+resAsSupHolds  = not na(pl) and beyondUp and trendUp        // broken res retested from above, held
+supAsResHolds  = not na(ph) and beyondDn and trendDown
+
+// ─────────────────────────── plots ──────────────────────────
+barcolor(trendUp ? color.new(cUp, 55) : trendDown ? color.new(cDn, 55) : na)
+
+plot(maA, "MA A", color = trendUp ? cUp : trendDown ? cDn : cNeutral, linewidth = 1)
+plot(maB, "MA B", color = cNeutral, linewidth = 1)
+plot(maC, "MA C", color = color.new(cNeutral, 40), linewidth = 2)
+
+plot(showPivots ? pivot1H : na, "1H Pivot", color = cCpr, style = plot.style_linebr)
+plot(showPivots ? tc1H : na,    "1H TC",    color = color.new(cCpr, 40), style = plot.style_linebr)
+plot(showPivots ? bc1H : na,    "1H BC",    color = color.new(cCpr, 40), style = plot.style_linebr)
+
+plot(posDir != 0 ? trail : na, "Exit Line",
+     color = posDir == 1 ? cUp : cDn, style = plot.style_linebr, linewidth = 2)
+plot(posDir != 0 ? tgt : na, "Target (1:2)",
+     color = color.new(color.gray, 30), style = plot.style_linebr)
+
+plot(flat ? resAbove : na, "Resistance", color = cRes, style = plot.style_circles)
+plot(flat ? supBelow : na, "Support",    color = cSup, style = plot.style_circles)
+
+plotshape(goLong,  "BUY",  shape.labelup,   location.belowbar, cUp, text = "BUY",  textcolor = color.white, size = size.small)
+plotshape(goShort, "SELL", shape.labeldown, location.abovebar, cDn, text = "SELL", textcolor = color.white, size = size.small)
+plotshape(bigCandle and (rawLong or rawShort), "Big candle — wait", shape.xcross, location.abovebar, color.orange, size = size.tiny)
+
+plotchar(resHolds,      "Resistance Holds",           "◆", location.abovebar, cDn, size = size.tiny)
+plotchar(supHolds,      "Support Holds",              "◆", location.belowbar, cUp, size = size.tiny)
+plotchar(resAsSupHolds, "Resistance as Support Holds","◆", location.belowbar, color.new(cUp, 30), size = size.tiny)
+plotchar(supAsResHolds, "Support as Resistance Holds","◆", location.abovebar, color.new(cDn, 30), size = size.tiny)
+
+bgcolor(noTradeZone ? cZoneNo : na, title = "NO TRADE ZONE")
+
+// ─────────────────────────── panel ──────────────────────────
+var table dash = table.new(position.bottom_right, 2, 5, frame_width = 1,
+     frame_color = color.new(color.gray, 60), border_color = color.new(color.gray, 80), border_width = 1)
+stateTxt = noTradeZone ? "NO TRADE ZONE (inside 1H CPR)" : posDir == 1 ? "LONG — riding to exit line" : posDir == -1 ? "SHORT — riding to exit line" : trendUp ? "trend up — waiting for setup" : trendDown ? "trend down — waiting for setup" : "no trend"
+if barstate.islast
+    table.cell(dash, 0, 0, "AK ROXX (recon)", text_color = color.white, bgcolor = color.new(color.blue, 20), text_size = size.small)
+    table.cell(dash, 1, 0, stateTxt, text_color = color.white, bgcolor = color.new(color.blue, 20), text_size = size.small)
+    table.cell(dash, 0, 1, "1H CPR", text_color = color.gray, text_size = size.tiny)
+    table.cell(dash, 1, 1, na(bc1H) ? "—" : str.tostring(bc1H, format.mintick) + "  …  " + str.tostring(tc1H, format.mintick), text_color = color.white, text_size = size.tiny)
+    table.cell(dash, 0, 2, "Nearest R / S", text_color = color.gray, text_size = size.tiny)
+    table.cell(dash, 1, 2, (na(resAbove) ? "—" : str.tostring(resAbove, format.mintick)) + "  /  " + (na(supBelow) ? "—" : str.tostring(supBelow, format.mintick)), text_color = color.white, text_size = size.tiny)
+    table.cell(dash, 0, 3, "Zone net vol", text_color = color.gray, text_size = size.tiny)
+    table.cell(dash, 1, 3, str.tostring(volNet, "#"), text_color = volNet >= 0 ? color.green : color.red, text_size = size.tiny)
+    table.cell(dash, 0, 4, "ATR", text_color = color.gray, text_size = size.tiny)
+    table.cell(dash, 1, 4, str.tostring(atr, format.mintick), text_color = color.white, text_size = size.tiny)
+
+// ─────────────────────────── alerts ─────────────────────────
+alertcondition(goLong,  "AK Roxx BUY",  "AK Roxx BUY {{ticker}} @ {{close}}")
+alertcondition(goShort, "AK Roxx SELL", "AK Roxx SELL {{ticker}} @ {{close}}")
