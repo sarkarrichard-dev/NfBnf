@@ -24,7 +24,7 @@ PRE_OPEN_ANALYSIS_END = time(9, 20)
 
 
 def parse_time_env(name: str, default: time) -> time:
-    """An HH:MM[:SS] env override, or the default. Shared by the token / apex schedulers."""
+    """An HH:MM[:SS] env override, or the default."""
     raw = os.getenv(name, "").strip()
     if not raw:
         return default

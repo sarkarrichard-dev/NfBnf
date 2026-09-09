@@ -16,12 +16,10 @@ class StrategyParams:
     ema_fast_period: int = 8
     ema_slow_period: int = 20
     auto_intelligent_routing: bool = True
-    auto_include_apex: bool = False
     auto_trend_buy_first: bool = True
     auto_credit_sideways_only: bool = False
-    apex_supertrend_period: int = 7
-    apex_supertrend_multiplier: float = 3.0
-    apex_max_trades_per_day: int = 3
+    # despite the name this is the live credit-sell hedged/naked switch (env
+    # APEX_USE_HEDGED_SPREADS) — read by entry_guard / plan_builder / sell_strategy
     apex_use_hedged_spreads: bool = True
     require_ema_cross_for_credit: bool = True
     exit_credit_on_ema_cross_flip: bool = True
@@ -112,12 +110,8 @@ def get_strategy_params() -> StrategyParams:
         ema_fast_period=_int("EMA_FAST_PERIOD", 8),
         ema_slow_period=_int("EMA_SLOW_PERIOD", 20),
         auto_intelligent_routing=_bool("AUTO_INTELLIGENT_ROUTING", True),
-        auto_include_apex=_bool("AUTO_INCLUDE_APEX", False),
         auto_trend_buy_first=_bool("AUTO_TREND_BUY_FIRST", True),
         auto_credit_sideways_only=_bool("AUTO_CREDIT_SIDEWAYS_ONLY", False),
-        apex_supertrend_period=_int("APEX_SUPERTREND_PERIOD", 7),
-        apex_supertrend_multiplier=_float("APEX_SUPERTREND_MULTIPLIER", 3.0),
-        apex_max_trades_per_day=_int("APEX_MAX_TRADES_PER_DAY", 3),
         apex_use_hedged_spreads=_bool("APEX_USE_HEDGED_SPREADS", True),
         require_ema_cross_for_credit=_bool("REQUIRE_EMA_CROSS_FOR_CREDIT", True),
         exit_credit_on_ema_cross_flip=_bool("EXIT_CREDIT_ON_EMA_CROSS_FLIP", True),
@@ -196,7 +190,7 @@ def strategy_tuning_summary() -> dict[str, object]:
         "strategy_style_note": {
             "AUTO": (
                 "Trending CPR → long premium (calls/puts); sideways → iron condor / CPR credit. "
-                "1m EMA cross + volume gates on sell lane. No Apex in AUTO."
+                "5m EMA cross + volume gates on sell lane."
                 if p.auto_intelligent_routing
                 else (
                     "Trending CPR → long premium only; sideways → no buying. "
@@ -207,24 +201,12 @@ def strategy_tuning_summary() -> dict[str, object]:
             ),
             "CREDIT": "Only hedged credit (EMA cross when REQUIRE_EMA_CROSS_FOR_CREDIT=true).",
             "BUY": "Only long premium (calls/puts).",
-            "APEX": (
-                "Pivot R1/S1 + Supertrend (7,3): sell ATM put above R1, ATM call below S1. "
-                + ("Hedged spreads by default." if p.apex_use_hedged_spreads else "Naked ATM sell.")
-            ),
         }.get(style, ""),
         "auto_intelligent_routing": p.auto_intelligent_routing,
-        "auto_include_apex": p.auto_include_apex,
         "auto_trend_buy_first": p.auto_trend_buy_first,
         "auto_credit_sideways_only": p.auto_credit_sideways_only,
         "auto_buy_trending_only": p.auto_buy_trending_only,
-        "apex_supertrend_period": p.apex_supertrend_period,
-        "apex_supertrend_multiplier": p.apex_supertrend_multiplier,
-        "apex_max_trades_per_day": p.apex_max_trades_per_day,
-        "apex_use_hedged_spreads": p.apex_use_hedged_spreads,
-        "apex_note": (
-            f"R1/S1 pivots + ST {p.apex_supertrend_period}/{p.apex_supertrend_multiplier}, "
-            f"max {p.apex_max_trades_per_day} trades/index/day, no entry after 15:00 IST."
-        ),
+        "use_hedged_spreads": p.apex_use_hedged_spreads,
         "ema_fast_period": p.ema_fast_period,
         "ema_slow_period": p.ema_slow_period,
         "require_ema_cross_for_credit": p.require_ema_cross_for_credit,
@@ -310,14 +292,8 @@ def strategy_tuning_summary() -> dict[str, object]:
         "env_keys": [
             "CANDLE_INTERVAL_MINUTES",
             "STRATEGY_STYLE",
-            "APEX_SUPERTREND_PERIOD",
-            "APEX_SUPERTREND_MULTIPLIER",
-            "APEX_MAX_TRADES_PER_DAY",
             "APEX_USE_HEDGED_SPREADS",
-            "APEX_ENTRIES_START",
-            "APEX_NO_ENTRY_AFTER",
             "AUTO_INTELLIGENT_ROUTING",
-            "AUTO_INCLUDE_APEX",
             "AUTO_TREND_BUY_FIRST",
             "AUTO_CREDIT_SIDEWAYS_ONLY",
             "EMA_FAST_PERIOD",

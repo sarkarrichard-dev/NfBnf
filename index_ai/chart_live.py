@@ -28,12 +28,6 @@ def fetch_supertrend_snapshot(client: DhanClient, instrument_key: str) -> dict:
     candles = chart_response_to_frame(data)
     ema_frame, _ = prepare_intraday_signal_frames(candles)
     params = get_strategy_params()
-    from index_ai.strategies.strategy_router import strategy_style
-
-    if strategy_style() == "APEX":
-        period = params.apex_supertrend_period
-        multiplier = params.apex_supertrend_multiplier
-    else:
-        period = params.supertrend_period
-        multiplier = params.supertrend_multiplier
-    return supertrend_snapshot(ema_frame, period=period, multiplier=multiplier)
+    return supertrend_snapshot(
+        ema_frame, period=params.supertrend_period, multiplier=params.supertrend_multiplier
+    )

@@ -104,7 +104,7 @@ def main() -> None:
         os.environ["REENTRY_COOLDOWN_BARS"] = str(args.cooldown)
     _overrides = dict(p.split("=", 1) for p in args.param if "=" in p)
 
-    styles = ["AUTO", "BUY", "CREDIT", "APEX"] if args.all else [s.upper() for s in args.styles]
+    styles = ["AUTO", "BUY", "CREDIT"] if args.all else [s.upper() for s in args.styles]
     instruments = (
         ["NIFTY", "BANKNIFTY", "SENSEX"] if args.all else [i.upper() for i in args.instruments]
     )

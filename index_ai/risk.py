@@ -40,9 +40,7 @@ def kill_switch_state(risk: RiskSettings) -> dict[str, Any]:
             f"({int(limits['lots_per_trade'])} lot(s) × ₹{DAILY_LOSS_RUPEES_PER_LOT:,.0f})."
         )
     if loss_streak_hit:
-        reasons.append(
-            f"{streak} consecutive losing trades today (limit {streak_limit})."
-        )
+        reasons.append(f"{streak} consecutive losing trades today (limit {streak_limit}).")
     live_only = risk.trading_mode == "LIVE"
     return {
         "active": triggered and live_only,
@@ -59,16 +57,6 @@ def kill_switch_state(risk: RiskSettings) -> dict[str, Any]:
         "max_losing_trades_per_day": streak_limit,
         "max_consecutive_losing_trades": streak_limit,
     }
-
-
-def _needs_apex_session_gates(signal_action: str, strategy_mode: str = "") -> bool:
-    from index_ai.strategies.strategy_router import strategy_style
-
-    _ = signal_action
-    if strategy_style() == "APEX":
-        return True
-    mode = str(strategy_mode or "")
-    return mode.startswith("apex")
 
 
 def check_execution_gates(
@@ -99,15 +87,6 @@ def check_execution_gates(
         if not risk.allow_option_selling:
             return False, "Option selling structures require allow_option_selling."
         tx = "SELL"
-
-    if _needs_apex_session_gates(signal_action, strategy_mode):
-        from index_ai.strategies.apex_risk import (
-            apex_entry_window_message,
-            is_apex_entry_window,
-        )
-
-        if not is_apex_entry_window():
-            return False, apex_entry_window_message()
 
     if confidence < min_confidence:
         return False, "Confidence is below risk gate."

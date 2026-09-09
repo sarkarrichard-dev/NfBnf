@@ -1,4 +1,4 @@
-"""Naked ATM premium selling (Apex Pivot-Trend style) — single-leg short options."""
+"""Naked ATM premium selling — single-leg short options."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Premium selling — CPR support/resistance + 5m EMA + volume + 15m trend (no Apex)."""
+"""Directional credit selling — CPR support/resistance + 5m EMA + volume + 15m trend."""
 
 from __future__ import annotations
 
