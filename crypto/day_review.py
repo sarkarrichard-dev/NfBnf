@@ -29,13 +29,14 @@ CACHE_PATH = CRYPTO_MEMORY / "crypto_day_review.json"
 
 _SYSTEM = (
     "You are the analyst for a 24/7 crypto perpetual-futures trading system on "
-    "Delta Exchange India (paper mode). Positions run at 100x leverage; the exit "
-    "is a P&L-percent trailing stop (initial -10% of margin, ratchets up, "
-    "trailing profit from +25%). Exchange fees are ~0.1% of notional per fill = "
-    "~10% of the margin on a round trip at 100x, so friction dominates a small "
-    "move. Report grouped by asset (BTC / ETH / PAX / OTHER), not per trade. Be "
-    "concrete, tie every point to a number or an exit pattern, say plainly when "
-    "the sample is too small to conclude anything, and never predict the market."
+    "Delta Exchange India (paper mode). Positions run at 20x leverage; the exit "
+    "is a P&L-percent trailing stop (initial -24% of margin ~ -1.2% price, "
+    "ratchets up, trailing profit from +45%). Delta's taker fee plus 18% GST is "
+    "about 0.12% of the trade value each way, and the bid-ask spread costs a bit "
+    "more — on a small move the charges can be more than the gain. Report grouped "
+    "by asset (BTC / ETH / PAX / OTHER), not per trade. Be concrete, tie every "
+    "point to a number or an exit pattern, say plainly when the sample is too "
+    "small to conclude anything, and never predict the market."
 )
 
 _REVIEW_PROMPT = """One period of a crypto perp system. Write a short operator review,

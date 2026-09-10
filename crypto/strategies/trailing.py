@@ -1,19 +1,20 @@
 """P&L-based trailing stop / target for the crypto lanes.
 
-All levels are **percent of P&L on the margin deployed**, not percent of price —
-at 100x leverage a 1% adverse price move already liquidates, so a price-based
-stop is meaningless. Because margin = notional / leverage,
+All levels are **percent of P&L on the margin deployed**, not percent of price.
+Because margin = notional / leverage,
 
     pnl_pct = (price / entry - 1) * direction * leverage * 100
 
-Rules (Richard, 2026-09-07):
-  * initial stop at ``-stop_pnl_pct`` (default -10%)
-  * every ``ratchet_step_pnl_pct`` (5%) of peak P&L lifts the stop by the same,
-    so: peak +5% -> stop -5%, +10% -> breakeven, +15% -> +5%, ...
-  * at ``tp_trigger_pnl_pct`` (25%) the trailing-profit floor engages and holds
-    at +25% while peak is 25-27%
-  * once peak climbs past that, the floor trails ``peak_trail_pnl_pct`` (2%)
-    behind the peak
+so at the 20x default a stop at -24% P&L is a ~1.2% adverse *price* move — a real
+swing stop. (At the old 100x default the same -10% stop was a 0.1% price wiggle,
+which stopped every trade out on noise — 2026-09-11 backtest: 100x -$384/45d vs
+20x -$272/45d on the 6 PM strategy.)
+
+Rules (Richard, 2026-09-07; retuned 2026-09-11):
+  * initial stop at ``-stop_pnl_pct`` (default -24% P&L ~ -1.2% price at 20x)
+  * every ``ratchet_step_pnl_pct`` (10%) of peak P&L lifts the stop by the same
+  * at ``tp_trigger_pnl_pct`` (45%) the trailing-profit floor engages
+  * past that, the floor trails ``peak_trail_pnl_pct`` (6%) behind the peak
 
 ``update_and_check`` mutates ``pos['peak_pnl_pct']`` / ``pos['trail_stop_pnl_pct']``
 and returns an exit reason string when current P&L has fallen to the stop.
@@ -27,11 +28,11 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TrailConfig:
-    leverage: float = 100.0
-    stop_pnl_pct: float = 10.0
-    ratchet_step_pnl_pct: float = 5.0
-    tp_trigger_pnl_pct: float = 25.0
-    peak_trail_pnl_pct: float = 2.0
+    leverage: float = 20.0
+    stop_pnl_pct: float = 24.0
+    ratchet_step_pnl_pct: float = 10.0
+    tp_trigger_pnl_pct: float = 45.0
+    peak_trail_pnl_pct: float = 6.0
 
 
 def pnl_pct(entry: float, price: float, side: str, leverage: float) -> float:
@@ -72,7 +73,12 @@ def bracket_stop_price(entry: float, side: str, cfg: TrailConfig) -> float | Non
 
 
 if __name__ == "__main__":  # self-check — walk a long trade through the whole path
-    cfg = TrailConfig(leverage=100.0)
+    # pin the classic values so this tests the ratchet / floor math, not the
+    # (retuned) module defaults
+    cfg = TrailConfig(
+        leverage=100.0, stop_pnl_pct=10.0, ratchet_step_pnl_pct=5.0,
+        tp_trigger_pnl_pct=25.0, peak_trail_pnl_pct=2.0,
+    )
     entry = 100.0
     pos = {"entry_price": entry, "side": "long"}
 
