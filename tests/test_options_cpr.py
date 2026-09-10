@@ -174,7 +174,7 @@ def test_walk_forward_gate_never_worse_on_separable_data():
     assert out["oos_gated_net"] >= out["oos_static_net"] - 2000  # gate helps or is ~neutral
 
 
-def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch):
+def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch, tmp_path):
     from index_ai.strategies.options_cpr.viability import (
         MARGINAL,
         NOT_VIABLE,
@@ -184,6 +184,11 @@ def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch):
         viability,
     )
 
+    # isolate from the live memory/spread_samples.jsonl — this test drives the
+    # spread source with env overrides only.
+    monkeypatch.setattr(
+        "index_ai.market_context.spread_calib.SAMPLES_PATH", tmp_path / "none.jsonl"
+    )
     monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_NIFTY", "0.20")
     monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY", "4.06")
 
@@ -206,9 +211,12 @@ def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch):
     assert legs_naked == 2 and floor_naked < b.friction_floor_rupees
 
 
-def test_entry_guard_viability_gate_is_opt_in(monkeypatch):
+def test_entry_guard_viability_gate_is_opt_in(monkeypatch, tmp_path):
     from index_ai.entry_guard import _viable_sell_blocks
 
+    monkeypatch.setattr(
+        "index_ai.market_context.spread_calib.SAMPLES_PATH", tmp_path / "none.jsonl"
+    )
     monkeypatch.setenv("SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY", "4.06")
     # default OFF — nothing blocks even a NOT_VIABLE index
     monkeypatch.delenv("OPTIONS_REQUIRE_VIABLE", raising=False)
