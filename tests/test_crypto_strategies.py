@@ -131,25 +131,11 @@ def test_volprofile_value_area_ordering():
     assert p and p.val < p.poc < p.vah and p.balanced
 
 
-def test_ak_roxx_pro_enters_on_the_full_confluence_beyond_the_hourly_cpr():
-    # accelerating rally: closes clear the SMA(8) of highs, the ribbon stacks
-    # and slopes up, price runs beyond the earlier hours' CPR.
-    n = 900
-    idx = pd.date_range("2026-09-06 00:00", periods=n, freq="5min", tz="UTC")
-    base = 100.0 + np.sin(np.linspace(0, 6, 360)) * 1.5
-    rally = 100.0 + np.linspace(0, 60, n - 360) ** 1.15
-    px = np.concatenate([base, rally])
-    df = pd.DataFrame(
-        {
-            "datetime": idx,
-            "open": px,
-            "high": px + 0.1,
-            "low": px - 0.1,
-            "close": px,
-            "volume": [10.0] * n,
-        }
-    )
-    saw, side = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), df, 400)
+def test_ak_roxx_pro_enters_on_a_fresh_confluence_beyond_the_hourly_cpr():
+    # base chop -> rally -> pullback -> resumed rally: edge-triggered, so it
+    # fires on the resume, not on every bar the confluence stays true.
+    df = ak_roxx_pro._demo_frame()
+    saw, side = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), df, 560)
     assert saw["enter"] >= 1 and side == "long"
 
     # dead-flat tape: the 8-condition gate never opens
@@ -157,9 +143,12 @@ def test_ak_roxx_pro_enters_on_the_full_confluence_beyond_the_hourly_cpr():
     saw2, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), flat, 400)
     assert saw2["enter"] == 0
 
-    # require_beyond_cpr off still needs the rest of the confluence
-    saw3, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(require_beyond_cpr=False), df, 400)
-    assert saw3["enter"] >= 1
+    # a smooth one-way ramp is always in confluence -> never a fresh signal
+    n = len(df)
+    ramp = 100.0 + np.linspace(0, 80, n) ** 1.15
+    smooth = df.assign(open=ramp, high=ramp + 0.1, low=ramp - 0.1, close=ramp)
+    saw3, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), smooth, 500)
+    assert saw3["enter"] == 0
 
 
 def test_tma_phoenix_enters_on_a_reversal_candle_with_the_smma_ribbon():

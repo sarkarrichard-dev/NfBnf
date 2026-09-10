@@ -255,6 +255,13 @@ def step(
         ev.update(event="wait", reason="Alpha 1 confluence not met")
         return st, ev
 
+    # The portal's signal is a discrete event on the bar the confluence FLIPS on,
+    # not a state you can re-enter every bar it stays true. Require a fresh
+    # transition: the prior bar was not already in this same direction.
+    if len(c5) > 1 and _alpha1_dir(c5.iloc[:-1].reset_index(drop=True), cfg, cpr) == d:
+        ev.update(event="wait", reason="Alpha 1 already in confluence — no fresh signal")
+        return st, ev
+
     if cfg.require_alpha2_agree and _alpha2_dir(c5, cfg, cpr) != d:
         ev.update(event="wait", reason="Alpha 2 does not agree")
         return st, ev
@@ -283,26 +290,34 @@ def step(
     return st, ev
 
 
-if __name__ == "__main__":  # self-check — a clean rally stacks the ribbon and clears the prior-hour CPR
-    n = 900
-    idx = pd.date_range("2026-09-06 00:00", periods=n, freq="5min", tz="UTC")
-    base = 100.0 + np.sin(np.linspace(0, 6, 360)) * 1.5  # sets the early hours' CPR
-    rally = 100.0 + np.linspace(0, 60, n - 360) ** 1.15  # accelerating — closes clear the SMA of highs
-    px = np.concatenate([base, rally])
-    df = pd.DataFrame(
+def _demo_frame() -> pd.DataFrame:
+    """Base chop (sets the CPR) → rally → pullback (breaks the confluence) →
+    resumed rally — so the signal fires *fresh* on the resume, not every bar."""
+    seg = [
+        100.0 + np.sin(np.linspace(0, 6, 360)) * 1.5,
+        100.0 + np.linspace(0, 40, 180) ** 1.15,          # leg 1
+        140.0 - np.linspace(0, 12, 60),                   # pullback
+        128.0 + np.linspace(0, 55, 300) ** 1.15,          # leg 2 — the fresh signal
+    ]
+    px = np.concatenate(seg)
+    idx = pd.date_range("2026-09-06 00:00", periods=len(px), freq="5min", tz="UTC")
+    return pd.DataFrame(
         {"datetime": idx, "open": px, "high": px + 0.1, "low": px - 0.1, "close": px,
-         "volume": [10.0] * n}
+         "volume": [10.0] * len(px)}
     )
+
+
+if __name__ == "__main__":  # self-check
+    df = _demo_frame()
     cfg = AkRoxxConfig()
     fired, state = None, None
-    for i in range(400, n):
+    for i in range(560, len(df)):
         state, evt = step("BTCUSD", df.iloc[: i + 1], state=state, cfg=cfg)
         if evt["event"] == "enter":
             fired = evt
             break
     assert fired and fired["side"] == "long", fired
-    # a dead-flat market never stacks the ribbon
     flat = df.assign(open=100.0, high=100.3, low=99.7, close=100.0)
-    st2, ev2 = step("BTCUSD", flat, state=None, cfg=cfg)
+    _, ev2 = step("BTCUSD", flat, state=None, cfg=cfg)
     assert ev2["event"] == "wait", ev2
     print("crypto.strategies.ak_roxx_pro self-check ok —", fired["reason"])
