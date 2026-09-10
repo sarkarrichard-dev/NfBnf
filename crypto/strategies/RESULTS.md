@@ -200,9 +200,20 @@ adds the portal's "Alpha 2" (15-bar break + Choppiness(14)<38.2 + Supertrend(3,1
 
 Wired as a **paper** lane (`CRYPTO_AK_ROXX_ENABLED`, default on) and to the
 nightly optimiser (`SEARCH_SPACE["ak_roxx_pro"]` — CPR gate on/off, Alpha 2 gate,
-slope lookback, target R). Re-backtest on the corrected logic: _pending — add the
-`crypto.backtest --strategy ak_roxx_pro --days 120` result here._
+slope lookback, target R).
 
-**Do not arm crypto live.** Every 5m config on this platform is net-negative
-after Delta costs; the 8-condition gate should trade far less than the old port,
-but this is a watch-forward lane, not a proven edge.
+**Backtest (corrected logic), BTCUSD 45 days:** −$2,174, **844 trades**, win 29%,
+avg win $3.99 / avg loss −$5.26. Edge-triggering the signal only trimmed it from
+933 trades / −$2,433 — it is still ~19 trades/day.
+
+The 8-condition entry is strict, but the **exit** is the crypto lane's shared
+P&L-percent trail: 10% of P&L at 100× ≈ a **0.1% price move**. During a trend the
+confluence flickers on and off, and after every tiny stop-out the strategy
+re-enters — the same "each trade a 0.1% coin-flip minus fees" structural friction
+RESULTS.md already recorded for the deleted 5m-scalp strategies. The portal's
+Alpha 1 holds each trade to a **channel-edge** stop (far wider) and takes a
+handful of signals a day, not 19. Matching that would mean giving this strategy a
+price-based stop at the ``SMA(low, 8)`` / ``SMA(high, 8)`` band instead of the
+shared trail — a design change, pending Richard's call.
+
+**Do not arm crypto live.** Net-negative like every other 5m config here.

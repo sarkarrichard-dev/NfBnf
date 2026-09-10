@@ -131,10 +131,12 @@ Done:
   nightly and *suggests* changes for approval; never auto-applies (ML guardrails).
 - Dashboard: catalog card + lane toggle + status plumbing.
 
-Pending:
-
-- `python -m crypto.backtest --strategy ak_roxx_pro --days 120` on the corrected
-  logic — record the net / trades / per-symbol here. The old −$7,972 is void.
+Backtest (corrected logic, edge-triggered), **BTCUSD 45 days: −$2,174 over 844
+trades, win 29%**. Still ~19 trades/day — the strict entry is undone by the
+shared P&L-percent trail (0.1% price stop at 100×), which chops each trade out
+and lets it re-enter next bar. Faithful to the portal would mean a **channel-edge
+price stop** (`SMA(low,8)` / `SMA(high,8)`) instead of the shared trail — a
+design change, pending Richard's call. See `RESULTS.md`.
 
 ## What the port does *not* copy from the portal
 
