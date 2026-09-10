@@ -1,6 +1,6 @@
 import { cn } from '../../lib/cn'
 import { fx } from '../../lib/theme'
-import { STRATEGIES, byId, renderReads, type StrategyDef, type ParamGroup } from '../../lib/strategies'
+import { STRATEGIES, byId, renderReads, sideLabel, type StrategyDef, type ParamGroup } from '../../lib/strategies'
 import { useStrategyStatus, type LiveStatus } from '../../hooks/useStrategyStatus'
 import { Button } from '../ui/Button'
 
@@ -32,13 +32,17 @@ function Detail({
   live,
   onBuild,
   showBuilder,
+  showInternals,
 }: {
   def: StrategyDef
   live?: LiveStatus
   onBuild: (id: string) => void
   showBuilder: boolean
+  showInternals: boolean
 }) {
   const defaults = Object.fromEntries(def.params.map((p) => [p.key, p.default])) as Record<string, number | boolean | string>
+  // Redacted team view: entry logic is hidden, only the result + exit trail stay.
+  const groups = showInternals ? GROUPS : GROUPS.filter((g) => g.id === 'risk')
 
   return (
     <section className={cn(fx.panel, 'p-4 space-y-4')}>
@@ -46,18 +50,20 @@ function Detail({
         <div>
           <h3 className="text-base font-bold text-slate-100">{def.name}</h3>
           <p className="mt-0.5 font-mono text-[11px] uppercase tracking-wide text-slate-500">
-            {def.kind} · {def.instrument} · {def.timeframe}
+            {showInternals ? `${def.kind} · ${def.instrument} · ${def.timeframe}` : sideLabel(def)}
           </p>
         </div>
         <StatusChip s={live} />
       </header>
 
-      <p className="text-xs leading-relaxed text-slate-400">{def.blurb}</p>
+      <p className="text-xs leading-relaxed text-slate-400">{showInternals ? def.blurb : def.teaser}</p>
 
-      <div className="rounded-lg border border-[var(--hair-soft)] bg-white/[0.015] p-3">
-        <p className={fx.cardLabel}>Reads</p>
-        <p className="mt-1 text-xs leading-relaxed text-slate-200">{renderReads(def.reads, defaults)}</p>
-      </div>
+      {showInternals ? (
+        <div className="rounded-lg border border-[var(--hair-soft)] bg-white/[0.015] p-3">
+          <p className={fx.cardLabel}>Reads</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-200">{renderReads(def.reads, defaults)}</p>
+        </div>
+      ) : null}
 
       {def.backtest ? (
         <div className="grid grid-cols-3 gap-2">
@@ -77,9 +83,9 @@ function Detail({
       ) : null}
       {def.backtest?.note ? <p className="text-[11px] text-slate-600">{def.backtest.note}</p> : null}
 
-      {def.params.length ? (
+      {def.params.length && groups.length ? (
         <div className="space-y-3">
-          {GROUPS.map((g) => {
+          {groups.map((g) => {
             const rows = def.params.filter((p) => p.group === g.id)
             if (!rows.length) return null
             return (
@@ -97,11 +103,11 @@ function Detail({
             )
           })}
         </div>
-      ) : (
+      ) : showInternals ? (
         <p className="text-[11px] text-slate-600">
           Tuned through <span className="text-slate-400">Settings → Strategy tuning (.env)</span>.
         </p>
-      )}
+      ) : null}
 
       {def.builder && showBuilder ? (
         <Button variant="secondary" onClick={() => onBuild(def.id)}>
@@ -117,11 +123,13 @@ export function MyStrategiesView({
   onSeed,
   onBuild,
   showBuilder = true,
+  showInternals = true,
 }: {
   seedId: string
   onSeed: (id: string) => void
   onBuild: (id: string) => void
   showBuilder?: boolean
+  showInternals?: boolean
 }) {
   const status = useStrategyStatus()
   const active = byId(seedId) ?? STRATEGIES[0]
@@ -147,7 +155,9 @@ export function MyStrategiesView({
                   <span className="text-sm font-semibold text-slate-100">{s.name}</span>
                   <StatusChip s={live} />
                 </div>
-                <p className="mt-0.5 font-mono text-[10.5px] text-slate-500">{s.engine}</p>
+                <p className="mt-0.5 font-mono text-[10.5px] text-slate-500">
+                  {showInternals ? s.engine : sideLabel(s)}
+                </p>
               </button>
             </li>
           )
@@ -159,6 +169,7 @@ export function MyStrategiesView({
         live={status[active.statusKey]}
         onBuild={onBuild}
         showBuilder={showBuilder}
+        showInternals={showInternals}
       />
     </div>
   )

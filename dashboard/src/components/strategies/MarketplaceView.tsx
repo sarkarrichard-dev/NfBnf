@@ -1,6 +1,6 @@
 import { cn } from '../../lib/cn'
 import { fx } from '../../lib/theme'
-import { STRATEGIES } from '../../lib/strategies'
+import { STRATEGIES, sideLabel } from '../../lib/strategies'
 import { useStrategyStatus } from '../../hooks/useStrategyStatus'
 import { Button } from '../ui/Button'
 
@@ -11,10 +11,12 @@ export function MarketplaceView({
   onDetails,
   onBuild,
   showBuilder = true,
+  showInternals = true,
 }: {
   onDetails: (id: string) => void
   onBuild: (id: string) => void
   showBuilder?: boolean
+  showInternals?: boolean
 }) {
   const status = useStrategyStatus()
 
@@ -42,13 +44,15 @@ export function MarketplaceView({
                 </span>
               </header>
 
-              <p className="flex-1 text-[11px] leading-relaxed text-slate-400 line-clamp-4">{s.blurb}</p>
+              <p className="flex-1 text-[11px] leading-relaxed text-slate-400 line-clamp-4">
+                {showInternals ? s.blurb : s.teaser}
+              </p>
 
               <dl className="grid grid-cols-2 gap-x-3 text-[11px]">
                 <dt className="text-slate-500">Instrument</dt>
                 <dd className="text-right text-slate-300">{s.instrument}</dd>
-                <dt className="text-slate-500">Engine</dt>
-                <dd className="text-right text-slate-300">{s.engine}</dd>
+                <dt className="text-slate-500">{showInternals ? 'Engine' : 'Type'}</dt>
+                <dd className="text-right text-slate-300">{showInternals ? s.engine : sideLabel(s)}</dd>
               </dl>
 
               <div className="flex gap-2">
@@ -77,10 +81,12 @@ export function MarketplaceView({
         ) : null}
       </div>
 
-      <p className="text-[11px] text-slate-600">
-        The index lanes trade net-negative after real costs and are shown for completeness — see the
-        Reports tab and <span className="text-slate-400">memory/strategy-findings.md</span>.
-      </p>
+      {showInternals ? (
+        <p className="text-[11px] text-slate-600">
+          The index lanes trade net-negative after real costs and are shown for completeness — see the
+          Reports tab and <span className="text-slate-400">memory/strategy-findings.md</span>.
+        </p>
+      ) : null}
     </div>
   )
 }

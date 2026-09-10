@@ -226,6 +226,7 @@ TOGGLEABLE_FLAGS: dict[str, str] = {
     "ENABLE_SENSEX": "Scan and trade SENSEX (off = NIFTY + BANKNIFTY only)",
     "HIDE_BROKER_ACCOUNT": "Hide the real Dhan funds & broker positions panel (for a shared team view)",
     "HIDE_STRATEGY_BUILDER": "Hide the strategy Builder tab (not finished yet)",
+    "HIDE_STRATEGY_INTERNALS": "Redact strategy mechanics, params and live decision lanes — leave only a short brief and buy/sell tag (for a shared team view)",
 }
 
 
