@@ -224,6 +224,8 @@ TOGGLEABLE_FLAGS: dict[str, str] = {
     "AUTO_START_SCANNER": "Start the scanner automatically at launch",
     "ENABLE_S3_BACKUP": "Back up the journals, models and reports to S3 after the close",
     "ENABLE_SENSEX": "Scan and trade SENSEX (off = NIFTY + BANKNIFTY only)",
+    "HIDE_BROKER_ACCOUNT": "Hide the real Dhan funds & broker positions panel (for a shared team view)",
+    "HIDE_STRATEGY_BUILDER": "Hide the strategy Builder tab (not finished yet)",
 }
 
 

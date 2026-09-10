@@ -91,6 +91,7 @@ type StatusResponse = {
     reasons?: Array<{ title?: string; detail?: string }>
   }
   auto?: { running?: boolean; last_error?: string }
+  ui?: { broker_account?: boolean; strategy_builder?: boolean }
 }
 
 function PanelFallback() {
@@ -264,11 +265,13 @@ function App() {
                   <AutoTraderPanel />
                 </Suspense>
               </CollapsibleSection>
-              <CollapsibleSection title="Dhan broker account" defaultOpen>
-                <Suspense fallback={<PanelFallback />}>
-                  <DhanAccountPanel tradingMode={status.data?.trading_mode} />
-                </Suspense>
-              </CollapsibleSection>
+              {status.data?.ui?.broker_account !== false ? (
+                <CollapsibleSection title="Dhan broker account" defaultOpen>
+                  <Suspense fallback={<PanelFallback />}>
+                    <DhanAccountPanel tradingMode={status.data?.trading_mode} />
+                  </Suspense>
+                </CollapsibleSection>
+              ) : null}
             </aside>
           </div>
         </>
@@ -282,7 +285,7 @@ function App() {
             status="Your strategies, the builder, the marketplace, exchanges and deployments."
           />
           <Suspense fallback={<PanelFallback />}>
-            <StrategiesPage />
+            <StrategiesPage showBuilder={status.data?.ui?.strategy_builder !== false} />
           </Suspense>
           <div className="mt-8 grid gap-6 xl:grid-cols-[1.6fr,1fr]">
             <CollapsibleSection title="Strategy lanes (paper) — legacy view">
