@@ -215,8 +215,10 @@ def evaluate_sell_signal(
                     strategy_mode=cpr_mode or "wait",
                     **base,
                 )
+            # keep the real CPR mode so the trade is scored and bucketed like a
+            # native CPR credit (its provenance is in the reason string).
             reason = f"OI unclear ({reason}) → CPR: {cpr_reason}"
-            mode = f"oi_to_cpr:{cpr_mode}" if cpr_mode else "oi_to_cpr"
+            mode = cpr_mode or "cpr_fallback"
         else:
             # the OI path bypasses pick_auto_credit — re-apply its 5m tape veto
             # here, the one guard that stops selling into a wrong-way move.
