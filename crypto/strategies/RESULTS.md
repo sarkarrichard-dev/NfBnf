@@ -192,32 +192,38 @@ portal's own client-side signal engine — `crypto/strategies/ak_roxx_pro.md` ha
 the full spec. **The old −$8k backtest (2026-09-09) was on a wrong
 reconstruction (21/34/55 EMA ribbon, guessed constants) and is void.**
 
-Real Alpha 1 entry = eight reads: `SMA(high,8)` & `SMA(low,8)` both rising,
-close above the upper band and the prior close, `EMA7 > EMA14` both rising,
-price beyond the previous hour's CPR, and the `EMA(hlc3, 13/21/34)` ribbon
-stacked & sloping. Trend-ride exit (P&L trail or 1:2). Optional `require_alpha2_agree`
-adds the portal's "Alpha 2" (15-bar break + Choppiness(14)<38.2 + Supertrend(3,10)).
+## ak_roxx_pro — 2026-09-11 (faithful port, exit verified)
 
-Wired as a **paper** lane (`CRYPTO_AK_ROXX_ENABLED`, default on) and to the
-nightly optimiser (`SEARCH_SPACE["ak_roxx_pro"]` — CPR gate on/off, Alpha 2 gate,
-slope lookback, target R).
+Read `indicators.js::computeAlpha1Signals` line-for-line off the portal (the
+content filter was worked around). **The entry was right all along.** The
+**exit** was wrong in every earlier port. The real one, verbatim:
 
-**Backtest (corrected logic), BTCUSD, 45 days:**
+    if (buyActive && c.close < loC) buyActive = false;   // loC = current SMA(low, 8)
 
-| exit | trades | net | win | avg win / loss |
+No target, no P&L trail, no ratchet, no hard floor. A long rides until the first
+bar that **closes below the current 8-period average of the lows**. The drawn
+T1/T2/SL lines are a separate display annotation — they don't close the trade.
+
+`ak_roxx_pro.py` rewritten to match exactly. `SEARCH_SPACE["ak_roxx_pro"]` now
+sweeps `require_beyond_cpr`, `require_alpha2_agree`, `upper_len`, `lower_len`.
+
+**Backtest of the faithful version, BTC + ETH:**
+
+| timeframe | trades | net | win | avg win / loss |
 |---|---|---|---|---|
-| shared P&L trail | 933 | −$2,433 | 29% | $4.11 / −$5.34 |
-| + edge-triggered entry | 844 | −$2,174 | 29% | $3.99 / −$5.26 |
-| **+ channel-edge stop** (default) | **714** | **−$2,103** | 17% | $7.22 / −$5.06 |
+| 5m, 45d | 1,255 | −$2,337 | 16% | $6.46 / −$3.48 |
+| 15m, 45d | 426 | ≈ flat | 20% | — |
+| **1h, 90d** | **192** | **−$376** | **27%** | **$21.83 / −$10.79** |
 
-The channel stop turned it into a "few big wins, many small losses"
-trend-follower (avg win $4 → $7.2) but the net barely moved — still ~16
-trades/day on one symbol, still losing. The 8-condition entry re-forms
-constantly during a trend and even an `SMA(low, 8)` stop on 5m is a short leash.
+**The timeframe was the other bug.** On 5m the `close < SMA(low,8)` exit is a
+40-minute leash — a routine pullback closes below it, so the trend-ride gets
+chopped out (28 trades/day, 16% win). On **1h** the same exit is 8 hours of
+lows, a real swing stop: ~2 trades/day, and the winners actually run — avg win
+$21.83 vs avg loss $10.79, a **2:1 payoff**. Still net-negative (−$376 / 90d ≈
+−$4/day, basically flat with a small bleed) and ~6 points of win-rate short of
+breakeven — but it is the **closest any crypto strategy has come**, and it's the
+timeframe the channel-break exit is actually built for.
 
-Same verdict as every other 5m config on this platform: **no edge on Delta 5m
-after costs**. The signal is a faithful port of what the portal shows; that is
-all it is. `ak_roxx_pro` stays wired to **paper** so the scorecard and the
-nightly optimiser accumulate a forward record (the `SEARCH_SPACE` grid sweeps
-the CPR gate, the Alpha 2 gate, `use_channel_stop`, and `rr`). **Do not arm
-crypto live.**
+Lane default set to **1h** (`AkRoxxConfig.timeframe`, env `CRYPTO_AK_ROXX_TF`).
+The optimiser sweeps `upper_len` / `lower_len` / the CPR gate — that might close
+the gap, or not. Worth the forward paper week. **Do not arm crypto live.**

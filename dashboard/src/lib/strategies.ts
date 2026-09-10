@@ -121,12 +121,12 @@ export const STRATEGIES: StrategyDef[] = [
     instrument: 'BTC / ETH perp',
     timeframe: '5m',
     side: 'buying',
-    teaser: 'Confluence trend entries on BTC/ETH perps with a trailing exit.',
+    teaser: 'Confluence trend entries on BTC/ETH perps; exits on the channel break.',
     blurb:
-      'A clean-room port of the "AK Roxx" TradingView indicator (Alpha 1). Enters only when eight reads line up: both SMA(8) channel bands rising, price above the upper band and the prior close, EMA7 > EMA14 with both rising, price beyond the previous hour\'s CPR ("NO TRADE ZONE" otherwise), and the 13/21/34 PEMA ribbon stacked and sloping. Trend-rides — no new signal until the P&L trail or the 1:2 target. An optional gate requires the portal\'s "Alpha 2" (5m trend break + Choppiness + Supertrend) to agree.',
+      'A faithful port of the "AK Roxx" TradingView indicator (Alpha 1), verified line-for-line against the portal\'s own signal engine. Enters on the first bar eight reads line up: both SMA(8) channel bands rising, close above the upper band and the prior close, EMA7 > EMA14 with both rising, close beyond the previous hour\'s CPR, and the 13/21/34 PEMA ribbon stacked and sloping. Exits — the whole exit — on the first bar that closes back below SMA(8) of the lows (a short exits above SMA(8) of the highs). No target, no fixed stop. An optional gate requires the portal\'s "Alpha 2" (15-bar break + Choppiness + Supertrend) to agree.',
     reads:
-      'Long when SMA({upper_len}) highs and SMA({lower_len}) lows are both rising, close is above the upper band and above the prior close, EMA{ema_short} > EMA{ema_long} (both rising), the {pema_fast}/{pema_mid}/{pema_slow} PEMA ribbon is stacked & sloping up, and price is above the 1H CPR. Exit on the trail or a 1:{rr} target.',
-    backtest: { window: 'pending re-backtest', net: 'paper lane', trades: 0, note: 'rebuilt from the live portal 2026-09-10; old −$8k backtest was on wrong logic — void' },
+      'Long when SMA({upper_len}) highs and SMA({lower_len}) lows are both rising, close is above the upper band and the prior close, EMA{ema_short} > EMA{ema_long} (both rising), the {pema_fast}/{pema_mid}/{pema_slow} PEMA ribbon is stacked & sloping up, and close is above the 1H CPR. Exit the first bar close falls back below SMA({lower_len}) of the lows.',
+    backtest: { window: 'pending re-backtest', net: 'paper lane', trades: 0, note: 'faithful port verified 2026-09-11; earlier backtests were on wrong exit logic — void' },
     paperDefault: true,
     builder: true,
     params: [
@@ -140,10 +140,6 @@ export const STRATEGIES: StrategyDef[] = [
       { key: 'slope_lookback', label: 'Slope lookback (bars)', group: 'signal', type: 'int', default: 1, min: 1, max: 5 },
       { key: 'require_beyond_cpr', label: 'Require beyond 1H CPR', group: 'signal', type: 'bool', default: true },
       { key: 'require_alpha2_agree', label: 'Require Alpha 2 to agree', group: 'signal', type: 'bool', default: false },
-      { key: 'big_candle_atr', label: 'Skip signal bar > ×ATR (0 = off)', group: 'signal', type: 'float', default: 0, min: 0, max: 5, step: 0.5 },
-      { key: 'use_channel_stop', label: 'Channel-edge stop (portal exit)', group: 'risk', type: 'bool', default: true },
-      { key: 'rr', label: 'Target (R multiple)', group: 'risk', type: 'float', default: 2.0, min: 1, max: 5, step: 0.5 },
-      { key: 'hard_stop_pnl_pct', label: 'Hard P&L floor %', group: 'risk', type: 'float', default: 60, min: 20, max: 100, step: 10 },
       ...TRAIL,
     ],
   },

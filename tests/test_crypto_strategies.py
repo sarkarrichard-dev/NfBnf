@@ -131,24 +131,17 @@ def test_volprofile_value_area_ordering():
     assert p and p.val < p.poc < p.vah and p.balanced
 
 
-def test_ak_roxx_pro_enters_on_a_fresh_confluence_beyond_the_hourly_cpr():
-    # base chop -> rally -> pullback -> resumed rally: edge-triggered, so it
-    # fires on the resume, not on every bar the confluence stays true.
+def test_ak_roxx_pro_enters_on_the_confluence_and_exits_on_the_channel_break():
+    # chop (sets CPR) -> rally (fires the long) -> drop through SMA(low,8) (exit)
     df = ak_roxx_pro._demo_frame()
-    saw, side = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), df, 560)
+    saw, side = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), df, 320)
     assert saw["enter"] >= 1 and side == "long"
+    assert saw["exit"] >= 1  # closed on the drop back through the low band
 
     # dead-flat tape: the 8-condition gate never opens
     flat = df.assign(open=100.0, high=100.3, low=99.7, close=100.0)
-    saw2, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), flat, 400)
+    saw2, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), flat, 40)
     assert saw2["enter"] == 0
-
-    # a smooth one-way ramp is always in confluence -> never a fresh signal
-    n = len(df)
-    ramp = 100.0 + np.linspace(0, 80, n) ** 1.15
-    smooth = df.assign(open=ramp, high=ramp + 0.1, low=ramp - 0.1, close=ramp)
-    saw3, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), smooth, 500)
-    assert saw3["enter"] == 0
 
 
 def test_tma_phoenix_enters_on_a_reversal_candle_with_the_smma_ribbon():

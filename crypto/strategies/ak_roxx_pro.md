@@ -64,11 +64,21 @@ All computed on the **5-minute** frame, on **closed bars only**. Default Inputs
 7. **CPR gate** — either there is no completed hourly CPR yet, **or** close is above the hourly CPR's top level (`cprMax` / TC). (`rawSell`: close below `cprMin` / BC.) This is the "price must be fully outside the 1H CPR — inside is the NO TRADE ZONE" rule.
 8. **PEMA ribbon bullish** — the 13/21/34 ribbon is **stacked** (fast > mid > slow) **and sloping up**.
 
-### Signal state machine (trend-ride)
+### Signal state machine — verified line-for-line 2026-09-11
 
-- A signal fires only when `rawBuy` is true **and** neither a buy nor a sell is already active (`!buyActive && !sellActive`).
-- Once active it **stays active** — no new signal, no opposite signal — until the trailing stop is hit. The trail is seeded at entry with the channel edge and ratchets with price. This is the author's "while a signal is active, no new signal until the trailing SL is hit".
-- **T1 / T2**: risk = (signal-bar close) − (trail stop at entry); targets are 1.5× and 2× that, drawn as short two-candle lines.
+Read straight from `indicators.js::computeAlpha1Signals`:
+
+```
+if (rawBuy  && !buyActive && !sellActive) { buyActive  = true;  sellActive = false; }
+if (rawSell && !sellActive && !buyActive) { sellActive = true;  buyActive  = false; }
+if (buyActive  && c.close < loC) buyActive  = false;   // <-- the exit
+if (sellActive && c.close > upC) sellActive = false;   // <-- the exit
+// the marker fires only on the bar buyActive/sellActive turns on
+```
+
+- **Enter** on the first bar `rawBuy` is true while flat. It is *not* edge-triggered on `rawBuy` — but since condition 2 (`close > upC`) fails on any bar where you'd have just exited (`close < loC < upC`), you can't re-enter until price reclaims the channel, so no churn.
+- **Exit — the entire exit.** Long: the first bar `close < loC` (the **current** `SMA(low, 8)`, not a ratcheted value). Short: `close > upC`. **No target. No fixed stop. No P&L trail.** The position rides the channel.
+- **T1 / T2 / SL lines** drawn on the chart come from a *separate* `computeTargets` annotation (1.5R / 2R off the entry-to-band distance) — display only, they do not close the position. The author's spoken commentary about "target 77,480" is his discretionary layer, not the mechanical engine.
 
 ### B+ / S+ (high-probability variant)
 
@@ -116,38 +126,35 @@ comparing. Drawn as a box spanning the current hour.
 
 ---
 
-## Status (2026-09-10)
+## Status (2026-09-11 — faithful port)
 
-Done:
+`ak_roxx_pro.py` now matches the portal's `computeAlpha1Signals` exactly:
 
-- `ak_roxx_pro.py` re-ported to the real logic above — the 8-condition Alpha 1
-  `rawBuy`/`rawSell`, the trend-ride state machine, the 1:`rr` target, plus an
-  optional `require_alpha2_agree` gate that also computes the Alpha 2 direction
-  (15-bar break + Choppiness(14) < 38.2 + Supertrend(3, 10)).
-- Wired into `crypto/lanes.py` as a **paper** lane — `CRYPTO_AK_ROXX_ENABLED`,
-  default on. Delta places no paper orders.
-- In `crypto/ml/optimize.py`'s `SEARCH_SPACE["ak_roxx_pro"]` — `require_beyond_cpr`,
-  `require_alpha2_agree`, `slope_lookback`, `rr`. `retune_all()` walk-forwards it
-  nightly and *suggests* changes for approval; never auto-applies (ML guardrails).
-- Dashboard: catalog card + lane toggle + status plumbing.
+- 8-condition `rawBuy` / `rawSell` (above), fired the first flat bar it's true.
+- **Exit = close back through the far band** (`close < SMA(low,8)` for a long).
+  Nothing else — no target, no P&L trail, no ratchet, no hard floor. The
+  earlier ports had all of those and their −$8k / −$2k backtests are **void**.
+- Optional `require_alpha2_agree` (default off) — extra filter, Alpha 1 itself
+  doesn't use Alpha 2.
+- `SEARCH_SPACE["ak_roxx_pro"]` — `require_beyond_cpr`, `require_alpha2_agree`,
+  `upper_len`, `lower_len`.
+- Wired as a **paper** lane (`CRYPTO_AK_ROXX_ENABLED`, default on); dashboard
+  card + toggle + status.
 
-Backtest (BTCUSD, 45 days): shared P&L trail −$2,433 / 933t → edge-triggered
-−$2,174 / 844t → **channel-edge stop (default) −$2,103 / 714t, win 17%**. Net
-barely moved across all three — no edge on Delta 5m after costs, same as every
-other config here. Full table in `RESULTS.md`. Wired to **paper** to accumulate
-a forward record; never arm crypto live on it.
-
-The channel-edge stop (`SMA(low,8)` for a long, ratcheting toward price) + a
-fixed 1:`rr` target + a hard P&L floor is the portal's own exit and is now the
-default. `use_channel_stop=False` restores the shared trail (an optimiser A/B).
+**Timeframe = 1h** (`AkRoxxConfig.timeframe`, env `CRYPTO_AK_ROXX_TF`). The
+`close < SMA(low,8)` exit is a 40-min leash on 5m (churns, −$2.3k/45d) but 8
+hours of lows on 1h — a real swing stop. On 1h: ~2 trades/day, avg win 2× avg
+loss, net −$376/90d (≈ flat, ~6 pts of win-rate short of breakeven). Closest any
+crypto strategy has come. See `RESULTS.md`.
 
 ## What the port does *not* copy from the portal
 
-The trail is the crypto lane's shared **P&L-percent** engine (10% of margin at
-100×), not the portal's channel-edge price stop — every crypto strategy exits
-the same way. The S/R-zone "don't buy into resistance" gate and the bar-colour /
-big-candle *highlight* are display features on the portal; only the optional
-`big_candle_atr` skip is carried (default off).
+The S/R-zone "don't buy into resistance" nudge, the bar-colour / big-candle
+*highlight*, the B+/S+ CPR-proximity label, and the drawn T1/T2 lines are all
+display features — they don't gate or close a trade. The one real simplification:
+on a **live** entry the lane still attaches a wide Delta bracket stop from the
+shared `TrailConfig` as a disaster backstop; the strategy's own exit is the
+channel break.
 
 **Caveat that still stands:** every 5-minute crypto config measured on this
 platform is net-negative after real Delta costs (`memory/strategy-findings.md`).

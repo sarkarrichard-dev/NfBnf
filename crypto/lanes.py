@@ -118,7 +118,9 @@ def _vp_edge_cfg(s):
 def _ak_roxx_cfg(s):
     from crypto.strategies.ak_roxx_pro import AkRoxxConfig
 
-    return AkRoxxConfig(**_tuned("ak_roxx_pro"), trail=_trail_cfg(s))
+    tuned = _tuned("ak_roxx_pro")
+    tf = os.getenv("CRYPTO_AK_ROXX_TF", tuned.get("timeframe", "1h")).strip()
+    return AkRoxxConfig(**{**tuned, "timeframe": tf}, trail=_trail_cfg(s))
 
 
 # name -> builder returning (module, timeframe, days-of-history, cfg)
@@ -132,7 +134,9 @@ def _register_simple() -> None:
         "bb_reversal": lambda s: (bb_reversal, "5m", 2, _bb_cfg(s)),
         "ema_jaguar": lambda s: (ema_jaguar, "5m", 2, _ema_jaguar_cfg(s)),
         "vp_edge": lambda s: (vp_edge, "15m", 6, _vp_edge_cfg(s)),
-        "ak_roxx_pro": lambda s: (ak_roxx_pro, "5m", 3, _ak_roxx_cfg(s)),
+        "ak_roxx_pro": lambda s: (
+            ak_roxx_pro, _ak_roxx_cfg(s).timeframe, 20, _ak_roxx_cfg(s)
+        ),
     })
 
 
