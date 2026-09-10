@@ -92,12 +92,18 @@ class CryptoSettings:
     vp_edge_enabled: bool
     fvg_scalp_enabled: bool
     ema_pivot_enabled: bool
+    # Lane-level trading window, IST, 24h "HH:MM". NEW ENTRIES fire only inside
+    # this window (default 17:00–05:30 — the evening + overnight, US/crypto-active
+    # hours); the daytime belongs to the Indian lanes. Open positions are managed
+    # (trailing stop, TP, hold cap) around the clock regardless.
+    session_start: str
+    session_end: str
     # 6 PM (NY N-Break) session window, IST, 24h "HH:MM"
     ny_start: str
     ny_end: str
     # when true, ny_n_break takes the same N-break setup around the clock, not
-    # only inside the NY window; the window still counts as "in session" so the
-    # post-6PM behaviour is unchanged. The trade cap becomes per-UTC-day.
+    # only inside the NY window. Default OFF (2026-09-10): 24/7 N-breaks lost
+    # money — Richard capped it back to its 18:00–23:00 window.
     nbreak_allround: bool
     # ichimoku
     ichimoku_tf: str
@@ -150,9 +156,11 @@ def crypto_settings() -> CryptoSettings:
         vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
         fvg_scalp_enabled=_b("CRYPTO_FVG_SCALP_ENABLED", True),
         ema_pivot_enabled=_b("CRYPTO_EMA_PIVOT_ENABLED", True),
+        session_start=os.getenv("CRYPTO_SESSION_START", "17:00").strip(),
+        session_end=os.getenv("CRYPTO_SESSION_END", "05:30").strip(),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
-        nbreak_allround=_b("CRYPTO_NBREAK_ALLROUND", True),
+        nbreak_allround=_b("CRYPTO_NBREAK_ALLROUND", False),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
         stop_pnl_pct=max(0.0, _f("CRYPTO_STOP_PNL_PCT", 10.0)),
         ratchet_step_pnl_pct=max(0.5, _f("CRYPTO_RATCHET_STEP_PNL_PCT", 5.0)),
@@ -181,6 +189,8 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_EMA_PIVOT_ENABLED",
     "CRYPTO_NBREAK_ALLROUND",
     "CRYPTO_NBREAK_MAX_TRADES",
+    "CRYPTO_SESSION_START",
+    "CRYPTO_SESSION_END",
     "CRYPTO_DEPLOY_USD",
     "CRYPTO_LEVERAGE",
     "CRYPTO_MAX_CONCURRENT",
@@ -212,6 +222,9 @@ if __name__ == "__main__":  # self-check
     assert not s.live_orders_enabled or (s.trading_mode == "LIVE" and s.live_armed)
     assert s.symbols and all(x == x.upper() for x in s.symbols)
     assert len(set(s.symbols)) == len(s.symbols)  # deduped
+    for w in (s.session_start, s.session_end, s.ny_start, s.ny_end):
+        h, m = w.split(":")
+        assert 0 <= int(h) < 24 and 0 <= int(m) < 60
     import os as _o
     _o.environ["CRYPTO_SYMBOLS"] = "btcusd, ethusd ,BTCUSD"
     assert _symbols() == ("BTCUSD", "ETHUSD")

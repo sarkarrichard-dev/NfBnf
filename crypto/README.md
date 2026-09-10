@@ -34,7 +34,7 @@ crypto/
   delta/client.py    signed REST (HMAC-SHA256, ported from the OpenAlgo connector)
   delta/products.py  perp contract master (product_id, contract_value, tick, min size)
   delta/market_data.py  ticker / candles (chunked) / l2 depth / resample
-  session.py         the "crypto day": 18:00–23:00 IST for 6 PM, UTC date for Ichimoku
+  session.py         lane window (17:00–05:30 IST) + the "crypto day" anchors
   sizing.py          $-deploy + leverage -> whole contracts
   charges.py         Delta fee + GST + MEASURED half-spread (samples the l2 book)
   journal.py         memory/crypto_journal.jsonl + crypto_state.json
@@ -52,19 +52,35 @@ Delta protocol reference is the vendored OpenAlgo connector at
 `reference/openalgo/broker/deltaexchange/` — check it before touching any
 signing / endpoint / payload detail (same rule CLAUDE.md states for Dhan).
 
-## The two strategies
+## Trading window — evening + overnight only
+
+New entries fire only inside the **lane session window**, IST, default
+**17:00–05:30** (`CRYPTO_SESSION_START` / `CRYPTO_SESSION_END`) — the
+US/crypto-active hours. The daytime belongs to the Indian lanes. Open positions
+are still managed (trailing stop, TP, hold cap) around the clock; only *new*
+positions are gated.
+
+## The four enabled strategies
 
 **6 PM / NY N-Break** — 5-minute bias (EMA25 + day-anchored VWAP), arm off the
 most recent on-side swing high/low, enter on the closing-basis re-break, exit on
-the 15-minute opposite-N or the P&L trail. Runs **around the clock** by default
-(`CRYPTO_NBREAK_ALLROUND=true`) — the same setup at any hour, cap 6 trades/UTC-day
-(`CRYPTO_NBREAK_MAX_TRADES`). Set `CRYPTO_NBREAK_ALLROUND=false` for the original
-18:00–23:00 IST window (3 trades/session, 23:00 force-close).
+the 15-minute opposite-N or the P&L trail. Runs its **18:00–23:00 IST window**
+by default (3 trades/session, 23:00 force-close). `CRYPTO_NBREAK_ALLROUND=true`
+takes the same setup at any hour inside the lane window instead — but 24/7
+N-breaks lost money, so it ships off (2026-09-10).
 
-**Ichimoku** — runs 24/7 on 1h. Entry: Tenkan crosses Kijun in the trade's
-direction **and** price is on the right side of the Kumo **and** the forward
-cloud agrees. Exit: `index_ai.strategies.ichimoku.cloud_reentry_exit` (price
-back into the cloud) or hard SL.
+**Ichimoku** — 1h. Tenkan crosses Kijun in the trade's direction **and** price is
+on the right side of the Kumo **and** the forward cloud agrees. Exit: cloud
+re-entry or hard SL.
+
+**FVG Scalp** — a 3-candle fair-value gap left by a real impulse candle, retested
+with a confirming candlestick; continuation when the 15m trend agrees, a fade
+when it's flat and price is stretched into an opposing gap.
+
+**EMA + Pivot** — a stacked, sloping 9/13/21 EMA fan plus a daily-pivot break at
+confluence (broken pivot within 1×ATR of the 21 EMA), one entry per level per day.
+
+(bb_reversal / ema_jaguar / vp_edge are built and dormant — one flag away.)
 
 ## Each strategy trades its own book
 

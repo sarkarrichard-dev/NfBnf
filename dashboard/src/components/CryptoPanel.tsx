@@ -25,7 +25,12 @@ import { CryptoExecutionPanel } from './CryptoExecutionPanel'
 import { CryptoDayReviewPanel } from './CryptoDayReviewPanel'
 
 type Status = {
-  lanes: { ny_n_break: boolean; ichimoku: boolean }
+  lanes: {
+    ny_n_break: boolean
+    ichimoku: boolean
+    fvg_scalp: boolean
+    ema_pivot: boolean
+  }
   sizing: { lots: number; deploy_cap_usd: number; leverage: number; max_concurrent: number }
   trailing: {
     stop_pnl_pct: number
@@ -33,6 +38,7 @@ type Status = {
     tp_trigger_pnl_pct: number
     peak_trail_pnl_pct: number
   }
+  lane_session_ist: { start: string; end: string }
   session_ist: { start: string; end: string }
   nbreak_allround?: boolean
   ichimoku_tf: string
@@ -237,7 +243,17 @@ export function CryptoPanel() {
             on={!!s?.lanes.ichimoku}
             onClick={() => cfg.mutate({ ichimoku_enabled: !s?.lanes.ichimoku })}
           />
-          <span className="text-[11px] text-slate-600">both off = paused</span>
+          <Chip
+            label="FVG Scalp"
+            on={!!s?.lanes.fvg_scalp}
+            onClick={() => cfg.mutate({ fvg_scalp_enabled: !s?.lanes.fvg_scalp })}
+          />
+          <Chip
+            label="EMA + Pivot"
+            on={!!s?.lanes.ema_pivot}
+            onClick={() => cfg.mutate({ ema_pivot_enabled: !s?.lanes.ema_pivot })}
+          />
+          <span className="text-[11px] text-slate-600">all off = paused</span>
         </div>
 
         {/* symbol picker */}
@@ -265,10 +281,12 @@ export function CryptoPanel() {
             Exit: stop −{s.trailing.stop_pnl_pct}% P&L, ratchets +{s.trailing.ratchet_step_pnl_pct}%
             for every +{s.trailing.ratchet_step_pnl_pct}% gained · trailing profit from +
             {s.trailing.tp_trigger_pnl_pct}%, then floor tracks peak −{s.trailing.peak_trail_pnl_pct}%
-            {' · '}
+            {s?.lane_session_ist
+              ? ` · Entries ${s.lane_session_ist.start}–${s.lane_session_ist.end} IST`
+              : ''}
             {s?.nbreak_allround
-              ? 'N-Break 24/7'
-              : `N-Break window ${s?.session_ist.start}–${s?.session_ist.end} IST`}
+              ? ' · N-Break 24/7'
+              : ` · N-Break ${s?.session_ist.start}–${s?.session_ist.end}`}
           </p>
         ) : null}
 

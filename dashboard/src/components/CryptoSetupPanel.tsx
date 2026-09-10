@@ -21,7 +21,12 @@ type Status = {
   api_key_preview: string
   base_url: string
   paper_enabled: boolean
-  lanes: { ny_n_break: boolean; ichimoku: boolean }
+  lanes: {
+    ny_n_break: boolean
+    ichimoku: boolean
+    fvg_scalp: boolean
+    ema_pivot: boolean
+  }
 }
 
 const inputCls =
