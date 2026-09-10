@@ -405,10 +405,10 @@ if _DASHBOARD_PW:
     async def _basic_auth(request: "_Req", call_next):  # type: ignore[no-untyped-def]
         hdr = request.headers.get("authorization", "")
         ok = False
-        if hdr.startswith("Basic "):
+        if hdr[:6].lower() == "basic ":  # RFC 7617 — scheme token is case-insensitive
             try:
                 _, _, pw = base64.b64decode(hdr[6:]).decode("utf-8").partition(":")
-                ok = secrets.compare_digest(pw, _DASHBOARD_PW)
+                ok = secrets.compare_digest(pw.encode("utf-8"), _DASHBOARD_PW.encode("utf-8"))
             except Exception:
                 ok = False
         if not ok:

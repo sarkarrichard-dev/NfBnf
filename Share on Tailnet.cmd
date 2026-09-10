@@ -82,10 +82,10 @@ exit /b 0
 
 :stop
 echo.
-echo Stopping the tailnet proxy...
-tailscale serve --bg 8000 off 2>nul
-tailscale serve reset
+echo Stopping the tailnet proxy for port 8000...
+tailscale serve --bg 8000 off
 echo Sharing stopped. The URL will 502 until you start it again.
+echo (If a stale mapping lingers, run:  tailscale serve reset  )
 echo.
 pause
 exit /b 0
