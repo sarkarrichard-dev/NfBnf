@@ -20,13 +20,13 @@ def test_open_counts_are_per_strategy():
         "ny_n_break:BTCUSD": {"position": {"side": "long"}},
         "ny_n_break:ETHUSD": {"position": {"side": "long"}},
         "ichimoku:BTCUSD": {"position": {"side": "short"}},
-        "fvg_scalp:BTCUSD": {"position": None},
+        "ak_roxx_pro:BTCUSD": {"position": None},
         "_meta": {"whatever": 1},
     }
     counts = lanes._open_counts(st)
     assert counts["ny_n_break"] == 2
     assert counts["ichimoku"] == 1
-    assert counts["fvg_scalp"] == 0
+    assert counts["ak_roxx_pro"] == 0
 
 
 @pytest.mark.parametrize(
@@ -170,8 +170,6 @@ def test_scan_force_closes_a_stale_position_the_strategy_wont_exit(tmp_path, mon
     the lane force-closes it and journals a 'max hold' row."""
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
-    monkeypatch.setenv("CRYPTO_FVG_SCALP_ENABLED", "false")
-    monkeypatch.setenv("CRYPTO_EMA_PIVOT_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD")
     monkeypatch.setenv("CRYPTO_MAX_HOLD_DAYS", "1")
     monkeypatch.setenv("CRYPTO_USDINR", "88")

@@ -60,7 +60,7 @@ US/crypto-active hours. The daytime belongs to the Indian lanes. Open positions
 are still managed (trailing stop, TP, hold cap) around the clock; only *new*
 positions are gated.
 
-## The four enabled strategies
+## The enabled strategies
 
 **6 PM / NY N-Break** — 5-minute bias (EMA25 + day-anchored VWAP), arm off the
 most recent on-side swing high/low, enter on the closing-basis re-break, exit on
@@ -73,14 +73,9 @@ N-breaks lost money, so it ships off (2026-09-10).
 on the right side of the Kumo **and** the forward cloud agrees. Exit: cloud
 re-entry or hard SL.
 
-**FVG Scalp** — a 3-candle fair-value gap left by a real impulse candle, retested
-with a confirming candlestick; continuation when the 15m trend agrees, a fade
-when it's flat and price is stretched into an opposing gap.
-
-**EMA + Pivot** — a stacked, sloping 9/13/21 EMA fan plus a daily-pivot break at
-confluence (broken pivot within 1×ATR of the 21 EMA), one entry per level per day.
-
-(bb_reversal / ema_jaguar / vp_edge are built and dormant — one flag away.)
+(bb_reversal / ema_jaguar / vp_edge are built and dormant — one flag away.
+fvg_scalp and ema_pivot were removed 2026-09-10; `ak_roxx_pro` / `tma_phoenix`
+are backtest-only ports of TradingView indicators, not wired to the live lane.)
 
 ## Each strategy trades its own book
 

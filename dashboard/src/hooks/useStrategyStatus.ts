@@ -54,7 +54,5 @@ export function useStrategyStatus(): Record<string, LiveStatus> {
     index_options: { enabled: true, mode: 'PAPER', instruments: ['NIFTY', 'BANKNIFTY', 'SENSEX'], open: 0 },
     ny_n_break: cLane('ny_n_break'),
     ichimoku: cLane('ichimoku'),
-    fvg_scalp: cLane('fvg_scalp'),
-    ema_pivot: cLane('ema_pivot'),
   }
 }

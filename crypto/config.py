@@ -80,18 +80,15 @@ class CryptoSettings:
     max_open_total: int        # portfolio-wide safety cap across all strategies; 0 = unlimited
     max_hold_days: int         # force-close a position open across more than this many day boundaries (crypto has no session)
     paper_bankroll_usd: float
-    # lanes — the section runs when any strategy is enabled. ny_n_break,
-    # ichimoku and fvg_scalp default on. The 3 video strategies
-    # (bb_reversal / ema_jaguar / vp_edge) default off: they turn on only after
-    # crypto/ml/optimize.py shows a stable positive walk-forward net (per
-    # crypto/strategies/RESULTS.md).
+    # lanes — the section runs when any strategy is enabled. ny_n_break and
+    # ichimoku default on. The video strategies (bb_reversal / ema_jaguar /
+    # vp_edge) default off: they turn on only after crypto/ml/optimize.py shows a
+    # stable positive walk-forward net (per crypto/strategies/RESULTS.md).
     ny_nbreak_enabled: bool
     ichimoku_enabled: bool
     bb_reversal_enabled: bool
     ema_jaguar_enabled: bool
     vp_edge_enabled: bool
-    fvg_scalp_enabled: bool
-    ema_pivot_enabled: bool
     # Lane-level trading window, IST, 24h "HH:MM". NEW ENTRIES fire only inside
     # this window (default 17:00–05:30 — the evening + overnight, US/crypto-active
     # hours); the daytime belongs to the Indian lanes. Open positions are managed
@@ -154,8 +151,6 @@ def crypto_settings() -> CryptoSettings:
         bb_reversal_enabled=_b("CRYPTO_BB_REVERSAL_ENABLED", False),
         ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
         vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
-        fvg_scalp_enabled=_b("CRYPTO_FVG_SCALP_ENABLED", True),
-        ema_pivot_enabled=_b("CRYPTO_EMA_PIVOT_ENABLED", True),
         session_start=os.getenv("CRYPTO_SESSION_START", "16:00").strip(),
         session_end=os.getenv("CRYPTO_SESSION_END", "06:00").strip(),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
@@ -185,8 +180,6 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_BB_REVERSAL_ENABLED",
     "CRYPTO_EMA_JAGUAR_ENABLED",
     "CRYPTO_VP_EDGE_ENABLED",
-    "CRYPTO_FVG_SCALP_ENABLED",
-    "CRYPTO_EMA_PIVOT_ENABLED",
     "CRYPTO_NBREAK_ALLROUND",
     "CRYPTO_NBREAK_MAX_TRADES",
     "CRYPTO_SESSION_START",

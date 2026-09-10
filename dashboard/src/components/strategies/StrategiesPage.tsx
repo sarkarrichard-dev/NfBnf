@@ -26,7 +26,7 @@ export function StrategiesPage({
   showInternals?: boolean
 }) {
   const [sub, setSub] = useStickyTab('algo.strategies.sub', 'mine')
-  const [seed, setSeed] = useStickyTab('algo.strategies.seed', 'fvg_scalp')
+  const [seed, setSeed] = useStickyTab('algo.strategies.seed', 'ny_n_break')
 
   const SUBTABS = ALL_SUBTABS.filter((t) => showBuilder || t.id !== 'builder')
   const view = !showBuilder && sub === 'builder' ? 'mine' : sub

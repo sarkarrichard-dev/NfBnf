@@ -1,148 +1,135 @@
-# AK Roxx Pro — reconstructed spec
+# AK Roxx Pro — spec (rebuilt from the live portal, 2026-09-10)
 
-**Source:** "AK Algo Buy and Sell Signals" (display name *AK Roxx Pro*),
-invite-only Pine script by `Ahmad_Ali_Khan` on TradingView
-(`tradingview.com/v/nylb7uG6`). Source code is locked. This spec is reverse-
-engineered from the **public inputs, the plot list, the author's release notes,
-and observed behaviour on ETHUSD.P 5m** — it is an independent description, not a
-copy of the protected code. Numbers marked *(guess)* are not recoverable from the
-outside and need to be fit by backtest.
+**Source:** the "AK Roxx Alpha" trading portal (`portal.akroxxtech.com`) — a
+TradingView-charting-library front end with the AK Roxx signal set built in as
+four custom studies. Richard has a paid seat. The original TradingView Pine
+script ("AK Algo Buy and Sell Signals" by `Ahmad_Ali_Khan`) is invite-only and
+locked, **but the portal recomputes the same signals in browser JavaScript**
+(`assets/js/chart-v2/indicators.js` + `custom-study.js`), and the author's own
+comments there say that code is *"ported verbatim from pages/chart.php's math …
+verified bar-for-bar"*. This spec is an independent description of the **logic
+and parameters** read off that running implementation and the study Inputs UI —
+not a copy of the protected Pine source.
 
-`ak_roxx_pro.pine` is a from-scratch Pine v6 implementation of everything below.
-Port to `crypto/strategies/ak_roxx_pro.py` only after it clears a real Delta
-backtest — see the caveats at the end.
+The earlier version of this file (and `ak_roxx_pro.py`) was reverse-engineered
+from the public inputs + release notes only, and **got the core wrong** (it used
+a 21/34/55 EMA ribbon and guessed constants). The real logic is below. The
+2026-09-09 backtest of −$7,972 was run on that wrong logic; it does not tell us
+anything about the real signal.
 
 ---
 
-## What it is
+## The four studies
 
-A discretionary **price-action + support/resistance + trend** signal generator.
-Fixed **1:2 reward:risk**. Trend-riding: once a signal is active it holds until the
-trailing stop is hit — no opposite signal in between. Optional scalping mode.
-Multi-symbol screener. Not a mechanical edge — a confluence dashboard.
-
-## Inputs (the complete configurable set)
-
-| Input | Value | Meaning |
+| Study | Portal name | Role |
 |---|---|---|
-| Enable AK Roxx Updated | on | master switch for the current logic version |
-| `A` | 21 | fast length of a 3-MA ribbon (Fibonacci) |
-| `B` | 34 | mid length |
-| `C` | 55 | slow length |
-| Require slope | on | the ribbon must be sloping in the trade direction, not flat |
-| Require price beyond ALL 1H CPR levels | on | price must be fully outside the 1-hour Central Pivot Range (above TC or below BC) — inside ⇒ *NO TRADE ZONE* |
-| Show 1H CPR & Classic Pivots | on | draw the 1H CPR (Pivot/BC/TC) and the classic floor pivots R1–R3 / S1–S3 |
-| Show CPR values label | on | the CPR values table |
-| Enable Screener | off | run the signal across a watchlist without opening each chart |
+| **Alpha 1** | "AK Roxx" | the main buy/sell signal — an 8-condition confluence gate |
+| **Alpha 2** | "5m Trend Strategy" | an independent second signal — channel break + trend filters |
+| **Alpha CPR** | — | draws the hourly Central Pivot Range box (used as a gate by both signals) |
+| **Alpha Support Resistance** | — | draws the volume-weighted S/R zones (a display gate) |
 
-Everything else (the volume-S/R lookback, the big-candle threshold, the trailing-
-stop distance, the MA type) is **hard-coded in the script** — not exposed.
+The status bar shows both engines at once, e.g. `A1: SELL | A2: SELL · SL 77445.39`.
+When both agree it is treated as the strongest read. Adding "Alpha Support
+Resistance" / "Alpha CPR" to the chart is the on/off switch for those overlays.
 
-## Components (from the Style tab — every plot the script draws)
+---
 
-- **Bar Color** — candles tinted by the trend state (bull/bear/neutral).
-- **Pivot P, TC, BC** — the **1-hour CPR**. `Pivot = (H+L+C)/3`, `BC = (H+L)/2`,
-  `TC = 2·Pivot − BC`, computed from the **previous completed 1H bar**.
-- **R1 R2 R3 S1 S2 S3** — classic floor pivots (drawn, hidden by default).
-- **Buy Signal / Sell Signal** — the entries (label below / above bar).
-- **Buy Exit Line / Sell Exit Line** — the **trailing stop** after entry (the
-  red line that follows price). Distance *(guess: ATR-based or the mid MA)*.
-- **Big Candle Highlight** — flags an oversized signal candle. Author's rule:
-  *"avoid trades if the signal candle is too big, or wait for a retracement."*
-- **Resistance Holds / Support Holds** — ◆ marker when price tests a level and
-  **rejects** it (reversal cue).
-- **Resistance as Support Holds / Support as Resistance Holds** — ◆ marker when a
-  **broken** level is retested from the other side and holds (continuation cue).
-- **Boxes** — the `Vol: ±NNNNN` zones: a support/resistance band built from the
-  last *N* candles, tagged with the **net volume** (buy − sell) that formed it.
-  Green = demand, red = supply.
-- **Pane labels** — the *"NO TRADE ZONE · Awaiting Signal · [UPDATED MODE]"* box.
-- **Tables** — the CPR values.
+## Alpha 1 — "AK Roxx" (the main signal)
 
-## Evolution (author's release notes)
+All computed on the **5-minute** frame, on **closed bars only**. Default Inputs
+(confirmed in the study's Settings → Inputs, and in the chart legend
+`8 8 7 14 13 21 34 20 2 1 25 1 2 20`):
 
-| Date | Change |
-|---|---|
-| 2024-12 | price-action Buy/Sell, fixed **1:2** SL/target |
-| 2025-02 | optional **Scalping Mode** (tuned for index options) |
-| 2025-04 | **trend-ride**: while a signal is active, no new signal until the trailing SL is hit |
-| 2025-07 | multi-symbol **Screener** |
-| **2025-11** | **volume-based S/R** — levels from the volume of the last several candles; *don't buy near resistance / sell near support* |
-| **2026-07** | added the **hourly CPR** filter |
+| Input | Default | Meaning |
+|---|---|---|
+| AK Channel Length 1 / Length 2 | 8 / 8 | the two lengths of the "AK Channel" (`upC` upper band, `loC` lower band) |
+| Short EMA | 7 | `EMA(close, 7)` |
+| Long EMA | 14 | `EMA(close, 14)` |
+| PEMA A / B / C | 13 / 21 / 34 | the "PEMA" ribbon — three EMAs of **hlc3** (typical price) |
+| S/R Lookback | 20 | swing lookback for the S/R zones |
+| S/R Vol Len | 2 | bars each side for the volume-delta tag |
+| S/R Box Width | 1.0 | ATR multiple for zone height |
+| CPR Proximity | 25 | % of the CPR band's own width — a signal within this of the band is "high-probability" (B+/S+) |
+| T1 / T2 | 1.5 / 2 | reward multiples of the signal's own risk (1:1.5, 1:2) |
+| Big-candle avg | 20 | trailing window for the big-candle / bar-colour reference range |
 
-## The logic, assembled
+### Entry — `rawBuy` fires when **all eight** are true (mirror for `rawSell`)
 
-**Trend engine**
-1. Three MAs of length 21 / 34 / 55 (*type a guess — EMA or HMA*).
-2. `trendUp`  = `MA21 > MA34 > MA55` **and** all three rising over the last *k*
-   bars (`Require slope`). `trendDown` mirrored. Else `neutral`.
-3. Candles are coloured by this state.
+1. **`macUp`** — both AK-Channel bands are rising vs the prior bar (`upC > upC[1]` **and** `loC > loC[1]`). This is the "moving-average channel" trend read.
+2. **close > `upC`** — price closed above the upper channel band.
+3. **close > close[1]** — price closed above the previous bar's close.
+4. **EMA7 > EMA14**.
+5. **EMA7 rising** (`EMA7 > EMA7[1]`).
+6. **EMA14 rising** (`EMA14 > EMA14[1]`).
+7. **CPR gate** — either there is no completed hourly CPR yet, **or** close is above the hourly CPR's top level (`cprMax` / TC). (`rawSell`: close below `cprMin` / BC.) This is the "price must be fully outside the 1H CPR — inside is the NO TRADE ZONE" rule.
+8. **PEMA ribbon bullish** — the 13/21/34 ribbon is **stacked** (fast > mid > slow) **and sloping up**.
 
-**S/R map**
-4. Recent swing highs = resistance, swing lows = support (pivot lookback
-   *(guess ~10–20)*). Each level carries the cumulative volume delta of the bars
-   in its zone → the `Vol:` tag; sign shows demand vs supply.
-5. `nearResistance` = price within *(guess ~0.15–0.3 %)* of the nearest swing
-   high above; `nearSupport` mirrored.
+### Signal state machine (trend-ride)
 
-**1H CPR gate**
-6. From the previous 1H bar compute Pivot / BC / TC.
-7. `beyondCPR_up`   = `close > TC(1H)`; `beyondCPR_down` = `close < BC(1H)`.
-   Inside the range ⇒ **NO TRADE ZONE**, no signals.
+- A signal fires only when `rawBuy` is true **and** neither a buy nor a sell is already active (`!buyActive && !sellActive`).
+- Once active it **stays active** — no new signal, no opposite signal — until the trailing stop is hit. The trail is seeded at entry with the channel edge and ratchets with price. This is the author's "while a signal is active, no new signal until the trailing SL is hit".
+- **T1 / T2**: risk = (signal-bar close) − (trail stop at entry); targets are 1.5× and 2× that, drawn as short two-candle lines.
 
-**Big-candle gate**
-8. `bigCandle` = bar range `> K · ATR` *(guess K ≈ 1.8–2.5)*. On a big signal
-   candle: suppress the signal, or wait for a retrace into the level.
+### B+ / S+ (high-probability variant)
 
-**Entry (on bar close only)**
-9. **BUY** when: `trendUp` **and** `beyondCPR_up` **and** not `nearResistance`
-   **and** not `bigCandle` **and** no position open **and** (in Scalping Mode,
-   an additional shorter trigger). SL and target set at **1 : 2**.
-10. **SELL** = mirror.
-11. After entry: ignore all new signals until the trailing **Exit Line** is hit
-    (or SL / target). One position at a time.
+Same signal, re-labelled when it lands **at the hourly CPR** — inside the BC..TC
+band, widened each side by `CPR Proximity`% **of the band's own width** (default
+25). Band-relative on purpose: BTC's median hourly CPR band is ~25 points, so a
+percent-of-price tolerance would mark almost everything. On BTC/5m over a week,
+proximity 0 marks ~20% of signals, 25 marks ~29%, 100 marks 59%.
 
-**Exit**
-12. Trailing stop line that ratchets with price; fixed 1:2 target; hard SL.
+---
 
-## Caveats before trusting a single signal
+## Alpha 2 — "5m Trend Strategy" (the second signal)
 
-- **Repaints.** The volume-S/R levels and the swing pivots rebuild as bars form,
-  so historical BUY/SELL marks are partly hindsight. Backtest with
-  `barmerge.lookahead_off`, confirmed pivots only, and entries on close.
-- **Not moderator-reviewed** (invite-only). No independent audit of the logic.
-- **Friction.** Every 5-minute crypto config measured on this platform is
-  net-negative after real costs (`memory/strategy-findings.md`). "Signal fires →
-  take it" almost certainly loses. The value here is the *ideas* — the **1H-CPR
-  breakout gate** and the **volume-weighted S/R avoidance** — as filters layered
-  onto a signal that is already predictive, not as a standalone system.
-- The guessed constants (MA type, pivot lookback, near-level %, big-candle K,
-  trail distance) each move the result — fit them on Delta 5m history for BTC /
-  ETH / SOL and report the sweep, don't hard-code a number.
+Config (`A2_CFG`): `upperLength: 15, lowerLength: 15, chopMax: 38.2,
+stFactor: 3.0, stAtrLen: 10`. Choppiness length **14**.
 
-## Backtest result — it did not clear (2026-09-09)
+### Entry — `buyEdge && chopOK && cprBuyOK && stBuyOK` (mirror for sell)
 
-`crypto/strategies/ak_roxx_pro.py` is the port; `crypto/backtest.py` runs it
-(`python -m crypto.backtest --days 120 --strategy ak_roxx_pro`). Replayed on
-Delta 5m history, 60 days, BTC/ETH/SOL, entries on close, confirmed pivots,
-previous completed 1H bar for the CPR — the honest setup.
+- **`buyEdge`** — a *fresh* break of the 15-bar channel edge (`brkBuy` true now, false on the prior bar). Donchian-style break.
+- **`chopOK`** — Choppiness Index(14) **< 38.2** (trending, not chopping).
+- **`cprBuyOK`** — there is an hourly CPR **and** close is above its top.
+- **`stBuyOK`** — Supertrend(factor 3.0, ATR 10) is up **and** a long isn't already open (one trade per trend).
 
-**Net, after Delta fees (default config):** −$7,972 over 3,562 trades, 32% win
-(BTC −$2,081 · ETH −$964 · SOL −$4,927). Every point of the `near_pct` ×
-`require_beyond_cpr` sweep loses; best was `near_pct=0.30, beyond_cpr=on` at
-−$6,124 / 2,765 trades. Turning the 1H-CPR gate **off** makes it strictly worse
-(more entries, more bleed) — so the CPR gate helps at the margin but nowhere
-near enough.
+Same trailing-stop exit shape as Alpha 1.
 
-**Gross, costs zeroed:** BTC +$168 (+$0.19/trade), ETH −$38 (−$0.03/trade),
-SOL −$74 (−$0.05/trade) — i.e. **no gross edge**, flat to slightly positive on
-BTC and noise on the rest. This is the same verdict as every other intraday
-config on this platform
-(`memory/strategy-findings.md`): the signal has no edge to begin with, so
-friction is not even the issue here.
+---
 
-The module stays in the tree as documented-dead (like `ema_pivot.py`): wired to
-the backtest, **not** wired to `crypto/lanes.py`, no `CRYPTO_AK_ROXX_ENABLED`
-flag. The reusable idea — a higher-timeframe CPR/pivot breakout gate layered on
-a signal that is *already* predictive — is preserved here for when such a signal
-exists. Re-running the sweep on this signal is not a pending task.
+## Support / Resistance zones (`calcSRLevels`)
+
+Defaults: lookback 20, volLen 2, boxWidth 1.0.
+
+Confirmed swing highs = resistance, swing lows = support. Each swing carries the
+**net volume delta** (buy − sell) of the bars in its zone → the `Vol: ±NNNNN`
+tag (green demand / red supply). Zone height is ATR-based. A zone is "broken"
+once price later closes past it. Only the **3 most recent unbroken** supports and
+resistances are kept. The indicator's guidance: *don't buy into resistance,
+don't sell into support*.
+
+## CPR zones (`calcCPRZones`)
+
+Hourly Central Pivot Range from the **previous completed 1-hour bar**:
+`P = (H+L+C)/3`, `BC = (H+L)/2`, `TC = 2P − BC`. Note `TC` lands *below* `BC`
+whenever the prior hour closed under its own midpoint — order them before
+comparing. Drawn as a box spanning the current hour.
+
+---
+
+## What to build (the plan Richard set 2026-09-10)
+
+Re-port `ak_roxx_pro.py` to the **real** logic above (AK Channel 8/8 + EMA 7/14
+rising + PEMA 13/21/34 stacked/sloping + `macUp` + close-vs-prev + hourly-CPR
+breakout — the 8-condition `rawBuy`), keep the trend-ride state machine and the
+1:2 target, then:
+
+1. Wire it into `crypto/lanes.py` as a live **paper** lane (`CRYPTO_AK_ROXX_ENABLED`), alongside `ny_n_break`. Delta places no paper orders.
+2. Add it to `crypto/ml/optimize.py`'s `SEARCH_SPACE` (grid over the channel lengths, the two EMAs, the PEMA lengths, the CPR gate on/off, the big-candle filter) so `retune_all()` walk-forwards it nightly and *suggests* changes for approval — never auto-applies while it's net-positive (per the ML guardrails).
+3. Re-run `python -m crypto.backtest --strategy ak_roxx_pro --days 120` on the corrected logic and record the result here — the old −$7,972 is void.
+
+**Caveat that still stands:** every 5-minute crypto config measured on this
+platform is net-negative after real Delta costs (`memory/strategy-findings.md`).
+The 8-condition gate is much stricter than the old port, so it should trade far
+less — but "signal fires → take it" has never worked here. Treat this as a lane
+to *watch forward*, the way the 20-stock futures lane is watched, not as a proven
+edge. Optimising a no-edge signal does not create an edge.

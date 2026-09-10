@@ -29,8 +29,6 @@ from crypto.strategies import (
     ak_roxx_pro,
     bb_reversal,
     ema_jaguar,
-    ema_pivot,
-    fvg_scalp,
     ichimoku as ichi,
     ny_n_break as nb,
     tma_phoenix,
@@ -51,16 +49,12 @@ _SIMPLE = {
                    lambda s, **kw: ema_jaguar.EmaJaguarConfig(trail=_trail(s), **kw)),
     "vp_edge": (vp_edge, "15m",
                 lambda s, **kw: vp_edge.VpEdgeConfig(trail=_trail(s), **kw)),
-    "fvg_scalp": (fvg_scalp, "5m",
-                  lambda s, **kw: fvg_scalp.FvgScalpConfig(trail=_trail(s), **kw)),
-    "ema_pivot": (ema_pivot, "5m",
-                  lambda s, **kw: ema_pivot.EmaPivotConfig(trail=_trail(s), **kw)),
     "ak_roxx_pro": (ak_roxx_pro, "5m",
                     lambda s, **kw: ak_roxx_pro.AkRoxxConfig(trail=_trail(s), **kw)),
     "tma_phoenix": (tma_phoenix, "5m",
                     lambda s, **kw: tma_phoenix.TmaPhoenixConfig(trail=_trail(s), **kw)),
 }
-_WIN_N = {"ichimoku": 220, "ema_pivot": 340, "ak_roxx_pro": 220, "tma_phoenix": 340}  # ema_pivot needs a prior UTC day; ak_roxx the prior hour; tma_phoenix the 200 SMMA
+_WIN_N = {"ichimoku": 220, "ak_roxx_pro": 220, "tma_phoenix": 340}  # ak_roxx needs the prior hour; tma_phoenix the 200 SMMA
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 
 
@@ -193,7 +187,7 @@ def backtest_ny_n_break(sym: str, days: float, s) -> list[Trade]:
 def backtest_simple(name: str, sym: str, days: float, s, *, cfg_overrides: dict | None = None,
                     frame: pd.DataFrame | None = None) -> list[Trade]:
     """Generic replay for a strategy with the plain step(sym, candles, *, state, cfg)
-    shape (ichimoku / bb_reversal / ema_jaguar / vp_edge / fvg_scalp).
+    shape (ichimoku / bb_reversal / ema_jaguar / vp_edge / ak_roxx_pro).
     ``frame`` overrides the fetched candles (walk-forward optimiser, one fold)."""
     module, tf, make_cfg = _SIMPLE[name]
     tf = tf(s) if callable(tf) else tf

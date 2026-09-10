@@ -35,8 +35,8 @@ const rows: CryptoJournalRow[] = [
     exit_reason: 'trailing profit +10%',
   },
   {
-    exit_id: 'ema_pivot:BTCUSD:2',
-    strategy: 'ema_pivot',
+    exit_id: 'ichimoku:BTCUSD:2',
+    strategy: 'ichimoku',
     asset: 'BTCUSD',
     mode: 'paper',
     side: 'short',
