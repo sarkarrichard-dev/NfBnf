@@ -51,7 +51,8 @@ def analyze_option_chain(
     *,
     spot: float,
     instrument: IndexInstrument,
-    strike_window: int = 11,  # ~5 strikes each side of ATM — wide enough to see the real OI walls
+    strike_window: int = 21,  # ~10 strikes each side of ATM — BANKNIFTY's real walls
+    # (100-pt strikes, monthly expiry) sit further out than a ±5 window catches
 ) -> OptionOiContext:
     """Summarize OI around ATM from Dhan option chain."""
     rows = (chain.get("data") or {}).get("oc") or {}
