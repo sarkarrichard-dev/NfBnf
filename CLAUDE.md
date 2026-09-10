@@ -79,6 +79,16 @@ Indian-options engine: it places live orders and feeds Trade History / Reports /
 change to how index options trade goes in the legacy modules. See
 `memory/indian-options-engine.md`.
 
+## Other sections (own scan task, own journal, paper only)
+
+- **`crypto/`** — Delta Exchange perps, 24/7, its own strategies + ML. Evening
+  entry window (`CRYPTO_SESSION_*`, default 16:00–06:00 IST).
+- **`commodities/`** — MCX mini/micro futures (crude/gas/gold/silver), 09:00–23:30
+  IST, runs the evening the equity scanner is shut. **Reuses the index directional
+  signal** (`index_ai.strategies.futures.engine`), not the crypto strategies.
+  Front contract rolls monthly: `python -m scripts.fetch_commodity_universe`.
+  See `commodities/README.md`. `ENABLE_COMMODITIES_PAPER`, never wired to orders.
+
 ## Reference
 
 - `reference/openalgo/` — vendored submodule, read-only. **Check it before

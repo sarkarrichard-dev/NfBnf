@@ -219,6 +219,7 @@ TOGGLEABLE_FLAGS: dict[str, str] = {
     "OPTIONS_REQUIRE_VIABLE": "Block a credit-sell index whose measured gross edge can't cover its cost floor (off by default)",
     "ENABLE_FUTURES_PAPER": "Directional futures paper lane",
     "ENABLE_STOCK_FUTURES_PAPER": "Directional futures paper lane on the stock universe (20 NSE F&O names)",
+    "ENABLE_COMMODITIES_PAPER": "MCX commodity-futures paper lane (crude/gas/gold/silver, evening session)",
     "ENABLE_BRAIN_GATE": "ML win-probability entry gate",
     "ENABLE_AI_COMMENTARY": "LLM session commentary (advisory only)",
     "AUTO_START_SCANNER": "Start the scanner automatically at launch",
