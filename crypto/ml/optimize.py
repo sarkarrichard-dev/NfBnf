@@ -57,6 +57,12 @@ SEARCH_SPACE: dict[str, dict[str, list]] = {
         "value_area_pct": [0.6, 0.7, 0.8],
         "edge_buffer_pct": [0.3, 0.6, 1.0],
     },
+    "ak_roxx_pro": {
+        "require_beyond_cpr": [True, False],
+        "require_alpha2_agree": [False, True],
+        "use_channel_stop": [True, False],
+        "rr": [1.5, 2.0, 3.0],
+    },
 }
 
 

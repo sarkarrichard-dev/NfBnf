@@ -47,6 +47,8 @@ def _enabled_strategies(s) -> list[str]:
         out.append("ny_n_break")
     if s.ichimoku_enabled:
         out.append("ichimoku")
+    if s.ak_roxx_enabled:
+        out.append("ak_roxx_pro")
     if s.bb_reversal_enabled:
         out.append("bb_reversal")
     if s.ema_jaguar_enabled:
@@ -113,17 +115,24 @@ def _vp_edge_cfg(s):
     return VpEdgeConfig(**_tuned("vp_edge"), trail=_trail_cfg(s))
 
 
+def _ak_roxx_cfg(s):
+    from crypto.strategies.ak_roxx_pro import AkRoxxConfig
+
+    return AkRoxxConfig(**_tuned("ak_roxx_pro"), trail=_trail_cfg(s))
+
+
 # name -> builder returning (module, timeframe, days-of-history, cfg)
 _SIMPLE: dict[str, "Any"] = {}
 
 
 def _register_simple() -> None:
-    from crypto.strategies import bb_reversal, ema_jaguar, vp_edge
+    from crypto.strategies import ak_roxx_pro, bb_reversal, ema_jaguar, vp_edge
 
     _SIMPLE.update({
         "bb_reversal": lambda s: (bb_reversal, "5m", 2, _bb_cfg(s)),
         "ema_jaguar": lambda s: (ema_jaguar, "5m", 2, _ema_jaguar_cfg(s)),
         "vp_edge": lambda s: (vp_edge, "15m", 6, _vp_edge_cfg(s)),
+        "ak_roxx_pro": lambda s: (ak_roxx_pro, "5m", 3, _ak_roxx_cfg(s)),
     })
 
 
@@ -609,8 +618,8 @@ if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
 
     off = replace(
         crypto_settings(), ny_nbreak_enabled=False, ichimoku_enabled=False,
-        bb_reversal_enabled=False, ema_jaguar_enabled=False, vp_edge_enabled=False,
-        trading_mode="PAPER", live_armed=False,
+        ak_roxx_enabled=False, bb_reversal_enabled=False, ema_jaguar_enabled=False,
+        vp_edge_enabled=False, trading_mode="PAPER", live_armed=False,
     )
     crypto_settings = lambda: off  # noqa: E731 — stub for the self-check
     assert scan_crypto_paper() == []

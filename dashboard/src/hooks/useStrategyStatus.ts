@@ -54,5 +54,6 @@ export function useStrategyStatus(): Record<string, LiveStatus> {
     index_options: { enabled: true, mode: 'PAPER', instruments: ['NIFTY', 'BANKNIFTY', 'SENSEX'], open: 0 },
     ny_n_break: cLane('ny_n_break'),
     ichimoku: cLane('ichimoku'),
+    ak_roxx_pro: cLane('ak_roxx_pro'),
   }
 }

@@ -24,6 +24,7 @@ type Status = {
   lanes: {
     ny_n_break: boolean
     ichimoku: boolean
+    ak_roxx_pro: boolean
   }
 }
 

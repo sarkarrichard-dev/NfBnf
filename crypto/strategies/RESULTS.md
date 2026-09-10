@@ -178,8 +178,46 @@ fourth strategy Richard asked for, and it does solve the "not enough trades"
 problem. **Do not arm crypto live**: net-negative on every measurement, and the
 walk-forward gate (stable positive OOS across ≥ 2 symbols) is not met.
 
-The live crypto strategies are now **`ny_n_break`** (6 PM) and **`ichimoku`**
-(paper). **`fvg_scalp` and `ema_pivot` were removed 2026-09-10** (Richard) — both
-net-negative on every measurement and never cleared the cost floor; the sections
-below are kept as the record of what was tried. The plan is `ny_n_break` +
-`ak_roxx_pro` (see `ak_roxx_pro.md`), optimised forward.
+The live crypto strategies are now **`ny_n_break`** (6 PM), **`ichimoku`**, and
+**`ak_roxx_pro`** — all paper. **`fvg_scalp` and `ema_pivot` were removed
+2026-09-10** (Richard) — both net-negative on every measurement and never cleared
+the cost floor; the sections below are kept as the record of what was tried.
+
+---
+
+# ak_roxx_pro — 2026-09-10 (rebuilt)
+
+The "AK Roxx" TradingView indicator (Richard's paid portal). Re-ported from the
+portal's own client-side signal engine — `crypto/strategies/ak_roxx_pro.md` has
+the full spec. **The old −$8k backtest (2026-09-09) was on a wrong
+reconstruction (21/34/55 EMA ribbon, guessed constants) and is void.**
+
+Real Alpha 1 entry = eight reads: `SMA(high,8)` & `SMA(low,8)` both rising,
+close above the upper band and the prior close, `EMA7 > EMA14` both rising,
+price beyond the previous hour's CPR, and the `EMA(hlc3, 13/21/34)` ribbon
+stacked & sloping. Trend-ride exit (P&L trail or 1:2). Optional `require_alpha2_agree`
+adds the portal's "Alpha 2" (15-bar break + Choppiness(14)<38.2 + Supertrend(3,10)).
+
+Wired as a **paper** lane (`CRYPTO_AK_ROXX_ENABLED`, default on) and to the
+nightly optimiser (`SEARCH_SPACE["ak_roxx_pro"]` — CPR gate on/off, Alpha 2 gate,
+slope lookback, target R).
+
+**Backtest (corrected logic), BTCUSD, 45 days:**
+
+| exit | trades | net | win | avg win / loss |
+|---|---|---|---|---|
+| shared P&L trail | 933 | −$2,433 | 29% | $4.11 / −$5.34 |
+| + edge-triggered entry | 844 | −$2,174 | 29% | $3.99 / −$5.26 |
+| **+ channel-edge stop** (default) | **714** | **−$2,103** | 17% | $7.22 / −$5.06 |
+
+The channel stop turned it into a "few big wins, many small losses"
+trend-follower (avg win $4 → $7.2) but the net barely moved — still ~16
+trades/day on one symbol, still losing. The 8-condition entry re-forms
+constantly during a trend and even an `SMA(low, 8)` stop on 5m is a short leash.
+
+Same verdict as every other 5m config on this platform: **no edge on Delta 5m
+after costs**. The signal is a faithful port of what the portal shows; that is
+all it is. `ak_roxx_pro` stays wired to **paper** so the scorecard and the
+nightly optimiser accumulate a forward record (the `SEARCH_SPACE` grid sweeps
+the CPR gate, the Alpha 2 gate, `use_channel_stop`, and `rr`). **Do not arm
+crypto live.**

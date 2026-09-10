@@ -31,7 +31,7 @@ export type StrategyDef = {
   name: string
   kind: 'crypto' | 'index'
   /** which lane / status block reports it */
-  statusKey: 'ny_n_break' | 'ichimoku' | 'index_options' | 'futures'
+  statusKey: 'ny_n_break' | 'ichimoku' | 'ak_roxx_pro' | 'index_options' | 'futures'
   engine: string
   instrument: string
   timeframe: string
@@ -109,6 +109,41 @@ export const STRATEGIES: StrategyDef[] = [
       { key: 'base', label: 'Base (Kijun)', group: 'signal', type: 'int', default: 26, min: 10, max: 60 },
       { key: 'span_b', label: 'Span B', group: 'signal', type: 'int', default: 52, min: 20, max: 120 },
       { key: 'displacement', label: 'Displacement', group: 'market', type: 'int', default: 26, min: 10, max: 60 },
+      ...TRAIL,
+    ],
+  },
+  {
+    id: 'ak_roxx_pro',
+    name: 'AK Roxx Pro',
+    kind: 'crypto',
+    statusKey: 'ak_roxx_pro',
+    engine: '5m · SMA channel + EMA + PEMA ribbon + 1H CPR',
+    instrument: 'BTC / ETH perp',
+    timeframe: '5m',
+    side: 'buying',
+    teaser: 'Confluence trend entries on BTC/ETH perps with a trailing exit.',
+    blurb:
+      'A clean-room port of the "AK Roxx" TradingView indicator (Alpha 1). Enters only when eight reads line up: both SMA(8) channel bands rising, price above the upper band and the prior close, EMA7 > EMA14 with both rising, price beyond the previous hour\'s CPR ("NO TRADE ZONE" otherwise), and the 13/21/34 PEMA ribbon stacked and sloping. Trend-rides — no new signal until the P&L trail or the 1:2 target. An optional gate requires the portal\'s "Alpha 2" (5m trend break + Choppiness + Supertrend) to agree.',
+    reads:
+      'Long when SMA({upper_len}) highs and SMA({lower_len}) lows are both rising, close is above the upper band and above the prior close, EMA{ema_short} > EMA{ema_long} (both rising), the {pema_fast}/{pema_mid}/{pema_slow} PEMA ribbon is stacked & sloping up, and price is above the 1H CPR. Exit on the trail or a 1:{rr} target.',
+    backtest: { window: 'pending re-backtest', net: 'paper lane', trades: 0, note: 'rebuilt from the live portal 2026-09-10; old −$8k backtest was on wrong logic — void' },
+    paperDefault: true,
+    builder: true,
+    params: [
+      { key: 'upper_len', label: 'Channel — SMA of highs', group: 'market', type: 'int', default: 8, min: 4, max: 30 },
+      { key: 'lower_len', label: 'Channel — SMA of lows', group: 'market', type: 'int', default: 8, min: 4, max: 30 },
+      { key: 'ema_short', label: 'Fast EMA', group: 'signal', type: 'int', default: 7, min: 3, max: 20 },
+      { key: 'ema_long', label: 'Slow EMA', group: 'signal', type: 'int', default: 14, min: 8, max: 40 },
+      { key: 'pema_fast', label: 'PEMA fast', group: 'signal', type: 'int', default: 13, min: 5, max: 30 },
+      { key: 'pema_mid', label: 'PEMA mid', group: 'signal', type: 'int', default: 21, min: 10, max: 50 },
+      { key: 'pema_slow', label: 'PEMA slow', group: 'signal', type: 'int', default: 34, min: 20, max: 90 },
+      { key: 'slope_lookback', label: 'Slope lookback (bars)', group: 'signal', type: 'int', default: 1, min: 1, max: 5 },
+      { key: 'require_beyond_cpr', label: 'Require beyond 1H CPR', group: 'signal', type: 'bool', default: true },
+      { key: 'require_alpha2_agree', label: 'Require Alpha 2 to agree', group: 'signal', type: 'bool', default: false },
+      { key: 'big_candle_atr', label: 'Skip signal bar > ×ATR (0 = off)', group: 'signal', type: 'float', default: 0, min: 0, max: 5, step: 0.5 },
+      { key: 'use_channel_stop', label: 'Channel-edge stop (portal exit)', group: 'risk', type: 'bool', default: true },
+      { key: 'rr', label: 'Target (R multiple)', group: 'risk', type: 'float', default: 2.0, min: 1, max: 5, step: 0.5 },
+      { key: 'hard_stop_pnl_pct', label: 'Hard P&L floor %', group: 'risk', type: 'float', default: 60, min: 20, max: 100, step: 10 },
       ...TRAIL,
     ],
   },

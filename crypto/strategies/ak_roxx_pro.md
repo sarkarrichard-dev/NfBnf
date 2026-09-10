@@ -116,16 +116,38 @@ comparing. Drawn as a box spanning the current hour.
 
 ---
 
-## What to build (the plan Richard set 2026-09-10)
+## Status (2026-09-10)
 
-Re-port `ak_roxx_pro.py` to the **real** logic above (AK Channel 8/8 + EMA 7/14
-rising + PEMA 13/21/34 stacked/sloping + `macUp` + close-vs-prev + hourly-CPR
-breakout — the 8-condition `rawBuy`), keep the trend-ride state machine and the
-1:2 target, then:
+Done:
 
-1. Wire it into `crypto/lanes.py` as a live **paper** lane (`CRYPTO_AK_ROXX_ENABLED`), alongside `ny_n_break`. Delta places no paper orders.
-2. Add it to `crypto/ml/optimize.py`'s `SEARCH_SPACE` (grid over the channel lengths, the two EMAs, the PEMA lengths, the CPR gate on/off, the big-candle filter) so `retune_all()` walk-forwards it nightly and *suggests* changes for approval — never auto-applies while it's net-positive (per the ML guardrails).
-3. Re-run `python -m crypto.backtest --strategy ak_roxx_pro --days 120` on the corrected logic and record the result here — the old −$7,972 is void.
+- `ak_roxx_pro.py` re-ported to the real logic above — the 8-condition Alpha 1
+  `rawBuy`/`rawSell`, the trend-ride state machine, the 1:`rr` target, plus an
+  optional `require_alpha2_agree` gate that also computes the Alpha 2 direction
+  (15-bar break + Choppiness(14) < 38.2 + Supertrend(3, 10)).
+- Wired into `crypto/lanes.py` as a **paper** lane — `CRYPTO_AK_ROXX_ENABLED`,
+  default on. Delta places no paper orders.
+- In `crypto/ml/optimize.py`'s `SEARCH_SPACE["ak_roxx_pro"]` — `require_beyond_cpr`,
+  `require_alpha2_agree`, `slope_lookback`, `rr`. `retune_all()` walk-forwards it
+  nightly and *suggests* changes for approval; never auto-applies (ML guardrails).
+- Dashboard: catalog card + lane toggle + status plumbing.
+
+Backtest (BTCUSD, 45 days): shared P&L trail −$2,433 / 933t → edge-triggered
+−$2,174 / 844t → **channel-edge stop (default) −$2,103 / 714t, win 17%**. Net
+barely moved across all three — no edge on Delta 5m after costs, same as every
+other config here. Full table in `RESULTS.md`. Wired to **paper** to accumulate
+a forward record; never arm crypto live on it.
+
+The channel-edge stop (`SMA(low,8)` for a long, ratcheting toward price) + a
+fixed 1:`rr` target + a hard P&L floor is the portal's own exit and is now the
+default. `use_channel_stop=False` restores the shared trail (an optimiser A/B).
+
+## What the port does *not* copy from the portal
+
+The trail is the crypto lane's shared **P&L-percent** engine (10% of margin at
+100×), not the portal's channel-edge price stop — every crypto strategy exits
+the same way. The S/R-zone "don't buy into resistance" gate and the bar-colour /
+big-candle *highlight* are display features on the portal; only the optional
+`big_candle_atr` skip is carried (default off).
 
 **Caveat that still stands:** every 5-minute crypto config measured on this
 platform is net-negative after real Delta costs (`memory/strategy-findings.md`).

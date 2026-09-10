@@ -131,32 +131,24 @@ def test_volprofile_value_area_ordering():
     assert p and p.val < p.poc < p.vah and p.balanced
 
 
-def test_ak_roxx_pro_enters_on_a_stacked_ribbon_beyond_the_hourly_cpr():
-    n = 900
-    idx = pd.date_range("2026-09-06 00:00", periods=n, freq="5min", tz="UTC")
-    px = np.concatenate(
-        [
-            100.0 + np.sin(np.linspace(0, 6, 360)) * 2,  # base — sets the early CPR
-            np.linspace(100.0, 130.0, n - 360),  # clean rally through it
-        ]
-    )
-    df = pd.DataFrame(
-        {
-            "datetime": idx,
-            "open": px,
-            "high": px + 0.3,
-            "low": px - 0.3,
-            "close": px,
-            "volume": [10.0] * n,
-        }
-    )
-    saw, side = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(slope_lookback=2), df, 400)
+def test_ak_roxx_pro_enters_on_a_fresh_confluence_beyond_the_hourly_cpr():
+    # base chop -> rally -> pullback -> resumed rally: edge-triggered, so it
+    # fires on the resume, not on every bar the confluence stays true.
+    df = ak_roxx_pro._demo_frame()
+    saw, side = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), df, 560)
     assert saw["enter"] >= 1 and side == "long"
 
-    # inside the range / no ribbon: a dead-flat tape never trades
-    flat = df.assign(open=100.0, high=100.4, low=99.6, close=100.0)
-    saw2, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(slope_lookback=2), flat, 400)
+    # dead-flat tape: the 8-condition gate never opens
+    flat = df.assign(open=100.0, high=100.3, low=99.7, close=100.0)
+    saw2, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), flat, 400)
     assert saw2["enter"] == 0
+
+    # a smooth one-way ramp is always in confluence -> never a fresh signal
+    n = len(df)
+    ramp = 100.0 + np.linspace(0, 80, n) ** 1.15
+    smooth = df.assign(open=ramp, high=ramp + 0.1, low=ramp - 0.1, close=ramp)
+    saw3, _ = _run(ak_roxx_pro, ak_roxx_pro.AkRoxxConfig(), smooth, 500)
+    assert saw3["enter"] == 0
 
 
 def test_tma_phoenix_enters_on_a_reversal_candle_with_the_smma_ribbon():
@@ -186,4 +178,3 @@ def test_tma_phoenix_enters_on_a_reversal_candle_with_the_smma_ribbon():
     flat = df.assign(open=100.0, high=100.4, low=99.6, close=100.0)
     saw2, _ = _run(tma_phoenix, cfg, flat, 300)
     assert saw2["enter"] == 0
-
