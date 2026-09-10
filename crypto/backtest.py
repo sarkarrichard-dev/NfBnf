@@ -49,12 +49,12 @@ _SIMPLE = {
                    lambda s, **kw: ema_jaguar.EmaJaguarConfig(trail=_trail(s), **kw)),
     "vp_edge": (vp_edge, "15m",
                 lambda s, **kw: vp_edge.VpEdgeConfig(trail=_trail(s), **kw)),
-    "ak_roxx_pro": (ak_roxx_pro, "5m",
+    "ak_roxx_pro": (ak_roxx_pro, lambda s: ak_roxx_pro.AkRoxxConfig().timeframe,
                     lambda s, **kw: ak_roxx_pro.AkRoxxConfig(trail=_trail(s), **kw)),
     "tma_phoenix": (tma_phoenix, "5m",
                     lambda s, **kw: tma_phoenix.TmaPhoenixConfig(trail=_trail(s), **kw)),
 }
-_WIN_N = {"ichimoku": 220, "ak_roxx_pro": 220, "tma_phoenix": 340}  # ak_roxx needs the prior hour; tma_phoenix the 200 SMMA
+_WIN_N = {"ichimoku": 220, "ak_roxx_pro": 60, "tma_phoenix": 340}  # ak_roxx: 34 EMA + prior hour
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 
 

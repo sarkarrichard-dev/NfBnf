@@ -60,8 +60,8 @@ SEARCH_SPACE: dict[str, dict[str, list]] = {
     "ak_roxx_pro": {
         "require_beyond_cpr": [True, False],
         "require_alpha2_agree": [False, True],
-        "use_channel_stop": [True, False],
-        "rr": [1.5, 2.0, 3.0],
+        "upper_len": [6, 8, 12],
+        "lower_len": [6, 8, 12],
     },
 }
 
