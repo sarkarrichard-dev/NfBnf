@@ -15,8 +15,9 @@ Re-measured 2026-09-09 from the real SQLite journal (mid-to-mid gross, no charge
 
     NIFTY      gross/trade  +Rs 6    over 65 trades  (win 54%)  -> NOT_VIABLE
     BANKNIFTY  gross/trade  -Rs 178  over 77 trades  (win 39%)  -> NOT_VIABLE
-    SENSEX     gross/trade  -Rs 57   over 36 trades  (win 33%)  -> UNMEASURED
-               (BSE book depth still not sampled, so its floor is a default)
+    SENSEX     gross/trade  -Rs 57   over 36 trades  (win 33%)  -> NOT_VIABLE
+               (as of 2026-09-10 the BSE book is sampled too — ~440 samples —
+                so SENSEX now gets a real floor and a firm verdict, not UNMEASURED)
 
 The 2026-08-29 backtest read +Rs 211 / +Rs 229 / +Rs 300 — that was BS-proxy
 optimism (see strategy-findings on the six proxy versions). Live, the CPR + EMA
@@ -218,8 +219,12 @@ if __name__ == "__main__":  # ponytail self-check
     naked = with_overrides(config_for("BANKNIFTY"), sell_naked=True)
     assert friction_floor(naked, lane="sell")[1] == 2
     assert friction_floor(naked, lane="sell")[0] < b.friction_floor_rupees
-    # unmeasured spread must not be reported as a verdict
+    # unmeasured spread must not be reported as a verdict — force the "default"
+    # source by pointing the sampler at a path with no data
     for k in ("SLIPPAGE_HALF_SPREAD_POINTS_NIFTY", "SLIPPAGE_HALF_SPREAD_POINTS_BANKNIFTY"):
         del os.environ[k]
+    import index_ai.market_context.spread_calib as _sc
+
+    _sc.SAMPLES_PATH = _sc.MEMORY_DIR / "no-such-samples.jsonl"
     assert viability("SENSEX", "sell").verdict == UNMEASURED
     print("viability.py self-check ok")
