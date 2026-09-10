@@ -432,6 +432,10 @@ def set_config(
         except (ValueError, AssertionError):
             raise HTTPException(400, f"{name} must be 24h HH:MM.") from None
         values[name] = f"{int(hh):02d}:{int(mm):02d}"
+    start_v = values.get("CRYPTO_SESSION_START")
+    end_v = values.get("CRYPTO_SESSION_END")
+    if start_v is not None and end_v is not None and start_v == end_v:
+        raise HTTPException(400, "Session start and end must differ (equal = crypto never trades).")
     if not values:
         raise HTTPException(400, "No settings provided.")
     update_env_values(values)

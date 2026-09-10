@@ -253,6 +253,17 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 continue
             key = f"{strat}:{sym}"
             slot = dict(st.get(key) or {})
+            # outside the lane window with nothing open to manage → don't even
+            # run the strategy: stepping it would churn its internal state
+            # (armed levels, trade counters, traded-pivot lists) for an entry
+            # we'd only suppress, and it wouldn't re-arm when the window opens.
+            # A position opened earlier is still stepped so its exits fire.
+            if not entries_open and not slot.get("position"):
+                events.append({
+                    "strategy": strat, "asset": sym, "event": "wait",
+                    "reason": f"outside crypto session {s.session_start}-{s.session_end} IST",
+                })
+                continue
             try:
                 if strat == "ny_n_break":
                     c5 = _closed(market_data.candles(sym, "5m", days=2, client=client))
@@ -317,14 +328,12 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                                    "reason": "closed on exchange"})
                     continue
 
+                # window closed while we still hold a position: manage it (exits
+                # above already ran) but take no new entry the strategy emits.
                 if action == "enter" and not entries_open:
+                    events.append({"strategy": strat, "asset": sym, "event": "wait",
+                                   "reason": "outside crypto session"})
                     action = "wait"
-                    ev = {
-                        "strategy": strat, "asset": sym, "event": "wait",
-                        "reason": (
-                            f"outside crypto session {s.session_start}-{s.session_end} IST"
-                        ),
-                    }
 
                 if action == "enter":
                     _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
