@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any
 
 from crypto.config import CRYPTO_MEMORY
@@ -27,9 +28,25 @@ def load_state() -> dict[str, Any]:
 
 def save_state(state: dict[str, Any]) -> None:
     CRYPTO_MEMORY.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(state, indent=2, default=str)
     tmp = STATE_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
-    os.replace(tmp, STATE_PATH)
+    tmp.write_text(payload, encoding="utf-8")
+    # os.replace is atomic but on Windows fails with WinError 5 when antivirus /
+    # a sync agent holds the target open for a moment — retry, then fall back to
+    # a plain in-place write rather than lose the lane's counters and positions.
+    for attempt in range(6):
+        try:
+            os.replace(tmp, STATE_PATH)
+            return
+        except PermissionError:
+            if attempt == 5:
+                break
+            time.sleep(0.25)
+    STATE_PATH.write_text(payload, encoding="utf-8")
+    try:
+        tmp.unlink()
+    except OSError:
+        pass
 
 
 def journal(trade: dict[str, Any]) -> None:
