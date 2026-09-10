@@ -34,7 +34,7 @@ crypto/
   delta/client.py    signed REST (HMAC-SHA256, ported from the OpenAlgo connector)
   delta/products.py  perp contract master (product_id, contract_value, tick, min size)
   delta/market_data.py  ticker / candles (chunked) / l2 depth / resample
-  session.py         lane window (17:00–05:30 IST) + the "crypto day" anchors
+  session.py         lane window (16:00–06:00 IST) + the "crypto day" anchors
   sizing.py          $-deploy + leverage -> whole contracts
   charges.py         Delta fee + GST + MEASURED half-spread (samples the l2 book)
   journal.py         memory/crypto_journal.jsonl + crypto_state.json
@@ -55,7 +55,7 @@ signing / endpoint / payload detail (same rule CLAUDE.md states for Dhan).
 ## Trading window — evening + overnight only
 
 New entries fire only inside the **lane session window**, IST, default
-**17:00–05:30** (`CRYPTO_SESSION_START` / `CRYPTO_SESSION_END`) — the
+**16:00–06:00** (`CRYPTO_SESSION_START` / `CRYPTO_SESSION_END`) — the
 US/crypto-active hours. The daytime belongs to the Indian lanes. Open positions
 are still managed (trailing stop, TP, hold cap) around the clock; only *new*
 positions are gated.

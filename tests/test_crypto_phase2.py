@@ -304,7 +304,7 @@ def test_nbreak_allround_takes_the_setup_outside_the_ny_window(paper_env, monkey
 
 
 def test_lane_session_window_gates_entries_not_the_scan(paper_env, monkeypatch):
-    """New entries fire only inside the lane window (default 17:00-05:30 IST);
+    """New entries fire only inside the lane window (default 16:00-06:00 IST);
     outside it the scan still runs — it just doesn't open anything."""
     monkeypatch.setenv("CRYPTO_NBREAK_ALLROUND", "true")  # strategy itself isn't the gate
     df5 = paper_env["df5"]
