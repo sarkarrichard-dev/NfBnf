@@ -202,6 +202,31 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     crypto_task = asyncio.create_task(_crypto_paper_loop())
 
+    async def _commodities_paper_loop() -> None:
+        """MCX commodity-futures lane — its own cadence, decoupled from the index
+        scanner because MCX runs 09:00–23:30 IST, well past the equity close.
+        Paper only, never wired to orders. Opt-in, never fatal."""
+        try:
+            from commodities.lanes import enabled as comm_enabled, scan_commodities_paper
+        except Exception:
+            return
+        _mlog = logging.getLogger("commodities.lanes")
+        while True:
+            try:
+                if comm_enabled():
+                    events = await asyncio.to_thread(scan_commodities_paper)
+                    for e in events:
+                        if e.get("event") in {"entry", "exit", "error", "fetch_error"}:
+                            _mlog.info(
+                                "commodity_paper | %s",
+                                " · ".join(f"{k}={v}" for k, v in e.items() if k != "trade"),
+                            )
+            except Exception:
+                _mlog.warning("commodities paper loop error", exc_info=True)
+            await asyncio.sleep(60)
+
+    commodities_task = asyncio.create_task(_commodities_paper_loop())
+
     async def _crypto_nightly_loop() -> None:
         """Crypto ML retrain + walk-forward auto-tune + day-review — once per UTC
         day, on its OWN task so it never blocks the 60s scan loop (the auto-tune
@@ -342,6 +367,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     tick_task.cancel()
     warm_task.cancel()
     crypto_task.cancel()
+    commodities_task.cancel()
     crypto_nightly_task.cancel()
     crypto_day_summary_task.cancel()
     eod_catch_up_task.cancel()
@@ -352,6 +378,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         tick_task,
         warm_task,
         crypto_task,
+        commodities_task,
         crypto_nightly_task,
         crypto_day_summary_task,
         eod_catch_up_task,
