@@ -429,7 +429,7 @@ def _chats_from_updates(result: list[dict[str, Any]]) -> dict[str, str]:
             c = o.get("chat")
             if isinstance(c, dict) and c.get("id") is not None:
                 name = c.get("title") or c.get("username") or c.get("first_name") or ""
-                out[str(c["id"])] = f"{c.get('type')} · {name}"
+                out[str(c["id"])] = f"{c.get('type')} / {name}"
             for v in o.values():
                 walk(v)
         elif isinstance(o, list):
