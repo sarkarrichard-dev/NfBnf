@@ -27,7 +27,17 @@ const GROUPS: { id: ParamGroup; label: string }[] = [
   { id: 'risk', label: 'Risk & size' },
 ]
 
-function Detail({ def, live, onBuild }: { def: StrategyDef; live?: LiveStatus; onBuild: (id: string) => void }) {
+function Detail({
+  def,
+  live,
+  onBuild,
+  showBuilder,
+}: {
+  def: StrategyDef
+  live?: LiveStatus
+  onBuild: (id: string) => void
+  showBuilder: boolean
+}) {
   const defaults = Object.fromEntries(def.params.map((p) => [p.key, p.default])) as Record<string, number | boolean | string>
 
   return (
@@ -93,7 +103,7 @@ function Detail({ def, live, onBuild }: { def: StrategyDef; live?: LiveStatus; o
         </p>
       )}
 
-      {def.builder ? (
+      {def.builder && showBuilder ? (
         <Button variant="secondary" onClick={() => onBuild(def.id)}>
           Open in Builder →
         </Button>
@@ -106,10 +116,12 @@ export function MyStrategiesView({
   seedId,
   onSeed,
   onBuild,
+  showBuilder = true,
 }: {
   seedId: string
   onSeed: (id: string) => void
   onBuild: (id: string) => void
+  showBuilder?: boolean
 }) {
   const status = useStrategyStatus()
   const active = byId(seedId) ?? STRATEGIES[0]
@@ -142,7 +154,12 @@ export function MyStrategiesView({
         })}
       </ul>
 
-      <Detail def={active} live={status[active.statusKey]} onBuild={onBuild} />
+      <Detail
+        def={active}
+        live={status[active.statusKey]}
+        onBuild={onBuild}
+        showBuilder={showBuilder}
+      />
     </div>
   )
 }

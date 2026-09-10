@@ -10,9 +10,11 @@ import { Button } from '../ui/Button'
 export function MarketplaceView({
   onDetails,
   onBuild,
+  showBuilder = true,
 }: {
   onDetails: (id: string) => void
   onBuild: (id: string) => void
+  showBuilder?: boolean
 }) {
   const status = useStrategyStatus()
 
@@ -53,7 +55,7 @@ export function MarketplaceView({
                 <Button variant="secondary" onClick={() => onDetails(s.id)}>
                   Details
                 </Button>
-                {s.builder ? (
+                {s.builder && showBuilder ? (
                   <Button variant="primary" onClick={() => onBuild(s.id)}>
                     Deploy
                   </Button>
@@ -63,20 +65,21 @@ export function MarketplaceView({
           )
         })}
 
-        <button
-          type="button"
-          onClick={() => onBuild('fvg_scalp')}
-          className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--hair)] text-slate-400 transition-colors hover:border-[var(--acc)] hover:text-[var(--acc)]"
-        >
-          <span className="text-2xl leading-none">+</span>
-          <span className="text-xs font-semibold">Build my own →</span>
-        </button>
+        {showBuilder ? (
+          <button
+            type="button"
+            onClick={() => onBuild('fvg_scalp')}
+            className="flex min-h-[12rem] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--hair)] text-slate-400 transition-colors hover:border-[var(--acc)] hover:text-[var(--acc)]"
+          >
+            <span className="text-2xl leading-none">+</span>
+            <span className="text-xs font-semibold">Build my own →</span>
+          </button>
+        ) : null}
       </div>
 
       <p className="text-[11px] text-slate-600">
         The index lanes trade net-negative after real costs and are shown for completeness — see the
-        Reports tab and <span className="text-slate-400">memory/strategy-findings.md</span>. Friction, not
-        signal quality, is the binding constraint.
+        Reports tab and <span className="text-slate-400">memory/strategy-findings.md</span>.
       </p>
     </div>
   )

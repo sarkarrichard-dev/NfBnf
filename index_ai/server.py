@@ -659,6 +659,14 @@ def _status_payload() -> dict[str, Any]:
             "GET /api/dhan/account for live funds and trade book" if cfg.dhan.ready else None
         ),
         "api_capabilities": API_CAPABILITIES,
+        # panels the dashboard should render — flipped from Setup → Feature toggles
+        # (HIDE_* flags) so a shared team view can drop the owner's broker account
+        # and the unfinished Builder without a code change.
+        "ui": {
+            f["flag"].removeprefix("HIDE_").lower(): not f["enabled"]
+            for f in feature_flags()
+            if f["flag"].startswith("HIDE_")
+        },
     }
 
 
