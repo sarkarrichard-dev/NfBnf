@@ -94,7 +94,7 @@ class CryptoSettings:
     ema_jaguar_enabled: bool
     vp_edge_enabled: bool
     # Lane-level trading window, IST, 24h "HH:MM". NEW ENTRIES fire only inside
-    # this window (default 17:00–05:30 — the evening + overnight, US/crypto-active
+    # this window (default 16:00–06:00 — the evening + overnight, US/crypto-active
     # hours); the daytime belongs to the Indian lanes. Open positions are managed
     # (trailing stop, TP, hold cap) around the clock regardless.
     session_start: str
