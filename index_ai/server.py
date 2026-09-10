@@ -372,17 +372,53 @@ app = FastAPI(title="Index Options AI", version="0.2.0", lifespan=lifespan)
 # request is rejected before it hits a handler. Necessary, not sufficient — real
 # auth still needs adding before this leaves localhost (cloud security baseline).
 # ALLOWED_HOSTS is env-driven so a reverse proxy / container health probe in the
-# cloud shape can widen it without a code change.
+# cloud shape can widen it without a code change. `*.ts.net` is in the default so
+# `tailscale serve` (a private tailnet, HTTPS, proxied to loopback — never a
+# public bind) works with no config; see "Share on Tailnet.cmd".
 from starlette.middleware.trustedhost import TrustedHostMiddleware  # noqa: E402
 
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=[
         h.strip()
-        for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,::1,testserver").split(",")
+        for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,::1,testserver,*.ts.net").split(
+            ","
+        )
         if h.strip()
     ],
 )
+
+# Optional shared-password gate (HTTP Basic on every route incl. the dashboard).
+# Off unless DASHBOARD_PASSWORD is set. Meant for the tailnet-sharing case: a
+# tester clicking around should not be able to flip Paper→Live, edit lot sizes,
+# or purge test data by accident. Any username; the password is the secret.
+_DASHBOARD_PW = os.getenv("DASHBOARD_PASSWORD", "").strip()
+
+if _DASHBOARD_PW:
+    import base64  # noqa: E402
+    import secrets  # noqa: E402
+
+    from starlette.requests import Request as _Req  # noqa: E402
+    from starlette.responses import PlainTextResponse as _PlainResp  # noqa: E402
+
+    @app.middleware("http")
+    async def _basic_auth(request: "_Req", call_next):  # type: ignore[no-untyped-def]
+        hdr = request.headers.get("authorization", "")
+        ok = False
+        if hdr[:6].lower() == "basic ":  # RFC 7617 — scheme token is case-insensitive
+            try:
+                _, _, pw = base64.b64decode(hdr[6:]).decode("utf-8").partition(":")
+                ok = secrets.compare_digest(pw.encode("utf-8"), _DASHBOARD_PW.encode("utf-8"))
+            except Exception:
+                ok = False
+        if not ok:
+            return _PlainResp(
+                "Authentication required.",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="QuantHawk"'},
+            )
+        return await call_next(request)
+
 
 # Crypto section (Delta Exchange) — separate lane, its own /api/crypto surface.
 try:
