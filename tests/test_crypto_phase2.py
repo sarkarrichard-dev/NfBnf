@@ -46,7 +46,14 @@ def test_sizing_lot_based():
 def test_trailing_stop_exits_a_position():
     from crypto.strategies.trailing import TrailConfig, update_and_check
 
-    cfg = TrailConfig(leverage=100.0)  # 1% price move = 100% P&L
+    # pin the classic step values — this tests the ratchet, not the module default
+    cfg = TrailConfig(
+        leverage=100.0,
+        stop_pnl_pct=10.0,
+        ratchet_step_pnl_pct=5.0,
+        tp_trigger_pnl_pct=25.0,
+        peak_trail_pnl_pct=2.0,
+    )  # 1% price move = 100% P&L
     pos = {"entry_price": 100.0, "side": "long"}
     # run to +15% P&L (price +0.15%) — stop ratchets to +5%
     assert update_and_check(pos, 100.15, cfg) is None

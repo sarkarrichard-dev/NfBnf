@@ -75,7 +75,9 @@ class CryptoSettings:
     # 1 Delta contract, so every symbol trades `lots` contracts.
     lots: int                  # universal lot count, min 1
     deploy_usd: float          # optional per-trade margin cap in USD; 0 = no cap
-    leverage: float            # fixed 100x for crypto; clamped per-product at runtime
+    leverage: float            # default 20x (was 100x — a 100x position stops out on a
+                               #  0.1% price wiggle; 20x makes the P&L-% stops a real
+                               #  price stop). CRYPTO_LEVERAGE overrides; clamped per-product.
     max_concurrent: int        # open positions allowed PER STRATEGY (each strategy trades its own book)
     max_open_total: int        # portfolio-wide safety cap across all strategies; 0 = unlimited
     max_hold_days: int         # force-close a position open across more than this many day boundaries (crypto has no session)
@@ -143,7 +145,7 @@ def crypto_settings() -> CryptoSettings:
         symbols=_symbols(),
         lots=max(1, _i("CRYPTO_LOTS", 1)),
         deploy_usd=max(0.0, _f("CRYPTO_DEPLOY_USD", 0.0)),
-        leverage=max(1.0, _f("CRYPTO_LEVERAGE", 100.0)),
+        leverage=max(1.0, _f("CRYPTO_LEVERAGE", 20.0)),
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
         max_open_total=max(0, _i("CRYPTO_MAX_OPEN_TOTAL", 0)),
         max_hold_days=max(1, _i("CRYPTO_MAX_HOLD_DAYS", 1)),
@@ -160,10 +162,13 @@ def crypto_settings() -> CryptoSettings:
         ny_end=os.getenv("CRYPTO_NY_END", "23:00").strip(),
         nbreak_allround=_b("CRYPTO_NBREAK_ALLROUND", False),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
-        stop_pnl_pct=max(0.0, _f("CRYPTO_STOP_PNL_PCT", 10.0)),
-        ratchet_step_pnl_pct=max(0.5, _f("CRYPTO_RATCHET_STEP_PNL_PCT", 5.0)),
-        tp_trigger_pnl_pct=max(1.0, _f("CRYPTO_TP_TRIGGER_PNL_PCT", 25.0)),
-        peak_trail_pnl_pct=max(0.5, _f("CRYPTO_PEAK_TRAIL_PNL_PCT", 2.0)),
+        # P&L-% of margin. At the 20x default these are, in price terms: stop
+        # ~1.2%, ratchet steps ~0.5%, profit floor ~2.25%, peak trail ~0.3% —
+        # a real swing stop, not the 0.1% wiggle the old 100x defaults gave.
+        stop_pnl_pct=max(0.0, _f("CRYPTO_STOP_PNL_PCT", 24.0)),
+        ratchet_step_pnl_pct=max(0.5, _f("CRYPTO_RATCHET_STEP_PNL_PCT", 10.0)),
+        tp_trigger_pnl_pct=max(1.0, _f("CRYPTO_TP_TRIGGER_PNL_PCT", 45.0)),
+        peak_trail_pnl_pct=max(0.5, _f("CRYPTO_PEAK_TRAIL_PNL_PCT", 6.0)),
         trading_mode=_mode("CRYPTO_TRADING_MODE"),
         live_armed=_b("CRYPTO_ALLOW_LIVE", False),
         max_daily_loss_usd=abs(_f("CRYPTO_MAX_DAILY_LOSS_USD", 50.0)),
