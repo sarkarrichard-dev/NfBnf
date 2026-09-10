@@ -23,7 +23,7 @@ from crypto.config import crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient
 from crypto.ml import gate as ml_gate
-from crypto.session import crypto_day, in_ny_window, ny_session_date
+from crypto.session import crypto_day, in_crypto_session, in_ny_window, ny_session_date
 from crypto.sizing import size_position
 from crypto.strategies import ichimoku as ichi
 from crypto.strategies import ny_n_break as nb
@@ -226,6 +226,9 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
     now_utc = datetime.now(timezone.utc)
     in_ny = in_ny_window(s.ny_start, s.ny_end)
     ny_date = ny_session_date(s.ny_start, s.ny_end)
+    # new entries fire only inside the lane window (default 17:00-05:30 IST);
+    # the daytime belongs to the Indian lanes. Exits / hold-cap run regardless.
+    entries_open = in_crypto_session(s.session_start, s.session_end, now_utc)
     events: list[dict[str, Any]] = []
 
     live = s.live_orders_enabled
@@ -250,6 +253,17 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 continue
             key = f"{strat}:{sym}"
             slot = dict(st.get(key) or {})
+            # outside the lane window with nothing open to manage → don't even
+            # run the strategy: stepping it would churn its internal state
+            # (armed levels, trade counters, traded-pivot lists) for an entry
+            # we'd only suppress, and it wouldn't re-arm when the window opens.
+            # A position opened earlier is still stepped so its exits fire.
+            if not entries_open and not slot.get("position"):
+                events.append({
+                    "strategy": strat, "asset": sym, "event": "wait",
+                    "reason": f"outside crypto session {s.session_start}-{s.session_end} IST",
+                })
+                continue
             try:
                 if strat == "ny_n_break":
                     c5 = _closed(market_data.candles(sym, "5m", days=2, client=client))
@@ -313,6 +327,13 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                     events.append({"strategy": strat, "asset": sym, "event": "reaped",
                                    "reason": "closed on exchange"})
                     continue
+
+                # window closed while we still hold a position: manage it (exits
+                # above already ran) but take no new entry the strategy emits.
+                if action == "enter" and not entries_open:
+                    events.append({"strategy": strat, "asset": sym, "event": "wait",
+                                   "reason": "outside crypto session"})
+                    action = "wait"
 
                 if action == "enter":
                     _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,

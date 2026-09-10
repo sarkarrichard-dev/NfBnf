@@ -182,6 +182,9 @@ def paper_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(lanes.charges, "sample_spread", lambda *a, **k: None)
     monkeypatch.setattr(lanes.market_data, "depth", lambda *a, **k: {})
+    # the lane-level entry window is always open in these tests — they exercise
+    # the per-strategy NY-window gate via lanes.in_ny_window, not this one.
+    monkeypatch.setattr(lanes, "in_crypto_session", lambda *a, **k: True)
     # a 5m frame whose last *closed* bar (after the forming bar is dropped) is a
     # fresh re-break above the swing high — scaled to a realistic BTC price so the
     # sizer's sanity band accepts the mark
@@ -298,6 +301,34 @@ def test_nbreak_allround_takes_the_setup_outside_the_ny_window(paper_env, monkey
     events = lanes.scan_crypto_paper()
     assert any(e.get("event") == "enter" and e.get("asset") == "BTCUSD" for e in events)
     assert journal.load_state()["ny_n_break:BTCUSD"]["position"]["side"] == "long"
+
+
+def test_lane_session_window_gates_entries_not_the_scan(paper_env, monkeypatch):
+    """New entries fire only inside the lane window (default 17:00-05:30 IST);
+    outside it the scan still runs — it just doesn't open anything."""
+    monkeypatch.setenv("CRYPTO_NBREAK_ALLROUND", "true")  # strategy itself isn't the gate
+    df5 = paper_env["df5"]
+    df15 = df5.iloc[::3].reset_index(drop=True)
+    flat = df5.assign(close=130.0, open=130.0, high=131.0, low=129.0)
+
+    def fake_candles(symbol, resolution, *, days=3.0, client=None):
+        if symbol == "BTCUSD" and resolution == "5m":
+            return df5
+        if symbol == "BTCUSD" and resolution == "15m":
+            return df15
+        return flat
+
+    monkeypatch.setattr(lanes.market_data, "candles", fake_candles)
+    monkeypatch.setattr(lanes, "in_ny_window", lambda *a, **k: True)
+
+    # outside the lane window → no position, a "wait" event names the reason.
+    # (The same setup entering *inside* the window is covered by every other
+    # entry test — the paper_env fixture holds in_crypto_session open.)
+    monkeypatch.setattr(lanes, "in_crypto_session", lambda *a, **k: False)
+    events = lanes.scan_crypto_paper()
+    assert not any(e.get("event") == "enter" for e in events)
+    assert any("outside crypto session" in str(e.get("reason", "")) for e in events)
+    assert journal.load_state().get("ny_n_break:BTCUSD", {}).get("position") is None
 
 
 def test_prune_removed_strategy_closes_and_drops_the_orphan_slot(paper_env, monkeypatch):

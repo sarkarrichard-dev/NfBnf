@@ -62,6 +62,7 @@ def crypto_status() -> dict:
             "max_hold_days": s.max_hold_days,
             "paper_bankroll_usd": s.paper_bankroll_usd,
         },
+        "lane_session_ist": {"start": s.session_start, "end": s.session_end},
         "session_ist": {"start": s.ny_start, "end": s.ny_end},
         "nbreak_allround": s.nbreak_allround,
         "ichimoku_tf": s.ichimoku_tf,
@@ -382,6 +383,9 @@ def set_config(
     ichimoku_enabled: bool | None = Body(None, embed=True),
     fvg_scalp_enabled: bool | None = Body(None, embed=True),
     ema_pivot_enabled: bool | None = Body(None, embed=True),
+    nbreak_allround: bool | None = Body(None, embed=True),
+    session_start: str | None = Body(None, embed=True),
+    session_end: str | None = Body(None, embed=True),
     symbols: list[str] | None = Body(None, embed=True),
 ) -> dict:
     """Non-financial-in-paper knobs — plain write, no confirm (Delta keys are
@@ -417,6 +421,21 @@ def set_config(
         values["CRYPTO_FVG_SCALP_ENABLED"] = "true" if fvg_scalp_enabled else "false"
     if ema_pivot_enabled is not None:
         values["CRYPTO_EMA_PIVOT_ENABLED"] = "true" if ema_pivot_enabled else "false"
+    if nbreak_allround is not None:
+        values["CRYPTO_NBREAK_ALLROUND"] = "true" if nbreak_allround else "false"
+    for name, raw in (("CRYPTO_SESSION_START", session_start), ("CRYPTO_SESSION_END", session_end)):
+        if raw is None:
+            continue
+        try:
+            hh, mm = str(raw).strip().split(":")
+            assert 0 <= int(hh) < 24 and 0 <= int(mm) < 60
+        except (ValueError, AssertionError):
+            raise HTTPException(400, f"{name} must be 24h HH:MM.") from None
+        values[name] = f"{int(hh):02d}:{int(mm):02d}"
+    start_v = values.get("CRYPTO_SESSION_START")
+    end_v = values.get("CRYPTO_SESSION_END")
+    if start_v is not None and end_v is not None and start_v == end_v:
+        raise HTTPException(400, "Session start and end must differ (equal = crypto never trades).")
     if not values:
         raise HTTPException(400, "No settings provided.")
     update_env_values(values)

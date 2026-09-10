@@ -33,6 +33,13 @@ def in_ny_window(ny_start: str, ny_end: str, now: datetime | None = None) -> boo
     return t >= start or t < end  # window wraps past midnight
 
 
+def in_crypto_session(start: str, end: str, now: datetime | None = None) -> bool:
+    """The lane-level trading window — new entries fire only inside it (default
+    17:00–05:30 IST, wrapping past midnight). Open positions are managed around
+    the clock regardless. Same generic HH:MM window check as ``in_ny_window``."""
+    return in_ny_window(start, end, now)
+
+
 def ny_session_date(ny_start: str, ny_end: str, now: datetime | None = None) -> str:
     """The IST date that owns this session. For a wrap-past-midnight window the
     early-morning tail still belongs to the previous calendar date's session."""
@@ -63,6 +70,9 @@ if __name__ == "__main__":  # self-check
     seven_pm = datetime(2026, 9, 7, 19, 0, tzinfo=IST)
     assert not in_ny_window("18:00", "23:00", noon)
     assert in_ny_window("18:00", "23:00", seven_pm)
+    assert not in_crypto_session("17:00", "05:30", noon)  # daytime → Indian lanes
+    assert in_crypto_session("17:00", "05:30", seven_pm)
+    assert in_crypto_session("17:00", "05:30", datetime(2026, 9, 7, 3, 0, tzinfo=IST))  # overnight
     assert ny_session_date("18:00", "23:00", seven_pm) == "2026-09-07"
     assert abs(seconds_to_ny_end("23:00", seven_pm) - 4 * 3600) < 1
     assert crypto_day(datetime(2026, 9, 7, 2, 0, tzinfo=IST)) == "2026-09-06"  # 20:30 UTC prev day

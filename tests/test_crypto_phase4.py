@@ -196,6 +196,7 @@ def live_lane(tmp_path, monkeypatch):
     monkeypatch.setattr(lanes.market_data, "depth", lambda *a, **k: {})
     monkeypatch.setattr(lanes.charges, "sample_spread", lambda *a, **k: None)
     monkeypatch.setattr(lanes, "in_ny_window", lambda *a, **k: True)
+    monkeypatch.setattr(lanes, "in_crypto_session", lambda *a, **k: True)
     monkeypatch.setattr(lanes, "ny_session_date", lambda *a, **k: "2026-09-07")
     monkeypatch.setattr(lanes, "_live_wallet_usd", lambda c: 5000.0)
     monkeypatch.setattr(lanes.executor, "reconcile", lambda c: [])
