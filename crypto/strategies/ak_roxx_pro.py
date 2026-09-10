@@ -1,30 +1,40 @@
-"""AK Roxx Pro — 5-minute confluence signal: a stacked/sloping 21/34/55 EMA
-ribbon, price fully outside the previous hour's CPR, and the signal candle
-neither oversized nor pressed against an opposing swing level.
+"""AK Roxx Pro — the "AK Roxx" (Alpha 1) 5-minute confluence signal.
 
-Reconstructed from ``crypto/strategies/ak_roxx_pro.md`` (the locked TradingView
-indicator "AK Algo Buy and Sell Signals"). This is the clean-room Python port.
+Rebuilt 2026-09-10 from the live portal (``portal.akroxxtech.com``) — its
+client-side JS recomputes the locked TradingView signal and the author's own
+comments say it is ported verbatim from the indicator's math. Full spec +
+parameter table in ``crypto/strategies/ak_roxx_pro.md``.
 
-- **Trend:** EMA(21) > EMA(34) > EMA(55) and all three sloping up over
-  ``slope_lookback`` bars → long bias; mirrored → short. Else no trade.
-- **1H CPR gate:** from the previous completed 1-hour bar, ``P=(H+L+C)/3``,
-  ``BC=(H+L)/2``, ``TC=2P-BC``. A long needs ``close > TC``; a short needs
-  ``close < BC``. Inside the range is the indicator's "NO TRADE ZONE".
-- **Swing-S/R gate:** confirmed ``pivot_high`` / ``pivot_low`` levels. Skip a
-  long that is within ``near_pct`` of a resistance above; mirrored for shorts.
-  (The indicator tags each level with its net volume — cosmetic for a gate, so
-  the sign is dropped here.)
-- **Big-candle gate:** signal-bar range > ``big_candle_atr`` × ATR → skip.
-- **Exit:** the shared P&L trailing engine, or a fixed 1:2 target measured off
-  the initial stop distance. No opposite signal in between — ride the trail.
+**Alpha 1 long entry — all eight, on a closed 5m bar** (mirror for short):
 
-``step(symbol, candles, *, state, cfg)`` — ``candles`` is the 5m frame (needs a
-few hundred bars so the 55 EMA settles and the prior hour exists). Pure.
+1. ``macUp`` — both AK-Channel bands rising: ``SMA(high, 8)`` up **and**
+   ``SMA(low, 8)`` up vs the prior bar.
+2. ``close > SMA(high, 8)`` (the upper channel band).
+3. ``close > close[-2]`` (above the previous bar's close).
+4. ``EMA(close, 7) > EMA(close, 14)``.
+5. ``EMA(close, 7)`` rising · 6. ``EMA(close, 14)`` rising.
+7. **1H CPR gate** — no completed hourly CPR yet, *or* ``close`` above the
+   hourly CPR's top (``max(P, TC, BC)``). ``P=(H+L+C)/3``, ``BC=(H+L)/2``,
+   ``TC=2P-BC`` from the **previous** clock hour. Inside the range is the
+   indicator's "NO TRADE ZONE". Toggle: ``require_beyond_cpr``.
+8. **PEMA ribbon** — ``EMA(hlc3, 13) > EMA(hlc3, 21) > EMA(hlc3, 34)`` and all
+   three rising (stacked **and** sloping).
 
-Backtested on Delta 5m (60d, BTC/ETH/SOL) 2026-09-09: net −$8k / 3.5k trades,
-gross flat (no edge). It did not clear — see ``ak_roxx_pro.md`` "Backtest
-result". Kept as documented-dead: wired to ``crypto/backtest.py`` only, never to
-``crypto/lanes.py``.
+Optional 9th gate (``require_alpha2_agree``): the portal's "Alpha 2 / 5m Trend
+Strategy" must point the same way — a *fresh* break of the ``SMA(15)`` channel
+edge with the 7/14 EMAs aligned, ``Choppiness(14) < 38.2``, price beyond the
+hourly CPR, and ``Supertrend(3.0, 10)`` agreeing. "Both engines agree" is the
+strongest read the portal gives.
+
+**Trend-ride**: once in, no new signal until the exit — the shared P&L trailing
+engine, or a fixed 1:``rr`` target off the initial stop distance.
+
+``step(symbol, candles, *, state, cfg)`` — ``candles`` is the 5m frame (a few
+hundred bars: the 34 EMA settles, the prior clock hour exists). Pure.
+
+Not yet forward-measured on the real logic. The old −$8k backtest was on a wrong
+reconstruction (21/34/55 ribbon) and is void. Watch-forward lane, not a proven
+edge — every 5m crypto config here has been net-negative after Delta costs.
 """
 
 from __future__ import annotations
@@ -32,25 +42,31 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
-from crypto.strategies.indicators import atr_last, ema, pivot_high, pivot_low
+from crypto.strategies.indicators import atr_last, ema, supertrend_dir
 from crypto.strategies.trailing import TrailConfig, pnl_pct, update_and_check
 
 
 @dataclass(frozen=True)
 class AkRoxxConfig:
-    ma_fast: int = 21
-    ma_mid: int = 34
-    ma_slow: int = 55
-    slope_lookback: int = 3          # each EMA must have moved in-trend over this span
+    upper_len: int = 8               # AK Channel — SMA of highs
+    lower_len: int = 8               # AK Channel — SMA of lows
+    ema_short: int = 7
+    ema_long: int = 14
+    pema_fast: int = 13              # PEMA ribbon on hlc3
+    pema_mid: int = 21
+    pema_slow: int = 34
+    slope_lookback: int = 1          # bars back for every "rising / falling" check
+    require_beyond_cpr: bool = True  # condition 7 — outside the previous 1H CPR
+    require_alpha2_agree: bool = False  # also require the Alpha 2 direction to match
+    a2_chan_len: int = 15            # Alpha 2 SMA channel
+    a2_chop_max: float = 38.2        # Alpha 2 — Choppiness(14) must be below this
+    a2_st_period: int = 10           # Alpha 2 Supertrend
+    a2_st_mult: float = 3.0
     atr_len: int = 14
-    big_candle_atr: float = 2.0      # skip the entry if the signal candle's range > this × ATR
-    pivot_left: int = 12             # swing-S/R confirmation window (guess ~10-20)
-    pivot_right: int = 3
-    sr_keep: int = 4                 # how many recent swings each side to keep as levels
-    near_pct: float = 0.20           # skip if within this % of the opposing swing level (guess 0.15-0.3)
-    require_beyond_cpr: bool = True   # price must sit fully outside the previous 1H CPR
+    big_candle_atr: float = 0.0      # >0: skip when the signal bar's range exceeds this × ATR
     rr: float = 2.0                  # fixed target = rr × initial stop distance (1:2)
     trail: TrailConfig = field(default_factory=TrailConfig)
 
@@ -59,42 +75,137 @@ def _blank_state() -> dict[str, Any]:
     return {"position": None}
 
 
-def _trend(close: pd.Series, cfg: AkRoxxConfig) -> int:
-    """+1 ribbon stacked & rising (21>34>55, all sloping up), -1 mirrored, 0 else."""
-    if len(close) < cfg.ma_slow + cfg.slope_lookback + 2:
-        return 0
-    lb = cfg.slope_lookback
-    f, m, s = ema(close, cfg.ma_fast), ema(close, cfg.ma_mid), ema(close, cfg.ma_slow)
-    fn, mn, sn = float(f.iloc[-1]), float(m.iloc[-1]), float(s.iloc[-1])
-    f0, m0, s0 = float(f.iloc[-1 - lb]), float(m.iloc[-1 - lb]), float(s.iloc[-1 - lb])
-    if fn > mn > sn and fn > f0 and mn > m0 and sn > s0:
-        return 1
-    if fn < mn < sn and fn < f0 and mn < m0 and sn < s0:
-        return -1
-    return 0
+def _rising(s: pd.Series, lb: int) -> bool:
+    return float(s.iloc[-1]) > float(s.iloc[-1 - lb])
 
 
-def _prev_hour_cpr(c5: pd.DataFrame) -> tuple[float, float, float] | None:
-    """(P, BC, TC) from the previous completed 1-hour bar, or None if it isn't
-    fully inside the window."""
-    dt = c5["datetime"]
-    cur_hour = pd.Timestamp(dt.iloc[-1]).floor("1h")
+def _falling(s: pd.Series, lb: int) -> bool:
+    return float(s.iloc[-1]) < float(s.iloc[-1 - lb])
+
+
+def _hlc3(df: pd.DataFrame) -> pd.Series:
+    return (df["high"].astype(float) + df["low"].astype(float) + df["close"].astype(float)) / 3.0
+
+
+def _hourly_cpr(c5: pd.DataFrame) -> tuple[float, float] | None:
+    """(cpr_min, cpr_max) from the previous clock hour, or None if that hour
+    isn't fully covered by the frame."""
+    dt = pd.to_datetime(c5["datetime"])
+    cur_hour = dt.iloc[-1].floor("1h")
     prev_hour = cur_hour - pd.Timedelta(hours=1)
-    m = (dt >= prev_hour) & (dt < cur_hour)
-    if not m.any() or (dt.iloc[0] > prev_hour):  # window doesn't cover the whole prior hour
+    seg = c5.loc[(dt >= prev_hour) & (dt < cur_hour)]
+    if seg.empty or dt.iloc[0] > prev_hour:
         return None
-    seg = c5.loc[m]
     hi, lo, cl = float(seg["high"].max()), float(seg["low"].min()), float(seg["close"].iloc[-1])
     p = (hi + lo + cl) / 3.0
     bc = (hi + lo) / 2.0
     tc = 2.0 * p - bc
-    return p, min(bc, tc), max(bc, tc)
+    return min(p, bc, tc), max(p, bc, tc)
 
 
-def _swing_levels(c5: pd.DataFrame, cfg: AkRoxxConfig) -> tuple[list[float], list[float]]:
-    hi = pivot_high(c5["high"], cfg.pivot_left, cfg.pivot_right).dropna()
-    lo = pivot_low(c5["low"], cfg.pivot_left, cfg.pivot_right).dropna()
-    return [float(x) for x in hi.iloc[-cfg.sr_keep :]], [float(x) for x in lo.iloc[-cfg.sr_keep :]]
+def _choppiness(df: pd.DataFrame, length: int) -> float:
+    """Choppiness Index of the last bar. 100·log10(ΣATR1 / range) / log10(n)."""
+    h, low, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
+    tr = pd.concat([h - low, (h - c.shift()).abs(), (low - c.shift()).abs()], axis=1).max(axis=1)
+    atr_sum = tr.rolling(length).sum().iloc[-1]
+    rng = h.rolling(length).max().iloc[-1] - low.rolling(length).min().iloc[-1]
+    if not rng or atr_sum <= 0:
+        return 100.0
+    return float(100.0 * np.log10(atr_sum / rng) / np.log10(length))
+
+
+def _alpha1_dir(c5: pd.DataFrame, cfg: AkRoxxConfig, cpr: tuple[float, float] | None) -> int:
+    close = c5["close"].astype(float)
+    price = float(close.iloc[-1])
+    lb = cfg.slope_lookback
+
+    up_ch = c5["high"].astype(float).rolling(cfg.upper_len).mean()
+    lo_ch = c5["low"].astype(float).rolling(cfg.lower_len).mean()
+    if pd.isna(up_ch.iloc[-1 - lb]) or pd.isna(lo_ch.iloc[-1 - lb]):
+        return 0
+    mac_up = _rising(up_ch, lb) and _rising(lo_ch, lb)
+    mac_dn = _falling(up_ch, lb) and _falling(lo_ch, lb)
+
+    e_s, e_l = ema(close, cfg.ema_short), ema(close, cfg.ema_long)
+    hlc3 = _hlc3(c5)
+    pf, pm, ps = (ema(hlc3, cfg.pema_fast), ema(hlc3, cfg.pema_mid), ema(hlc3, cfg.pema_slow))
+    pfn, pmn, psn = float(pf.iloc[-1]), float(pm.iloc[-1]), float(ps.iloc[-1])
+    pema_bull = pfn > pmn > psn and _rising(pf, lb) and _rising(pm, lb) and _rising(ps, lb)
+    pema_bear = pfn < pmn < psn and _falling(pf, lb) and _falling(pm, lb) and _falling(ps, lb)
+
+    prev_close = float(close.iloc[-2])
+    cpr_ok_long = (not cfg.require_beyond_cpr) or cpr is None or price > cpr[1]
+    cpr_ok_short = (not cfg.require_beyond_cpr) or cpr is None or price < cpr[0]
+
+    long_ok = (
+        mac_up
+        and price > float(up_ch.iloc[-1])
+        and price > prev_close
+        and float(e_s.iloc[-1]) > float(e_l.iloc[-1])
+        and _rising(e_s, lb) and _rising(e_l, lb)
+        and cpr_ok_long
+        and pema_bull
+    )
+    short_ok = (
+        mac_dn
+        and price < float(lo_ch.iloc[-1])
+        and price < prev_close
+        and float(e_s.iloc[-1]) < float(e_l.iloc[-1])
+        and _falling(e_s, lb) and _falling(e_l, lb)
+        and cpr_ok_short
+        and pema_bear
+    )
+    return 1 if long_ok else -1 if short_ok else 0
+
+
+def _alpha2_dir(c5: pd.DataFrame, cfg: AkRoxxConfig, cpr: tuple[float, float] | None) -> int:
+    """Alpha 2 ("5m Trend Strategy") direction: a fresh SMA(15)-channel break
+    with the 7/14 EMAs aligned, low choppiness, beyond CPR, Supertrend agreeing."""
+    close = c5["close"].astype(float)
+    lb = cfg.slope_lookback
+    if len(c5) < cfg.a2_chan_len + lb + 3:
+        return 0
+    up_ch = c5["high"].astype(float).rolling(cfg.a2_chan_len).mean()
+    lo_ch = c5["low"].astype(float).rolling(cfg.a2_chan_len).mean()
+    e_s, e_l = ema(close, cfg.ema_short), ema(close, cfg.ema_long)
+
+    def _brk(i: int, direction: int) -> bool:
+        px, pxp = float(close.iloc[i]), float(close.iloc[i - 1])
+        if direction == 1:
+            return (
+                float(up_ch.iloc[i]) > float(up_ch.iloc[i - lb])
+                and float(lo_ch.iloc[i]) > float(lo_ch.iloc[i - lb])
+                and px > float(up_ch.iloc[i]) and px > pxp
+                and float(e_s.iloc[i]) > float(e_l.iloc[i])
+                and float(e_s.iloc[i]) > float(e_s.iloc[i - lb])
+                and float(e_l.iloc[i]) > float(e_l.iloc[i - lb])
+            )
+        return (
+            float(up_ch.iloc[i]) < float(up_ch.iloc[i - lb])
+            and float(lo_ch.iloc[i]) < float(lo_ch.iloc[i - lb])
+            and px < float(lo_ch.iloc[i]) and px < pxp
+            and float(e_s.iloc[i]) < float(e_l.iloc[i])
+            and float(e_s.iloc[i]) < float(e_s.iloc[i - lb])
+            and float(e_l.iloc[i]) < float(e_l.iloc[i - lb])
+        )
+
+    price = float(close.iloc[-1])
+    chop = _choppiness(c5, 14)
+    if chop >= cfg.a2_chop_max:
+        return 0
+    st = supertrend_dir(c5, cfg.a2_st_period, cfg.a2_st_mult)
+    if _brk(len(c5) - 1, 1) and not _brk(len(c5) - 2, 1) and st == 1:
+        if cpr is None or price > cpr[1]:
+            return 1
+    if _brk(len(c5) - 1, -1) and not _brk(len(c5) - 2, -1) and st == -1:
+        if cpr is None or price < cpr[0]:
+            return -1
+    return 0
+
+
+def _target_hit(pos: dict[str, Any], price: float, cfg: AkRoxxConfig) -> bool:
+    cur = pnl_pct(float(pos["entry_price"]), price, pos["side"], cfg.trail.leverage)
+    return cur >= cfg.rr * cfg.trail.stop_pnl_pct
 
 
 def step(
@@ -107,108 +218,91 @@ def step(
     st = {**_blank_state(), **(state or {})}
     ev: dict[str, Any] = {"strategy": "ak_roxx_pro", "asset": symbol, "event": "none"}
 
-    need = max(cfg.ma_slow + cfg.slope_lookback + 2, cfg.atr_len + 2, cfg.pivot_left + cfg.pivot_right + 2)
+    need = max(
+        cfg.pema_slow + cfg.slope_lookback + 2,
+        cfg.upper_len + cfg.slope_lookback + 2,
+        cfg.a2_chan_len + cfg.slope_lookback + 3,
+        cfg.atr_len + 2,
+        30,
+    )
     if len(candles) < need:
         ev.update(event="wait", reason="not enough 5m history")
         return st, ev
 
     c5 = candles.reset_index(drop=True)
-    close = c5["close"].astype(float)
-    price = float(close.iloc[-1])
+    price = float(c5["close"].astype(float).iloc[-1])
     ts = str(c5["datetime"].iloc[-1])
-    atr_val = atr_last(c5, cfg.atr_len)
     pos = st["position"]
 
-    # ---- manage an open position ----
     if pos:
-        side = pos["side"]
-        reason = None
-        if trail_reason := update_and_check(pos, price, cfg.trail):
-            reason = trail_reason
-        elif _target_hit(pos, price, cfg):
+        reason = update_and_check(pos, price, cfg.trail)
+        if not reason and _target_hit(pos, price, cfg):
             reason = f"1:{cfg.rr:g} target"
         if reason:
             st["position"] = None
-            ev.update(event="exit", side=side, price=price, reason=reason, ts=ts)
+            ev.update(event="exit", side=pos["side"], price=price, reason=reason, ts=ts)
         else:
-            ev.update(event="hold", side=side, price=price)
+            ev.update(event="hold", side=pos["side"], price=price)
         return st, ev
 
-    # ---- look for an entry ----
-    if atr_val <= 0:
-        ev.update(event="wait", reason="no ATR yet")
+    cpr = _hourly_cpr(c5)
+    if cfg.require_beyond_cpr and cpr is None:
+        ev.update(event="wait", reason="no prior 1H CPR yet")
         return st, ev
 
-    trend = _trend(close, cfg)
-    if trend == 0:
-        ev.update(event="wait", reason="EMA ribbon not stacked/sloping")
+    d = _alpha1_dir(c5, cfg, cpr)
+    if d == 0:
+        ev.update(event="wait", reason="Alpha 1 confluence not met")
         return st, ev
 
-    cpr = _prev_hour_cpr(c5)
-    if cfg.require_beyond_cpr:
-        if not cpr:
-            ev.update(event="wait", reason="no prior 1H CPR yet")
-            return st, ev
-        _p, bc, tc = cpr
-        if trend == 1 and price <= tc:
-            ev.update(event="wait", reason="NO TRADE ZONE — long but price not above 1H TC")
-            return st, ev
-        if trend == -1 and price >= bc:
-            ev.update(event="wait", reason="NO TRADE ZONE — short but price not below 1H BC")
+    if cfg.require_alpha2_agree and _alpha2_dir(c5, cfg, cpr) != d:
+        ev.update(event="wait", reason="Alpha 2 does not agree")
+        return st, ev
+
+    if cfg.big_candle_atr > 0:
+        atr_val = atr_last(c5, cfg.atr_len)
+        rng = float(c5["high"].iloc[-1] - c5["low"].iloc[-1])
+        if atr_val > 0 and rng > cfg.big_candle_atr * atr_val:
+            ev.update(event="wait", reason="signal candle oversized — waiting for a retrace")
             return st, ev
 
-    res, sup = _swing_levels(c5, cfg)
-    band = cfg.near_pct / 100.0 * price
-    if trend == 1 and any(0.0 <= r - price <= band for r in res):
-        ev.update(event="wait", reason="long blocked — price into resistance")
-        return st, ev
-    if trend == -1 and any(0.0 <= price - lvl <= band for lvl in sup):
-        ev.update(event="wait", reason="short blocked — price into support")
-        return st, ev
-
-    rng = float(c5["high"].iloc[-1] - c5["low"].iloc[-1])
-    if rng > cfg.big_candle_atr * atr_val:
-        ev.update(event="wait", reason="signal candle oversized — waiting for a retrace")
-        return st, ev
-
-    want = "long" if trend == 1 else "short"
+    want = "long" if d == 1 else "short"
     st["position"] = {"side": want, "entry_price": price, "entry_time": ts}
     ev.update(
         event="enter",
         side=want,
         price=price,
-        reason=f"21/34/55 ribbon stacked {'up' if trend == 1 else 'down'}, beyond 1H CPR",
+        reason=(
+            f"AK Roxx: 8/8 channel + 7/14 EMA + PEMA {cfg.pema_fast}/{cfg.pema_mid}/{cfg.pema_slow} "
+            f"stacked {'up' if d == 1 else 'down'}"
+            + (", beyond 1H CPR" if cfg.require_beyond_cpr else "")
+            + (", Alpha 2 agrees" if cfg.require_alpha2_agree else "")
+        ),
         ts=ts,
     )
     return st, ev
 
 
-def _target_hit(pos: dict[str, Any], price: float, cfg: AkRoxxConfig) -> bool:
-    """Fixed 1:rr target in P&L terms — risk is the trail's initial stop."""
-    cur = pnl_pct(float(pos["entry_price"]), price, pos["side"], cfg.trail.leverage)
-    return cur >= cfg.rr * cfg.trail.stop_pnl_pct
-
-
-if __name__ == "__main__":  # self-check — rally that stacks the ribbon and clears the prior-hour CPR
-    import numpy as np
-
+if __name__ == "__main__":  # self-check — a clean rally stacks the ribbon and clears the prior-hour CPR
     n = 900
     idx = pd.date_range("2026-09-06 00:00", periods=n, freq="5min", tz="UTC")
-    px = np.concatenate([
-        100.0 + np.sin(np.linspace(0, 6, 360)) * 2,   # base — sets early hours' CPR
-        np.linspace(100.0, 130.0, n - 360),           # clean rally through it
-    ])
+    base = 100.0 + np.sin(np.linspace(0, 6, 360)) * 1.5  # sets the early hours' CPR
+    rally = 100.0 + np.linspace(0, 60, n - 360) ** 1.15  # accelerating — closes clear the SMA of highs
+    px = np.concatenate([base, rally])
     df = pd.DataFrame(
-        {"datetime": idx, "open": px, "high": px + 0.3, "low": px - 0.3, "close": px,
+        {"datetime": idx, "open": px, "high": px + 0.1, "low": px - 0.1, "close": px,
          "volume": [10.0] * n}
     )
-    cfg = AkRoxxConfig(slope_lookback=2)
-    fired = None
-    state = None
+    cfg = AkRoxxConfig()
+    fired, state = None, None
     for i in range(400, n):
         state, evt = step("BTCUSD", df.iloc[: i + 1], state=state, cfg=cfg)
         if evt["event"] == "enter":
             fired = evt
             break
     assert fired and fired["side"] == "long", fired
+    # a dead-flat market never stacks the ribbon
+    flat = df.assign(open=100.0, high=100.3, low=99.7, close=100.0)
+    st2, ev2 = step("BTCUSD", flat, state=None, cfg=cfg)
+    assert ev2["event"] == "wait", ev2
     print("crypto.strategies.ak_roxx_pro self-check ok —", fired["reason"])

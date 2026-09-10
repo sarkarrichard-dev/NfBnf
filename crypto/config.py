@@ -80,12 +80,14 @@ class CryptoSettings:
     max_open_total: int        # portfolio-wide safety cap across all strategies; 0 = unlimited
     max_hold_days: int         # force-close a position open across more than this many day boundaries (crypto has no session)
     paper_bankroll_usd: float
-    # lanes — the section runs when any strategy is enabled. ny_n_break and
-    # ichimoku default on. The video strategies (bb_reversal / ema_jaguar /
-    # vp_edge) default off: they turn on only after crypto/ml/optimize.py shows a
-    # stable positive walk-forward net (per crypto/strategies/RESULTS.md).
+    # lanes — the section runs when any strategy is enabled. ny_n_break,
+    # ichimoku and ak_roxx_pro default on. The video strategies (bb_reversal /
+    # ema_jaguar / vp_edge) default off: they turn on only after
+    # crypto/ml/optimize.py shows a stable positive walk-forward net (per
+    # crypto/strategies/RESULTS.md).
     ny_nbreak_enabled: bool
     ichimoku_enabled: bool
+    ak_roxx_enabled: bool
     bb_reversal_enabled: bool
     ema_jaguar_enabled: bool
     vp_edge_enabled: bool
@@ -148,6 +150,7 @@ def crypto_settings() -> CryptoSettings:
         paper_bankroll_usd=max(100.0, _f("CRYPTO_PAPER_BANKROLL", 2000.0)),
         ny_nbreak_enabled=_b("CRYPTO_NY_NBREAK_ENABLED", True),
         ichimoku_enabled=_b("CRYPTO_ICHIMOKU_ENABLED", True),
+        ak_roxx_enabled=_b("CRYPTO_AK_ROXX_ENABLED", True),
         bb_reversal_enabled=_b("CRYPTO_BB_REVERSAL_ENABLED", False),
         ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
         vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
@@ -177,6 +180,7 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_LOTS",
     "CRYPTO_NY_NBREAK_ENABLED",
     "CRYPTO_ICHIMOKU_ENABLED",
+    "CRYPTO_AK_ROXX_ENABLED",
     "CRYPTO_BB_REVERSAL_ENABLED",
     "CRYPTO_EMA_JAGUAR_ENABLED",
     "CRYPTO_VP_EDGE_ENABLED",

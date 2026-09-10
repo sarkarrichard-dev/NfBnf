@@ -73,9 +73,16 @@ N-breaks lost money, so it ships off (2026-09-10).
 on the right side of the Kumo **and** the forward cloud agrees. Exit: cloud
 re-entry or hard SL.
 
+**AK Roxx Pro** — 5m. A port of the "AK Roxx" TradingView indicator (Richard's
+paid portal, rebuilt 2026-09-10 — see `strategies/ak_roxx_pro.md`). Enters on an
+8-read confluence: `SMA(8)` high/low channel both rising, close above the upper
+band + prior close, `EMA7 > EMA14` both rising, price beyond the previous hour's
+CPR, and the `13/21/34` PEMA ribbon (on hlc3) stacked & sloping. Trend-rides to
+the P&L trail or a 1:2 target. `CRYPTO_AK_ROXX_ENABLED` (default on).
+
 (bb_reversal / ema_jaguar / vp_edge are built and dormant — one flag away.
-fvg_scalp and ema_pivot were removed 2026-09-10; `ak_roxx_pro` / `tma_phoenix`
-are backtest-only ports of TradingView indicators, not wired to the live lane.)
+fvg_scalp and ema_pivot were removed 2026-09-10; `tma_phoenix` is a
+backtest-only port, not wired to the live lane.)
 
 ## Each strategy trades its own book
 

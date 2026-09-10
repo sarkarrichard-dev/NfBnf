@@ -28,6 +28,7 @@ type Status = {
   lanes: {
     ny_n_break: boolean
     ichimoku: boolean
+    ak_roxx_pro: boolean
   }
   sizing: { lots: number; deploy_cap_usd: number; leverage: number; max_concurrent: number }
   trailing: {
@@ -240,6 +241,11 @@ export function CryptoPanel() {
             label="Ichimoku"
             on={!!s?.lanes.ichimoku}
             onClick={() => cfg.mutate({ ichimoku_enabled: !s?.lanes.ichimoku })}
+          />
+          <Chip
+            label="AK Roxx Pro"
+            on={!!s?.lanes.ak_roxx_pro}
+            onClick={() => cfg.mutate({ ak_roxx_enabled: !s?.lanes.ak_roxx_pro })}
           />
           <span className="text-[11px] text-slate-600">all off = paused</span>
         </div>
