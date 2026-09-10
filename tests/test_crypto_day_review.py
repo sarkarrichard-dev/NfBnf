@@ -101,10 +101,10 @@ def test_open_positions_lists_only_live_slots(monkeypatch):
         dr,
         "load_state",
         lambda: {
-            "fvg_scalp:BTCUSD": {
+            "ak_roxx_pro:BTCUSD": {
                 "position": {
                     "asset": "BTCUSD",
-                    "strategy": "fvg_scalp",
+                    "strategy": "ak_roxx_pro",
                     "side": "long",
                     "entry_price": 63000.0,
                 }

@@ -57,18 +57,6 @@ SEARCH_SPACE: dict[str, dict[str, list]] = {
         "value_area_pct": [0.6, 0.7, 0.8],
         "edge_buffer_pct": [0.3, 0.6, 1.0],
     },
-    "fvg_scalp": {
-        "fvg_min_atr": [0.15, 0.25, 0.4],
-        "impulse_atr_mult": [1.0, 1.2, 1.5],
-        "impulse_vol_mult": [1.0, 1.3, 1.6],
-        "stretch_atr": [1.0, 1.5, 2.5],
-    },
-    "ema_pivot": {
-        "slope_lookback": [2, 3, 5],
-        "big_candle_atr": [1.5, 2.0, 3.0],
-        "stretch_atr": [2.0, 3.0, 4.0],
-        "confluence_atr": [0.0, 1.0, 1.5],
-    },
 }
 
 
@@ -208,19 +196,11 @@ def optimize_one(name: str, *, frames: dict[str, pd.DataFrame] | None = None,
             "unstable_neighbours": len(flips)}
 
 
-# fvg_scalp's replay is ~3× heavier per bar (15m resample + Supertrend + FVG
-# scan), so it gets a smaller nightly search. A manual optimize_one() still uses
-# the full MAX_COMBOS.
-_NIGHTLY_COMBOS = {"fvg_scalp": 12}
-
-
 def retune_all(*, days: int = TUNE_DAYS) -> dict[str, Any]:
     blob = _load()
     for name in SEARCH_SPACE:
         try:
-            blob[name] = optimize_one(
-                name, days=days, max_combos=_NIGHTLY_COMBOS.get(name, MAX_COMBOS)
-            )
+            blob[name] = optimize_one(name, days=days, max_combos=MAX_COMBOS)
             logger.info("optimize %s: %s", name, blob[name].get("reason")
                         or f"net ${blob[name].get('net_usd')} stable={blob[name].get('stable')}")
         except Exception:

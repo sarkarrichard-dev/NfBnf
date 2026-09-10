@@ -28,8 +28,6 @@ type Status = {
   lanes: {
     ny_n_break: boolean
     ichimoku: boolean
-    fvg_scalp: boolean
-    ema_pivot: boolean
   }
   sizing: { lots: number; deploy_cap_usd: number; leverage: number; max_concurrent: number }
   trailing: {
@@ -242,16 +240,6 @@ export function CryptoPanel() {
             label="Ichimoku"
             on={!!s?.lanes.ichimoku}
             onClick={() => cfg.mutate({ ichimoku_enabled: !s?.lanes.ichimoku })}
-          />
-          <Chip
-            label="FVG Scalp"
-            on={!!s?.lanes.fvg_scalp}
-            onClick={() => cfg.mutate({ fvg_scalp_enabled: !s?.lanes.fvg_scalp })}
-          />
-          <Chip
-            label="EMA + Pivot"
-            on={!!s?.lanes.ema_pivot}
-            onClick={() => cfg.mutate({ ema_pivot_enabled: !s?.lanes.ema_pivot })}
           />
           <span className="text-[11px] text-slate-600">all off = paused</span>
         </div>

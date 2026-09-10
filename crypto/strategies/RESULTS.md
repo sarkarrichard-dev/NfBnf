@@ -178,6 +178,8 @@ fourth strategy Richard asked for, and it does solve the "not enough trades"
 problem. **Do not arm crypto live**: net-negative on every measurement, and the
 walk-forward gate (stable positive OOS across ≥ 2 symbols) is not met.
 
-The live crypto strategies are now **`ny_n_break`** (6 PM, 24/7),
-**`ichimoku`**, **`fvg_scalp`**, and **`ema_pivot`** (paper only until they
-clear the cost floor).
+The live crypto strategies are now **`ny_n_break`** (6 PM) and **`ichimoku`**
+(paper). **`fvg_scalp` and `ema_pivot` were removed 2026-09-10** (Richard) — both
+net-negative on every measurement and never cleared the cost floor; the sections
+below are kept as the record of what was tried. The plan is `ny_n_break` +
+`ak_roxx_pro` (see `ak_roxx_pro.md`), optimised forward.

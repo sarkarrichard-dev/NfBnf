@@ -116,7 +116,7 @@ def test_crypto_shapes_and_keys(sent, monkeypatch):
     monkeypatch.setattr(notify, "_seen", lambda k, w: False)
     notify.crypto_opened(
         {
-            "strategy": "ema_pivot",
+            "strategy": "ak_roxx_pro",
             "asset": "BTCUSD",
             "side": "long",
             "size": 30,
@@ -130,7 +130,7 @@ def test_crypto_shapes_and_keys(sent, monkeypatch):
     )
     notify.crypto_closed(
         {
-            "strategy": "fvg_scalp",
+            "strategy": "ichimoku",
             "asset": "ETHUSD",
             "exit_price": 2489.3,
             "pnl_usd": -1.77,
@@ -143,15 +143,15 @@ def test_crypto_shapes_and_keys(sent, monkeypatch):
     notify.crypto_day_summary(
         "2026-09-11",
         [{"pnl_usd": 2.68, "pnl_inr": 235.0}],
-        [{"asset": "SOLUSD", "strategy": "ema_pivot", "side": "short"}],
+        [{"asset": "SOLUSD", "strategy": "ak_roxx_pro", "side": "short"}],
     )
     import time
 
     time.sleep(0.2)
     keys = [k for _, k, _ in sent]
-    assert keys == ["c-entry:BTCUSD:ema_pivot:t0", "c-exit:x1", "c-day:2026-09-11"]
+    assert keys == ["c-entry:BTCUSD:ak_roxx_pro:t0", "c-exit:x1", "c-day:2026-09-11"]
     text = _join(sent)
-    assert "EMA+Pivot" in text and "FVG" in text and "still open" in text
+    assert "AKRoxx" in text and "Ichimoku" in text and "still open" in text
     assert "· LIVE" in sent[1][0] and "· LIVE" not in sent[0][0]
 
 

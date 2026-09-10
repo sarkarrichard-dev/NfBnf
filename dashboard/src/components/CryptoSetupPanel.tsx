@@ -24,8 +24,6 @@ type Status = {
   lanes: {
     ny_n_break: boolean
     ichimoku: boolean
-    fvg_scalp: boolean
-    ema_pivot: boolean
   }
 }
 

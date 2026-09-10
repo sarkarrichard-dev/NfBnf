@@ -142,7 +142,7 @@ Same verdict as AK Roxx Pro and every other 5-minute crypto config on this
 platform (`memory/strategy-findings.md`): the reversal-candle signal has no edge
 to begin with, so friction is not even the deciding factor.
 
-Kept in the tree as documented-dead (like `ak_roxx_pro.py` / `ema_pivot.py`):
+Kept in the tree as documented-dead (like `ak_roxx_pro.py`):
 wired to `crypto/backtest.py` only, **not** to `crypto/lanes.py`, no
 `CRYPTO_TMA_PHOENIX_ENABLED` flag. The 1:1 ATR bracket calculator is the one
 reusable idea, for a signal that is already predictive. Re-running the sweep on

@@ -315,8 +315,7 @@ def pre_open(brief: dict[str, Any] | None) -> None:
 _STRAT_TAG = {
     "ny_n_break": "6PM",
     "ichimoku": "Ichimoku",
-    "fvg_scalp": "FVG",
-    "ema_pivot": "EMA+Pivot",
+    "ak_roxx_pro": "AKRoxx",
 }
 
 

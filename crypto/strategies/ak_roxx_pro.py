@@ -3,8 +3,7 @@ ribbon, price fully outside the previous hour's CPR, and the signal candle
 neither oversized nor pressed against an opposing swing level.
 
 Reconstructed from ``crypto/strategies/ak_roxx_pro.md`` (the locked TradingView
-indicator "AK Algo Buy and Sell Signals"). This is the clean-room Python port,
-kept in the same shape as ``ema_pivot`` — the two share most of their gates.
+indicator "AK Algo Buy and Sell Signals"). This is the clean-room Python port.
 
 - **Trend:** EMA(21) > EMA(34) > EMA(55) and all three sloping up over
   ``slope_lookback`` bars → long bias; mirrored → short. Else no trade.
