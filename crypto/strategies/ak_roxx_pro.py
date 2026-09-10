@@ -26,8 +26,12 @@ edge with the 7/14 EMAs aligned, ``Choppiness(14) < 38.2``, price beyond the
 hourly CPR, and ``Supertrend(3.0, 10)`` agreeing. "Both engines agree" is the
 strongest read the portal gives.
 
-**Trend-ride**: once in, no new signal until the exit — the shared P&L trailing
-engine, or a fixed 1:``rr`` target off the initial stop distance.
+**Trend-ride**: once in, no new signal until the exit. The exit is the portal's
+own — a channel-edge price stop (``SMA(low, 8)`` for a long, ``SMA(high, 8)`` for
+a short) that ratchets toward price, plus a fixed 1:``rr`` target and a hard P&L
+floor for a gap. ``use_channel_stop=False`` swaps in the lane's shared
+P&L-percent trail (an A/B knob — the shared trail's 0.1%-price stop at 100×
+turns this into scalp-churn, see ``RESULTS.md``).
 
 ``step(symbol, candles, *, state, cfg)`` — ``candles`` is the 5m frame (a few
 hundred bars: the 34 EMA settles, the prior clock hour exists). Pure.
@@ -68,6 +72,11 @@ class AkRoxxConfig:
     atr_len: int = 14
     big_candle_atr: float = 0.0      # >0: skip when the signal bar's range exceeds this × ATR
     rr: float = 2.0                  # fixed target = rr × initial stop distance (1:2)
+    # exit — the portal's own: a ratcheting channel-edge price stop + a fixed
+    # 1:rr target. Set use_channel_stop=False to fall back to the lane's shared
+    # P&L-percent trail instead (an A/B knob for the optimiser).
+    use_channel_stop: bool = True
+    hard_stop_pnl_pct: float = 60.0  # disaster floor when the channel stop gaps through
     trail: TrailConfig = field(default_factory=TrailConfig)
 
 
@@ -203,6 +212,30 @@ def _alpha2_dir(c5: pd.DataFrame, cfg: AkRoxxConfig, cpr: tuple[float, float] | 
     return 0
 
 
+def _band(c5: pd.DataFrame, length: int, which: str) -> float:
+    """Last value of the AK-Channel SMA — ``high`` band or ``low`` band."""
+    return float(c5[which].astype(float).rolling(length).mean().iloc[-1])
+
+
+def _manage_channel(pos: dict[str, Any], c5: pd.DataFrame, price: float, cfg: AkRoxxConfig) -> str | None:
+    """The portal's own exit: a channel-edge stop that ratchets toward price,
+    a fixed 1:rr target, and a hard P&L floor for a gap through the stop."""
+    long = pos["side"] == "long"
+    band = _band(c5, cfg.lower_len if long else cfg.upper_len, "low" if long else "high")
+    stop = pos["chan_stop"] = (
+        max(pos["chan_stop"], band) if long else min(pos["chan_stop"], band)
+    )
+    hard = pnl_pct(float(pos["entry_price"]), price, pos["side"], cfg.trail.leverage)
+    if hard <= -cfg.hard_stop_pnl_pct:
+        return f"hard stop {hard:+.0f}% P&L"
+    if (long and price <= stop) or (not long and price >= stop):
+        return f"channel stop {stop:.2f}"
+    tgt = pos["target"]
+    if (long and price >= tgt) or (not long and price <= tgt):
+        return f"1:{cfg.rr:g} target {tgt:.2f}"
+    return None
+
+
 def _target_hit(pos: dict[str, Any], price: float, cfg: AkRoxxConfig) -> bool:
     cur = pnl_pct(float(pos["entry_price"]), price, pos["side"], cfg.trail.leverage)
     return cur >= cfg.rr * cfg.trail.stop_pnl_pct
@@ -235,9 +268,12 @@ def step(
     pos = st["position"]
 
     if pos:
-        reason = update_and_check(pos, price, cfg.trail)
-        if not reason and _target_hit(pos, price, cfg):
-            reason = f"1:{cfg.rr:g} target"
+        if cfg.use_channel_stop and "chan_stop" in pos:
+            reason = _manage_channel(pos, c5, price, cfg)
+        else:
+            reason = update_and_check(pos, price, cfg.trail)
+            if not reason and _target_hit(pos, price, cfg):
+                reason = f"1:{cfg.rr:g} target"
         if reason:
             st["position"] = None
             ev.update(event="exit", side=pos["side"], price=price, reason=reason, ts=ts)
@@ -274,7 +310,14 @@ def step(
             return st, ev
 
     want = "long" if d == 1 else "short"
-    st["position"] = {"side": want, "entry_price": price, "entry_time": ts}
+    pos_new: dict[str, Any] = {"side": want, "entry_price": price, "entry_time": ts}
+    if cfg.use_channel_stop:
+        init_stop = _band(c5, cfg.lower_len if d == 1 else cfg.upper_len,
+                          "low" if d == 1 else "high")
+        risk = abs(price - init_stop) or price * 0.001
+        pos_new["chan_stop"] = init_stop
+        pos_new["target"] = price + cfg.rr * risk * (1 if d == 1 else -1)
+    st["position"] = pos_new
     ev.update(
         event="enter",
         side=want,

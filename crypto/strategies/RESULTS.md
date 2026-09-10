@@ -202,18 +202,22 @@ Wired as a **paper** lane (`CRYPTO_AK_ROXX_ENABLED`, default on) and to the
 nightly optimiser (`SEARCH_SPACE["ak_roxx_pro"]` — CPR gate on/off, Alpha 2 gate,
 slope lookback, target R).
 
-**Backtest (corrected logic), BTCUSD 45 days:** −$2,174, **844 trades**, win 29%,
-avg win $3.99 / avg loss −$5.26. Edge-triggering the signal only trimmed it from
-933 trades / −$2,433 — it is still ~19 trades/day.
+**Backtest (corrected logic), BTCUSD, 45 days:**
 
-The 8-condition entry is strict, but the **exit** is the crypto lane's shared
-P&L-percent trail: 10% of P&L at 100× ≈ a **0.1% price move**. During a trend the
-confluence flickers on and off, and after every tiny stop-out the strategy
-re-enters — the same "each trade a 0.1% coin-flip minus fees" structural friction
-RESULTS.md already recorded for the deleted 5m-scalp strategies. The portal's
-Alpha 1 holds each trade to a **channel-edge** stop (far wider) and takes a
-handful of signals a day, not 19. Matching that would mean giving this strategy a
-price-based stop at the ``SMA(low, 8)`` / ``SMA(high, 8)`` band instead of the
-shared trail — a design change, pending Richard's call.
+| exit | trades | net | win | avg win / loss |
+|---|---|---|---|---|
+| shared P&L trail | 933 | −$2,433 | 29% | $4.11 / −$5.34 |
+| + edge-triggered entry | 844 | −$2,174 | 29% | $3.99 / −$5.26 |
+| **+ channel-edge stop** (default) | **714** | **−$2,103** | 17% | $7.22 / −$5.06 |
 
-**Do not arm crypto live.** Net-negative like every other 5m config here.
+The channel stop turned it into a "few big wins, many small losses"
+trend-follower (avg win $4 → $7.2) but the net barely moved — still ~16
+trades/day on one symbol, still losing. The 8-condition entry re-forms
+constantly during a trend and even an `SMA(low, 8)` stop on 5m is a short leash.
+
+Same verdict as every other 5m config on this platform: **no edge on Delta 5m
+after costs**. The signal is a faithful port of what the portal shows; that is
+all it is. `ak_roxx_pro` stays wired to **paper** so the scorecard and the
+nightly optimiser accumulate a forward record (the `SEARCH_SPACE` grid sweeps
+the CPR gate, the Alpha 2 gate, `use_channel_stop`, and `rr`). **Do not arm
+crypto live.**

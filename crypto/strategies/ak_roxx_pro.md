@@ -131,12 +131,15 @@ Done:
   nightly and *suggests* changes for approval; never auto-applies (ML guardrails).
 - Dashboard: catalog card + lane toggle + status plumbing.
 
-Backtest (corrected logic, edge-triggered), **BTCUSD 45 days: −$2,174 over 844
-trades, win 29%**. Still ~19 trades/day — the strict entry is undone by the
-shared P&L-percent trail (0.1% price stop at 100×), which chops each trade out
-and lets it re-enter next bar. Faithful to the portal would mean a **channel-edge
-price stop** (`SMA(low,8)` / `SMA(high,8)`) instead of the shared trail — a
-design change, pending Richard's call. See `RESULTS.md`.
+Backtest (BTCUSD, 45 days): shared P&L trail −$2,433 / 933t → edge-triggered
+−$2,174 / 844t → **channel-edge stop (default) −$2,103 / 714t, win 17%**. Net
+barely moved across all three — no edge on Delta 5m after costs, same as every
+other config here. Full table in `RESULTS.md`. Wired to **paper** to accumulate
+a forward record; never arm crypto live on it.
+
+The channel-edge stop (`SMA(low,8)` for a long, ratcheting toward price) + a
+fixed 1:`rr` target + a hard P&L floor is the portal's own exit and is now the
+default. `use_channel_stop=False` restores the shared trail (an optimiser A/B).
 
 ## What the port does *not* copy from the portal
 
