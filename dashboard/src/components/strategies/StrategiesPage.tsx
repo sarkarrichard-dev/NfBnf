@@ -18,7 +18,13 @@ const ALL_SUBTABS = [
  *  survives a refresh; the Builder can be reached from a Marketplace card
  *  via the `?strategy=` handoff below. `showBuilder` is server-driven
  *  (HIDE_STRATEGY_BUILDER) so a shared team view can drop the unfinished tab. */
-export function StrategiesPage({ showBuilder = true }: { showBuilder?: boolean }) {
+export function StrategiesPage({
+  showBuilder = true,
+  showInternals = true,
+}: {
+  showBuilder?: boolean
+  showInternals?: boolean
+}) {
   const [sub, setSub] = useStickyTab('algo.strategies.sub', 'mine')
   const [seed, setSeed] = useStickyTab('algo.strategies.seed', 'fvg_scalp')
 
@@ -62,11 +68,17 @@ export function StrategiesPage({ showBuilder = true }: { showBuilder?: boolean }
           onSeed={setSeed}
           onBuild={openBuilder}
           showBuilder={showBuilder}
+          showInternals={showInternals}
         />
       ) : null}
       {view === 'builder' ? <BuilderView seedId={seed} /> : null}
       {view === 'marketplace' ? (
-        <MarketplaceView onDetails={openDetail} onBuild={openBuilder} showBuilder={showBuilder} />
+        <MarketplaceView
+          onDetails={openDetail}
+          onBuild={openBuilder}
+          showBuilder={showBuilder}
+          showInternals={showInternals}
+        />
       ) : null}
       {view === 'exchanges' ? <ExchangesView /> : null}
       {view === 'deployments' ? <DeploymentsView /> : null}

@@ -91,7 +91,7 @@ type StatusResponse = {
     reasons?: Array<{ title?: string; detail?: string }>
   }
   auto?: { running?: boolean; last_error?: string }
-  ui?: { broker_account?: boolean; strategy_builder?: boolean }
+  ui?: { broker_account?: boolean; strategy_builder?: boolean; strategy_internals?: boolean }
 }
 
 function PanelFallback() {
@@ -285,22 +285,27 @@ function App() {
             status="Your strategies, the builder, the marketplace, exchanges and deployments."
           />
           <Suspense fallback={<PanelFallback />}>
-            <StrategiesPage showBuilder={status.data?.ui?.strategy_builder !== false} />
+            <StrategiesPage
+              showBuilder={status.data?.ui?.strategy_builder !== false}
+              showInternals={status.data?.ui?.strategy_internals !== false}
+            />
           </Suspense>
-          <div className="mt-8 grid gap-6 xl:grid-cols-[1.6fr,1fr]">
-            <CollapsibleSection title="Strategy lanes (paper) — legacy view">
-              <Suspense fallback={<PanelFallback />}>
-                <LanesPanel />
-              </Suspense>
-            </CollapsibleSection>
-            <aside className="space-y-4">
-              <CollapsibleSection title="AI brain & ML gate">
+          {status.data?.ui?.strategy_internals !== false ? (
+            <div className="mt-8 grid gap-6 xl:grid-cols-[1.6fr,1fr]">
+              <CollapsibleSection title="Strategy lanes (paper) — legacy view">
                 <Suspense fallback={<PanelFallback />}>
-                  <BrainPanel />
+                  <LanesPanel />
                 </Suspense>
               </CollapsibleSection>
-            </aside>
-          </div>
+              <aside className="space-y-4">
+                <CollapsibleSection title="AI brain & ML gate">
+                  <Suspense fallback={<PanelFallback />}>
+                    <BrainPanel />
+                  </Suspense>
+                </CollapsibleSection>
+              </aside>
+            </div>
+          ) : null}
         </>
       ) : null}
 

@@ -36,6 +36,11 @@ export type StrategyDef = {
   instrument: string
   timeframe: string
   blurb: string
+  /** buy vs sell nature — the only mechanic shown when internals are redacted */
+  side: 'buying' | 'selling' | 'mixed'
+  /** one deliberately vague line shown in place of blurb/engine/params when
+   *  HIDE_STRATEGY_INTERNALS is on (shared team view) */
+  teaser: string
   /** plain-English template; {tokens} are param keys */
   reads: string
   /** backtest headline, already measured — see crypto/strategies/RESULTS.md */
@@ -63,6 +68,8 @@ export const STRATEGIES: StrategyDef[] = [
     engine: 'EMA25 + VWAP bias · first-swing re-break',
     instrument: 'BTC / ETH perp',
     timeframe: '5m entry · 15m exit',
+    side: 'buying',
+    teaser: 'Intraday momentum entries on BTC/ETH perps with a trailing exit.',
     blurb:
       'The "6 PM" strategy, now around the clock. Bias needs price on one side of both EMA25 and VWAP; entry is a closing-basis re-break of the first swing after a retrace — the "N" shape. Exit watches the 15m structure or the P&L trail. Still trades the NY hours as before; the window gate is off by default (CRYPTO_NBREAK_ALLROUND).',
     reads:
@@ -88,6 +95,8 @@ export const STRATEGIES: StrategyDef[] = [
     engine: 'Tenkan/Kijun cross · cloud filter',
     instrument: 'BTC / ETH perp',
     timeframe: '15m',
+    side: 'buying',
+    teaser: 'Trend-following entries on BTC/ETH perps with a trailing exit.',
     blurb:
       'Classic Ichimoku trend-following. Long when the conversion line crosses above the base line with price above the cloud; mirrored for shorts. The shared P&L trailing engine handles the exit.',
     reads:
@@ -111,6 +120,8 @@ export const STRATEGIES: StrategyDef[] = [
     engine: '5m fair value gap · candlestick trigger · 15m trend',
     instrument: 'BTC / ETH perp',
     timeframe: '5m entry · 15m trend',
+    side: 'buying',
+    teaser: 'Fast pullback entries on BTC/ETH perps with a trailing exit.',
     blurb:
       'A fast move leaves a 3-candle imbalance — a Fair Value Gap. When price retraces to retest the gap and a candlestick pattern confirms, enter: continuation when the 15m Supertrend and 5m structure agree, reversal when the trend is flat and price is stretched into an opposing gap. Filters: minimum gap width, a real impulse candle (range + volume), and an IST session window. Exit on the P&L trailing engine or a close through the gap.',
     reads:
@@ -139,6 +150,8 @@ export const STRATEGIES: StrategyDef[] = [
     engine: '5m · 9/13/21 EMA fan · standard daily pivots',
     instrument: 'BTC / ETH perp',
     timeframe: '5m',
+    side: 'buying',
+    teaser: 'Trend + support/resistance entries on BTC/ETH perps with a trailing exit.',
     blurb:
       'From the CoinSwitch "EMA + Pivot" video. Combines a horizontal S/R (standard daily pivots, computed from the prior UTC-day OHLC) with a dynamic one (the 9/13/21 EMA fan). Enter only when the fan is stacked and sloping in the trend direction, price is on the supporting side of the day pivot, and the last 5m close breaks a pivot level — skipping oversized trigger candles. Exit on the P&L trail, a close back through the 9 EMA, or price stretched far from it.',
     reads:
@@ -165,6 +178,8 @@ export const STRATEGIES: StrategyDef[] = [
     engine: 'CPR + EMA + Supertrend + OI · premium-trail exits',
     instrument: 'NIFTY · BANKNIFTY · SENSEX',
     timeframe: 'buy fast · sell 5m setup + 15m trend',
+    side: 'mixed',
+    teaser: 'Directional index-options entries on NIFTY / BANKNIFTY / SENSEX — both buying and selling — routed through the live executor. P&L in Trade History.',
     blurb:
       'The live index-options engine — naked single-leg buying (60% confidence, OI + liquidity gated) and directional credit selling (5m setup, 15m trend/S&R, premium-trail owns the exit). Chop brakes and the per-index viability cost floor gate the sell lane; BANKNIFTY 4-leg structures stay blocked. Runs through the executor → Trade History.',
     reads: 'Tuned through Settings → Strategy tuning (.env), not the Builder. P&L is in Trade History / Reports (source: index).',
@@ -181,6 +196,8 @@ export const STRATEGIES: StrategyDef[] = [
     engine: 'CPR + EMA + Supertrend',
     instrument: 'NIFTY · BANKNIFTY · SENSEX',
     timeframe: '5m',
+    side: 'buying',
+    teaser: 'Directional index-futures entries on NIFTY / BANKNIFTY / SENSEX. Paper only.',
     blurb:
       'The index futures paper lane — the same directional signal as the options lane, expressed as an outright futures position. Paper only.',
     reads: 'Tuned through Settings → Strategy tuning (.env), not the Builder.',
@@ -191,6 +208,18 @@ export const STRATEGIES: StrategyDef[] = [
 ]
 
 export const byId = (id: string) => STRATEGIES.find((s) => s.id === id)
+
+/** The one mechanic left visible when internals are redacted. */
+export function sideLabel(def: StrategyDef): string {
+  if (def.kind === 'index') {
+    return def.side === 'selling'
+      ? 'Option selling'
+      : def.side === 'mixed'
+        ? 'Option buying & selling'
+        : 'Option buying'
+  }
+  return 'Directional (long / short)'
+}
 
 /** Fill {tokens} in a `reads` template from a param-value map. */
 export function renderReads(tpl: string, values: Record<string, number | boolean | string>): string {
