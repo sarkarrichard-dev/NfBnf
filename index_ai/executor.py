@@ -305,6 +305,19 @@ def execute_plan(
             signal=plan.signal,
             status=status,
         )
+        if "REJECT" not in status.upper():
+            try:
+                from index_ai.notify import trade_opened
+
+                trade_opened(
+                    instrument=str(plan.option["instrument"]),
+                    action=str(plan.signal["action"]),
+                    mode=trade_mode,
+                    option=option_payload,
+                    trade_id=trade_id,
+                )
+            except Exception:
+                pass
         return {
             "status": status,
             "trade_id": trade_id,

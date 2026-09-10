@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from crypto import charges, executor, journal
+from index_ai import notify
 from crypto.charges import round_trip_cost_usd
 from crypto.config import crypto_settings
 from crypto.delta import market_data, products
@@ -333,6 +334,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         journal.save_state(st)  # persist the close BEFORE journalling it
                         if not _already_journalled(row["exit_id"]):
                             journal.journal(row)
+                            notify.crypto_closed(row)
                         open_by_strat[strat] = max(0, open_by_strat.get(strat, 0) - 1)
                         ev.update(pnl_usd=row["pnl_usd"], pnl_inr=row["pnl_inr"])
             except Exception as exc:
@@ -400,6 +402,10 @@ def _live_close(client, contract, pos: dict, ev: dict) -> bool:
             ev["exit_price_source"] = "estimate"
             return True
         logger.error("LIVE EXIT FAILED for %s %s (Delta: %s): %s", sym, pos.get("side"), state, exc)
+        notify.crypto_alert(
+            f"\U0001f534 <b>CRYPTO LIVE EXIT FAILED</b> — {sym} still open ({state})\n{exc}",
+            key=f"c-exitfail:{sym}:{pos.get('strategy')}",
+        )
         return False
 
 
@@ -427,6 +433,7 @@ def _reap_exchange_close(client, slot: dict, strat: str, sym: str, fx: float, ev
         slot["position"] = None
         if not _already_journalled(row["exit_id"]):
             journal.journal(row)
+            notify.crypto_closed(row)
         logger.info(
             "crypto: %s %s closed on the exchange (bracket/manual), journalled at ~%s",
             sym, str(pos.get("side")).upper(), close_ev["price"],
@@ -485,6 +492,10 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
             new_state["position"] = None  # order failed → we are flat, record nothing
             logger.error("crypto live entry FAILED for %s %s: %s", sym, side.upper(), exc)
             ev.update(event="live_rejected", reason=str(exc))
+            notify.crypto_alert(
+                f"\U0001f534 <b>CRYPTO LIVE ENTRY FAILED</b> — {sym} {side.upper()}\n{exc}",
+                key=f"c-entryfail:{sym}:{strat}",
+            )
             return
         # THE ORDER IS LIVE. The position MUST be recorded from here — the fill
         # lookup is a soft refinement, never a reason to drop the position.
@@ -515,6 +526,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
     slot["position"] = pos
     ev.update(size=fill_size, margin_usd=pos["margin_total_usd"], notional_usd=pos["notional_usd"],
               mode=pos["mode"])
+    notify.crypto_opened(pos)
 
 
 def _known_strategies() -> set[str]:
@@ -547,6 +559,7 @@ def _prune_removed_strategies(st, enabled, client, fx, now_utc, events) -> None:
             )
             if row and not _already_journalled(row["exit_id"]):
                 journal.journal(row)
+                notify.crypto_closed(row)
                 events.append({"strategy": strat, "asset": sym, "event": "exit",
                                "reason": "strategy removed"})
         st.pop(key, None)
