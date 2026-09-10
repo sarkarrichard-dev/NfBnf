@@ -268,10 +268,14 @@ export function StrategyPerformancePage() {
 
   const best = useMemo(() => {
     if (!data) return null
-    const all = [...groupByStrategy(data.india.rows), ...groupByStrategy(data.crypto.rows)]
+    const inrRows = [...data.india.rows, ...(data.commodities?.rows ?? [])]
+    const all = [
+      ...groupByStrategy(inrRows),
+      ...groupByStrategy(data.crypto.rows),
+    ]
     const withCur = all.map((g) => ({
       g,
-      currency: (data.india.rows.some((r) => r.strategy === g.strategy) ? 'INR' : 'USD') as 'INR' | 'USD',
+      currency: (inrRows.some((r) => r.strategy === g.strategy) ? 'INR' : 'USD') as 'INR' | 'USD',
     }))
     const pos = withCur.filter((x) => x.g.rollup.net > 0).sort((a, b) => b.g.rollup.net - a.g.rollup.net)
     const neg = withCur.filter((x) => x.g.rollup.net < 0).sort((a, b) => a.g.rollup.net - b.g.rollup.net)
@@ -345,6 +349,14 @@ export function StrategyPerformancePage() {
             totals={data.crypto.totals}
             currency="USD"
           />
+          {data.commodities && data.commodities.rows.length ? (
+            <VenueTable
+              title="Commodities (MCX)"
+              rows={data.commodities.rows}
+              totals={data.commodities.totals}
+              currency="INR"
+            />
+          ) : null}
           <p className="px-1 text-[11px] leading-relaxed text-slate-500">{data.note}</p>
         </>
       ) : (

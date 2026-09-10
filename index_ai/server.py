@@ -1176,6 +1176,22 @@ def futures_journal_api(limit: int = Query(500, ge=1, le=2000)) -> dict[str, Any
     return {"trades": _recent_trades(limit)}
 
 
+@app.get("/api/commodities/status", include_in_schema=False)
+def commodities_status_api() -> dict[str, Any]:  # sync
+    from commodities.lanes import commodities_status
+
+    return commodities_status()
+
+
+@app.get("/api/commodities/journal", include_in_schema=False)
+def commodities_journal_api(limit: int = Query(500, ge=1, le=2000)) -> dict[str, Any]:
+    """Closed MCX commodity paper trades (trade-shaped), newest first — for the
+    Reports / Trade-history 'Commodities' source."""
+    from commodities.lanes import _recent
+
+    return {"trades": _recent(limit)[::-1]}
+
+
 @app.get("/api/futures/backtest", include_in_schema=False)
 def futures_backtest_api() -> dict[str, Any]:
     """Static replay results for the Futures tab — the stock-futures backtest

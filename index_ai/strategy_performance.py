@@ -171,6 +171,40 @@ def _crypto_rows() -> list[dict[str, Any]]:
     return [_finish(k, v, "USD") for k, v in buckets.items()]
 
 
+def _commodities_rows() -> list[dict[str, Any]]:
+    """MCX commodity paper journal — `memory/commodity_journal.jsonl`. Each row
+    already carries gross_rupees / friction_rupees / net_rupees with the MCX
+    charge schedule applied at exit, so nothing to recompute (like crypto)."""
+    from commodities.lanes import JOURNAL_PATH
+
+    epoch = data_epoch()
+    buckets: dict[tuple[str, str, str], dict[str, Any]] = defaultdict(_blank_bucket)
+    if not JOURNAL_PATH.is_file():
+        return []
+    for line in JOURNAL_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if not _after_epoch(r.get("exit_time") or r.get("day"), epoch):
+            continue
+        inst = str(r.get("instrument") or "?")
+        mode = str(r.get("mode") or "PAPER").upper()
+        b = buckets[("commodities", f"directional|{inst}", mode)]
+        pnl = float(r.get("net_rupees") or 0.0)
+        b["pnls"].append(pnl)
+        b["gross"] += float(r.get("gross_rupees") or pnl)
+        b["charges"] += float(r.get("friction_rupees") or 0.0)
+        b["priced"] += 1
+        day = str(r.get("day") or r.get("exit_time") or "")[:10]
+        if day:
+            b["days"].add(day)
+    return [_finish(k, v, "INR") for k, v in buckets.items()]
+
+
 def _totals(rows: list[dict[str, Any]], currency: str) -> dict[str, Any]:
     n = sum(r["trades"] for r in rows)
     wins = sum(r["wins"] for r in rows)
@@ -193,29 +227,35 @@ def _totals(rows: list[dict[str, Any]], currency: str) -> dict[str, Any]:
 def strategy_scorecard() -> dict[str, Any]:
     india = sorted(_india_rows(), key=lambda r: (r["strategy"], r["instrument"], r["mode"]))
     crypto = sorted(_crypto_rows(), key=lambda r: (r["strategy"], r["instrument"], r["mode"]))
+    commodities = sorted(
+        _commodities_rows(), key=lambda r: (r["strategy"], r["instrument"], r["mode"])
+    )
     return {
         "generated_at": now_ist_iso(),
         "india": {"rows": india, "totals": _totals(india, "INR")},
         "crypto": {"rows": crypto, "totals": _totals(crypto, "USD")},
+        "commodities": {"rows": commodities, "totals": _totals(commodities, "INR")},
         "note": (
             "India pnl is gross premium; charges are the Dhan schedule "
             "(₹20/order + STT + exchange txn + SEBI + GST + stamp) plus measured "
-            "slippage. Crypto fees are the real Delta taker fee + GST applied at exit."
+            "slippage. Crypto fees are the real Delta taker fee + GST applied at exit. "
+            "Commodities (MCX) already carry the CTT/txn/GST schedule net at exit."
         ),
     }
 
 
 if __name__ == "__main__":  # self-check — runs against the real journals, no network
     sc = strategy_scorecard()
-    assert set(sc) == {"generated_at", "india", "crypto", "note"}
-    for side in ("india", "crypto"):
+    assert set(sc) == {"generated_at", "india", "crypto", "commodities", "note"}
+    for side in ("india", "crypto", "commodities"):
         assert set(sc[side]) == {"rows", "totals"}
         for row in sc[side]["rows"]:
             assert row["wins"] + row["losses"] <= row["trades"]  # rest are scratches
             assert abs(row["net"] - (row["gross"] - row["charges"] - row["slippage"])) < 0.02
-    ni = sc["india"]["totals"]["trades"]
-    nc = sc["crypto"]["totals"]["trades"]
     print(
-        f"strategy_performance self-check ok — india {ni} trades / "
-        f"{len(sc['india']['rows'])} rows, crypto {nc} trades / {len(sc['crypto']['rows'])} rows"
+        "strategy_performance self-check ok — "
+        + ", ".join(
+            f"{s} {sc[s]['totals']['trades']} trades / {len(sc[s]['rows'])} rows"
+            for s in ("india", "crypto", "commodities")
+        )
     )
