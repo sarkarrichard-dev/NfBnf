@@ -131,7 +131,7 @@ def test_crypto_rows_use_journal_fees(tmp_path, monkeypatch):
 
 def test_scorecard_shape_against_real_journals():
     sc = sp.strategy_scorecard()
-    assert set(sc) == {"generated_at", "india", "crypto", "note"}
-    for side in ("india", "crypto"):
+    assert set(sc) == {"generated_at", "india", "crypto", "commodities", "note"}
+    for side in ("india", "crypto", "commodities"):
         t = sc[side]["totals"]
         assert t["net"] == round(t["gross"] - t["charges"] - t["slippage"], 2)

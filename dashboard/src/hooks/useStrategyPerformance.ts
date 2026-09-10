@@ -3,7 +3,7 @@ import { api } from '../lib/api'
 import { usePollMs } from './usePageVisible'
 
 export type PerfRow = {
-  venue: 'india' | 'crypto'
+  venue: 'india' | 'crypto' | 'commodities'
   strategy: string
   instrument: string
   mode: string
@@ -42,6 +42,7 @@ export type StrategyPerformance = {
   generated_at: string
   india: { rows: PerfRow[]; totals: PerfTotals }
   crypto: { rows: PerfRow[]; totals: PerfTotals }
+  commodities?: { rows: PerfRow[]; totals: PerfTotals }
   note: string
 }
 

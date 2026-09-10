@@ -23,6 +23,7 @@ from commodities.charges import round_trip_cost_rupees, slippage_rupees
 from commodities.config import CommoditySettings, commodity_settings, signal_config
 from commodities.instruments import BY_KEY, CommoditySpec, candle_instrument, load_universe_meta
 from commodities.session import entries_open, mcx_day, past_squareoff
+from index_ai import notify
 from index_ai.config import MEMORY_DIR, settings
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.market_clock import now_ist, now_ist_iso
@@ -153,6 +154,10 @@ def _close(
         "trend_reason": pos.get("trend_reason"),
     }
     _journal(trade)
+    try:
+        notify.commodity_closed(trade)
+    except Exception:
+        pass
     slot = state.setdefault(spec.key, {})
     slot["position"] = None
     slot["last_exit_at"] = trade["exit_time"]
@@ -244,6 +249,7 @@ def tick(
 
     d = tr.direction
     pos = {
+        "instrument": key,
         "dir": "LONG" if d == LONG else "SHORT",
         "entry": price,
         "entry_time": now_ist_iso(),
@@ -252,8 +258,13 @@ def tick(
         "stop": price - d * price * spec.initial_stop_pct / 100.0,
         "armed": False,
         "trend_reason": tr.reason,
+        "mode": "PAPER",
     }
     slot["position"] = pos
+    try:
+        notify.commodity_opened(pos, spec.label, s.lots)
+    except Exception:
+        pass
     ev.update(event="entry", position=pos)
     return ev
 

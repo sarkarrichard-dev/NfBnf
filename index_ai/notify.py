@@ -383,6 +383,33 @@ def crypto_closed(row: dict[str, Any]) -> None:
 crypto_alert = alert
 
 
+# ── commodity (MCX) messages ────────────────────────────────────────────────
+
+
+def commodity_opened(pos: dict[str, Any], label: str, lots: int) -> None:
+    side = str(pos.get("dir", "")).upper()
+    send(
+        f"{_GREEN} <b>COMMODITY ENTRY</b>{_tag(pos.get('mode') or 'PAPER')} — {label}\n"
+        f"{side} {lots} lot @ {_inr(pos.get('entry'))} · SL {_inr(pos.get('stop'))}\n"
+        f"{pos.get('trend_reason') or ''}".rstrip(),
+        key=f"m-entry:{pos.get('instrument') or label}:{pos.get('entry_time')}",
+    )
+
+
+def commodity_closed(row: dict[str, Any]) -> None:
+    p = _f(row.get("net_rupees"))
+    mark = _GREEN if p > 0 else _RED if p < 0 else _WHITE
+    sign = "+" if p >= 0 else "−"
+    send(
+        f"{mark} <b>COMMODITY EXIT</b>{_tag(row.get('mode') or 'PAPER')} — "
+        f"{row.get('label') or row.get('instrument')} {str(row.get('direction') or '').upper()}\n"
+        f"exit @ {_inr(row.get('exit'))} · {sign}{_inr(abs(p))} "
+        f"(gross {_inr(row.get('gross_rupees'))}, cost {_inr(row.get('friction_rupees'))})\n"
+        f"{row.get('exit_reason') or 'closed'}",
+        key=f"m-exit:{row.get('instrument')}:{row.get('exit_time')}",
+    )
+
+
 def crypto_day_summary(
     day: str,
     rows: list[dict[str, Any]],

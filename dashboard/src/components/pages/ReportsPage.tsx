@@ -8,6 +8,7 @@ import { EquityCurve } from '../charts/EquityCurve'
 import { PnlCalendar } from '../charts/PnlCalendar'
 import { useCryptoJournal } from '../../hooks/useCryptoJournal'
 import { useFuturesJournal } from '../../hooks/useFuturesJournal'
+import { useCommoditiesJournal } from '../../hooks/useCommoditiesJournal'
 import {
   dailySeriesFromTrades,
   mergeDailySeries,
@@ -72,13 +73,15 @@ export function ReportsPage({
   const [source, setSource] = useTradeSource()
   const crypto = useCryptoJournal(source === 'all' || source === 'crypto')
   const futures = useFuturesJournal(source === 'all' || source === 'futures')
+  const commodities = useCommoditiesJournal(source === 'all' || source === 'commodities')
 
   const allTrades = useMemo<TradeRow[]>(() => {
     if (source === 'index') return trades
     if (source === 'crypto') return crypto.trades
     if (source === 'futures') return futures.trades
-    return [...trades, ...crypto.trades, ...futures.trades]
-  }, [source, trades, crypto.trades, futures.trades])
+    if (source === 'commodities') return commodities.trades
+    return [...trades, ...crypto.trades, ...futures.trades, ...commodities.trades]
+  }, [source, trades, crypto.trades, futures.trades, commodities.trades])
 
   const scoped = useMemo(
     () => tradesForPeriod(allTrades, period, range).filter((t) => t.pnl != null),
@@ -120,8 +123,12 @@ export function ReportsPage({
     if (source === 'index') return index
     if (source === 'crypto') return dailySeriesFromTrades(crypto.trades)
     if (source === 'futures') return dailySeriesFromTrades(futures.trades)
-    return mergeDailySeries(index, dailySeriesFromTrades([...crypto.trades, ...futures.trades]))
-  }, [source, analytics?.daily_series, crypto.trades, futures.trades])
+    if (source === 'commodities') return dailySeriesFromTrades(commodities.trades)
+    return mergeDailySeries(
+      index,
+      dailySeriesFromTrades([...crypto.trades, ...futures.trades, ...commodities.trades]),
+    )
+  }, [source, analytics?.daily_series, crypto.trades, futures.trades, commodities.trades])
 
   const equity = useMemo(() => {
     if (!daily.length) return []
@@ -279,7 +286,9 @@ export function ReportsPage({
       <p className="text-[11px] text-slate-600">
         {source === 'crypto'
           ? 'Crypto P&L is net of Delta fees, converted to ₹ at the trade’s USD/INR rate. Per-exit and fee-drag breakdowns are on the Crypto tab’s day review.'
-          : 'Fee drag and P&L-by-exit breakdowns are on the Crypto tab’s day review — the index journal stores net P&L only.'}
+          : source === 'commodities'
+            ? 'Commodity P&L is net of the MCX schedule (₹20/order + txn + CTT + SEBI + stamp + GST) plus one tick of slippage each side, applied at exit.'
+            : 'Fee drag and P&L-by-exit breakdowns are on the Crypto tab’s day review — the index journal stores net P&L only.'}
       </p>
     </div>
   )

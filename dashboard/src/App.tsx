@@ -59,6 +59,9 @@ const CryptoPanel = lazy(() =>
 const FuturesPanel = lazy(() =>
   import('./components/FuturesPanel').then((m) => ({ default: m.FuturesPanel })),
 )
+const CommoditiesPanel = lazy(() =>
+  import('./components/CommoditiesPanel').then((m) => ({ default: m.CommoditiesPanel })),
+)
 const OperationsPanel = lazy(() =>
   import('./components/OperationsPanel').then((m) => ({ default: m.OperationsPanel })),
 )
@@ -172,6 +175,7 @@ function App() {
         { id: 'strategies', label: 'Strategies', icon: <IconLayers /> },
         { id: 'crypto', label: 'Crypto', icon: <IconCoin /> },
         { id: 'futures', label: 'Futures', icon: <IconChart /> },
+        { id: 'commodities', label: 'Commodities', icon: <IconChart /> },
       ],
     },
     {
@@ -355,6 +359,19 @@ function App() {
           />
           <Suspense fallback={<PanelFallback />}>
             <FuturesPanel />
+          </Suspense>
+        </>
+      ) : null}
+
+      {tab === 'commodities' ? (
+        <>
+          <PageHeader
+            eyebrow="Commodities · MCX"
+            title="Commodities"
+            status="MCX mini/micro futures — crude, gas, gold, silver — the evening the equity scanner is shut. Paper."
+          />
+          <Suspense fallback={<PanelFallback />}>
+            <CommoditiesPanel />
           </Suspense>
         </>
       ) : null}
