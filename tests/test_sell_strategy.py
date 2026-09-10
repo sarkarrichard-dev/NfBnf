@@ -127,9 +127,29 @@ def test_oi_primary_picks_the_sell_direction():
     # jam the walls around spot the other way → bear call
     sig = _sell_signal(flat, _oi(92.0, 101.0))
     assert sig.action == "SELL_BEAR_CALL_SPREAD"
-    # spot pinned at max pain → no directional credit
+    # spot pinned at max pain → HARD veto, does not fall back to CPR
     sig = _sell_signal(flat, _oi(95.0, 108.0, mp=100.0))
     assert sig.action == "NO_TRADE" and "pinned" in sig.reason
+
+
+def test_oi_ambiguous_falls_back_to_cpr():
+    """Walls crossed / no OI read → the lane tries the CPR direction instead of
+    dead-ending on the OI reason (the 'no trades on a pinned book' fix)."""
+    flat = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-05-25 09:15", periods=40, freq="5min"),
+            "open": [100.0] * 40,
+            "high": [101.0] * 40,
+            "low": [99.0] * 40,
+            "close": [100.0] * 40,
+            "volume": [5000.0] * 40,
+        }
+    )
+    sig = _sell_signal(flat, _oi(110.0, 100.0))  # put wall 110 ≥ call wall 100 → crossed
+    # it fell through to pick_auto_credit — the OI "walls crossed" string is not
+    # the final reason (flat data means CPR finds nothing either, but via its path)
+    assert "walls crossed" not in sig.reason
+    assert sig.action == "NO_TRADE"
 
 
 def test_breakout_veto_catches_a_still_holding_break():

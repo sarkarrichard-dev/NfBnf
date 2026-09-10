@@ -180,30 +180,9 @@ def evaluate_sell_signal(
     oi_usable = (
         oi is not None and oi.max_call_oi_strike is not None and oi.max_put_oi_strike is not None
     )
-    if cfg.sell_oi_primary and oi_usable:
-        action, reason = oi_decide(oi, price, max_pain=oi.max_pain)
-        mode = "oi_credit"
-        if not action:
-            return StrategySignal(
-                action="NO_TRADE",
-                reason=f"OI sell: {reason}",
-                confidence=0.0,
-                strategy_mode="wait",
-                **base,
-            )
-        # the OI path bypasses pick_auto_credit — re-apply its 5m tape veto here,
-        # the one guard that stops selling into a wrong-way intraday move.
-        opp = _tape_opposes(action, df)
-        if opp:
-            return StrategySignal(
-                action="NO_TRADE",
-                reason=f"OI sell blocked — {opp}.",
-                confidence=0.0,
-                strategy_mode="conflict",
-                **base,
-            )
-    else:
-        action, reason, mode = pick_auto_credit(
+
+    def _cpr_read() -> tuple[str | None, str, str]:
+        return pick_auto_credit(
             regime,
             cross,
             ema_fast=cfg.ema_fast_period,
@@ -211,6 +190,49 @@ def evaluate_sell_signal(
             frame=df,
             trend15=trend15,
         )
+
+    if cfg.sell_oi_primary and oi_usable:
+        action, reason, oi_fallback_ok = oi_decide(oi, price, max_pain=oi.max_pain)
+        mode = "oi_credit"
+        if not action and not oi_fallback_ok:
+            # hard veto (spot pinned to max pain) — don't try CPR either
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=f"OI sell: {reason}",
+                confidence=0.0,
+                strategy_mode="wait",
+                **base,
+            )
+        if not action:
+            # OI has no directional read (walls crossed / on a wall / mid-range)
+            # — fall back to the CPR + EMA direction rather than sit out.
+            action, cpr_reason, cpr_mode = _cpr_read()
+            if not action:
+                return StrategySignal(
+                    action="NO_TRADE",
+                    reason=cpr_reason or f"OI stood down ({reason}); no CPR setup either.",
+                    confidence=0.0,
+                    strategy_mode=cpr_mode or "wait",
+                    **base,
+                )
+            # keep the real CPR mode so the trade is scored and bucketed like a
+            # native CPR credit (its provenance is in the reason string).
+            reason = f"OI unclear ({reason}) → CPR: {cpr_reason}"
+            mode = cpr_mode or "cpr_fallback"
+        else:
+            # the OI path bypasses pick_auto_credit — re-apply its 5m tape veto
+            # here, the one guard that stops selling into a wrong-way move.
+            opp = _tape_opposes(action, df)
+            if opp:
+                return StrategySignal(
+                    action="NO_TRADE",
+                    reason=f"OI sell blocked — {opp}.",
+                    confidence=0.0,
+                    strategy_mode="conflict",
+                    **base,
+                )
+    else:
+        action, reason, mode = _cpr_read()
         if not action:
             return StrategySignal(
                 action="NO_TRADE",

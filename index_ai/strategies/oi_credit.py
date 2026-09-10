@@ -12,11 +12,13 @@ for target / stop placement (classic pivots), not for picking direction.
   with a buffer, and there is room up to the resistance wall. Sell the put
   spread under the floor.
 * **Bear call spread** — mirrored under the ceiling.
-* Spot wedged between the walls, or near max pain (pin risk), or a wall missing
-  → no OI call; the caller may fall back to CPR.
+* Spot wedged between the walls, walls crossed, a wall missing, or a max-pain
+  conflict → **no OI read**; ``decide`` says so and the caller falls back to the
+  CPR + EMA direction (`fallback_ok=True`).
+* Spot pinned to max pain → **hard veto** (`fallback_ok=False`) — the day will
+  chop, don't sell a directional credit however the CPR reads.
 
-Pure. ``decide`` takes the ``OptionOiContext`` (from ``analyze_option_chain``)
-plus an optional max-pain reading and returns ``(action, reason)``.
+Pure. ``decide`` returns ``(action, reason, fallback_ok)``.
 """
 
 from __future__ import annotations
@@ -38,32 +40,30 @@ def decide(
     price: float,
     *,
     max_pain: float | None = None,
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, bool]:
+    """``(action, reason, fallback_ok)``. ``action`` is one of the two spread
+    strings or None. When None, ``fallback_ok`` is True if the caller should try
+    the CPR read (the OI profile just has no direction), False if this is a hard
+    veto (spot pinned to max pain)."""
     if oi is None or oi.max_put_oi_strike is None or oi.max_call_oi_strike is None:
-        return None, "no OI walls — chain missing or flat"
+        return None, "no OI walls — chain missing or flat", True
 
     support = float(oi.max_put_oi_strike)
     resistance = float(oi.max_call_oi_strike)
     if support >= resistance:
-        return None, f"OI walls crossed (put {support:.0f} ≥ call {resistance:.0f})"
+        return None, f"OI walls crossed (put {support:.0f} ≥ call {resistance:.0f})", True
 
     if max_pain and _pct_away(price, max_pain) < PIN_SKIP_PCT:
-        return None, f"spot pinned near max pain {max_pain:.0f} — no directional credit"
+        return None, f"spot pinned near max pain {max_pain:.0f} — no directional credit", False
 
     above_support = (price - support) / price * 100.0
     below_resistance = (resistance - price) / price * 100.0
 
-    # inside the walls at all?
+    # spot sitting on a wall → the level is being tested; OI gives no clean read
     if above_support < WALL_BUFFER_PCT:
-        return (
-            None,
-            f"OI: spot at/through the put wall {support:.0f} — floor breaking, no bull credit",
-        )
+        return None, f"OI: spot at/through the put wall {support:.0f} — floor breaking", True
     if below_resistance < WALL_BUFFER_PCT:
-        return (
-            None,
-            f"OI: spot at/through the call wall {resistance:.0f} — ceiling breaking, no bear credit",
-        )
+        return None, f"OI: spot at/through the call wall {resistance:.0f} — ceiling breaking", True
 
     # dead-centre between the walls → no lean
     mid = (support + resistance) / 2.0
@@ -77,10 +77,14 @@ def decide(
 
     if centred:
         if mp_up:
-            return "SELL_BULL_PUT_SPREAD", f"OI: mid-range, max pain {max_pain:.0f} pulls up"
+            return "SELL_BULL_PUT_SPREAD", f"OI: mid-range, max pain {max_pain:.0f} pulls up", True
         if mp_down:
-            return "SELL_BEAR_CALL_SPREAD", f"OI: mid-range, max pain {max_pain:.0f} pulls down"
-        return None, "OI: spot mid-range between walls, no max-pain tilt"
+            return (
+                "SELL_BEAR_CALL_SPREAD",
+                f"OI: mid-range, max pain {max_pain:.0f} pulls down",
+                True,
+            )
+        return None, "OI: spot mid-range between walls, no max-pain tilt", True
 
     if leaning_support and not mp_down:
         return (
@@ -88,6 +92,7 @@ def decide(
             f"OI: spot {above_support:.2f}% above the put wall {support:.0f}, "
             f"nearer the floor than the call wall {resistance:.0f}"
             + (f", max pain {max_pain:.0f} pulls up" if mp_up else ""),
+            True,
         )
     if not leaning_support and not mp_up:
         return (
@@ -95,8 +100,9 @@ def decide(
             f"OI: spot {below_resistance:.2f}% below the call wall {resistance:.0f}, "
             f"nearer the ceiling than the put wall {support:.0f}"
             + (f", max pain {max_pain:.0f} pulls down" if mp_down else ""),
+            True,
         )
-    return None, f"OI: spot leaning one way, max pain {max_pain:.0f} pulls the other — skip"
+    return None, f"OI: spot leaning one way, max pain {max_pain:.0f} pulls the other — skip", True
 
 
 if __name__ == "__main__":  # self-check
@@ -115,23 +121,25 @@ if __name__ == "__main__":  # self-check
             confidence_adjustment=0.0,
         )
 
-    a, _ = decide(ctx(23000, 24000), 23300)  # nearer the put wall → bull put spread
+    a, _, fb = decide(ctx(23000, 24000), 23300)  # nearer the put wall → bull put spread
     assert a == "SELL_BULL_PUT_SPREAD", a
-    a, _ = decide(ctx(23000, 24000), 23750)  # nearer the call wall → bear call spread
+    a, _, fb = decide(ctx(23000, 24000), 23750)  # nearer the call wall → bear call spread
     assert a == "SELL_BEAR_CALL_SPREAD", a
-    a, r = decide(ctx(23000, 24000), 23030)  # sitting on the put wall → no bull credit
-    assert a is None and "floor breaking" in r, (a, r)
-    a, r = decide(ctx(23000, 24000), 23500, max_pain=23500)  # pinned at max pain
-    assert a is None and "pinned" in r, (a, r)
-    a, r = decide(ctx(23000, 24000), 23500)  # dead centre, no tilt → skip
-    assert a is None and "mid-range" in r, (a, r)
-    a, _ = decide(ctx(23000, 24000), 23300, max_pain=24500)  # bull lean but max pain pulls hard up
-    assert a == "SELL_BULL_PUT_SPREAD"  # aligned — still fine
-    a, _ = decide(
-        ctx(23000, 24000), 23700, max_pain=22500
-    )  # bear lean but max pain pulls down → ok
+    a, r, fb = decide(ctx(23000, 24000), 23030)  # sitting on the put wall → no read, fall back
+    assert a is None and "floor breaking" in r and fb is True, (a, r, fb)
+    a, r, fb = decide(ctx(24000, 23000), 23500)  # walls crossed → no read, fall back
+    assert a is None and "crossed" in r and fb is True, (a, r, fb)
+    a, r, fb = decide(ctx(23000, 24000), 23500, max_pain=23500)  # pinned → HARD veto
+    assert a is None and "pinned" in r and fb is False, (a, r, fb)
+    a, r, fb = decide(ctx(23000, 24000), 23500)  # dead centre, no tilt → no read, fall back
+    assert a is None and "mid-range" in r and fb is True, (a, r, fb)
+    a, _, fb = decide(ctx(23000, 24000), 23300, max_pain=24500)  # bull lean + max pain up → fine
+    assert a == "SELL_BULL_PUT_SPREAD"
+    a, _, fb = decide(ctx(23000, 24000), 23700, max_pain=22500)  # bear lean + max pain down → fine
     assert a == "SELL_BEAR_CALL_SPREAD"
-    a, r = decide(ctx(23000, 24000), 23300, max_pain=22000)  # bull lean, max pain pulls DOWN → skip
-    assert a is None and "pulls the other" in r, (a, r)
-    assert decide(None, 23500)[0] is None
+    a, r, fb = decide(
+        ctx(23000, 24000), 23300, max_pain=22000
+    )  # bull lean, max pain DOWN → fall back
+    assert a is None and "pulls the other" in r and fb is True, (a, r, fb)
+    assert decide(None, 23500) == (None, "no OI walls — chain missing or flat", True)
     print("index_ai.strategies.oi_credit self-check ok")
