@@ -319,6 +319,17 @@ def crypto_positions() -> dict:
     }
 
 
+@router.post("/positions/close", include_in_schema=False)
+def crypto_close_position(key: str = Body(..., embed=True)) -> dict:
+    """Manual "Close" button on the dashboard — force-exit one open position
+    now, at the current mark. `key` is the "{strategy}:{symbol}" id shown in
+    /positions (e.g. "ak_roxx_pro:BNBUSD"). Plain def — threadpooled; does a
+    live price fetch and, for a LIVE position, a real close order."""
+    from crypto.lanes import close_position_manual
+
+    return close_position_manual(key)
+
+
 @router.get("/journal", include_in_schema=False)
 def crypto_journal(limit: int = 100) -> dict:
     return {"trades": journal.recent(max(1, min(500, limit)))}
