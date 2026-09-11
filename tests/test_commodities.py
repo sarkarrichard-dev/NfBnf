@@ -111,3 +111,46 @@ def test_lane_plumbing_open_then_close(tmp_path, monkeypatch):
         lanes.scan_commodities_paper()[0]["event"] == "none"
         or lanes.scan_commodities_paper()[0].get("reason") == "no trend"
     )
+
+
+def test_status_reports_mtm_for_an_open_position(tmp_path, monkeypatch):
+    """commodities_status() must attach a live mark + unrealized P&L to an open
+    position — this is what the dashboard's MTM grid reads. Regression for the
+    version that returned the raw position with no mark at all."""
+    crude = BY_KEY["CRUDEOILM"]
+    state = {
+        "CRUDEOILM": {
+            "position": {
+                "instrument": "CRUDEOILM",
+                "dir": "LONG",
+                "entry": 6000.0,
+                "entry_time": "2026-06-01T09:20:00+05:30",
+                "day": "2026-06-01",
+                "peak": 6000.0,
+                "stop": 5949.0,
+                "armed": False,
+                "mode": "PAPER",
+            }
+        }
+    }
+    monkeypatch.setattr(lanes, "_load_state", lambda: state)
+    monkeypatch.setattr(lanes, "_recent", lambda n: [])
+    monkeypatch.setattr(lanes, "load_universe_meta", lambda: {"CRUDEOILM": {"security_id": 1}})
+    monkeypatch.setattr(lanes, "DhanClient", lambda *a, **k: object())
+    monkeypatch.setattr(
+        lanes, "_fetch", lambda client, spec, sid, interval: pd.DataFrame({"close": [6060.0]})
+    )
+
+    status = lanes.commodities_status()
+    pos = status["open_positions"]["CRUDEOILM"]
+    assert pos["mark"] == 6060.0
+    expected_pnl = (6060.0 - 6000.0) * crude.multiplier * status["lots"]
+    assert pos["unrealized_rupees"] == pytest.approx(expected_pnl)
+    assert status["today"]["open_unrealized_rupees"] == pytest.approx(expected_pnl)
+
+    # a fetch failure degrades to "no mark", never a fake number
+    monkeypatch.setattr(
+        lanes, "_fetch", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down"))
+    )
+    pos2 = lanes.commodities_status()["open_positions"]["CRUDEOILM"]
+    assert pos2["mark"] is None and pos2["unrealized_rupees"] is None

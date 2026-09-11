@@ -10,6 +10,9 @@ type OpenPos = {
   stop?: number
   entry_time?: string
   trend_reason?: string
+  mark?: number | null
+  unrealized_rupees?: number | null
+  unrealized_pct?: number | null
 } | null
 
 type Trade = {
@@ -32,7 +35,7 @@ type Status = {
     { label?: string; expiry?: string | null; trading_symbol?: string | null; multiplier?: number | null }
   >
   open_positions: Record<string, OpenPos>
-  today: { closed: number; net_rupees: number; wins: number }
+  today: { closed: number; net_rupees: number; wins: number; open_unrealized_rupees?: number }
   all_time: { closed: number; net_rupees: number }
   recent_trades: Trade[]
   generated_at_ist?: string
@@ -82,7 +85,7 @@ export function CommoditiesPanel() {
         </span>
       </header>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         <Stat label="Today closed" value={String(s?.today.closed ?? 0)} />
         <Stat
           label="Today net"
@@ -90,6 +93,11 @@ export function CommoditiesPanel() {
           cls={pnlClass(s?.today.net_rupees)}
         />
         <Stat label="Open" value={String(opens.length)} />
+        <Stat
+          label="Open MTM"
+          value={rupee(s?.today.open_unrealized_rupees)}
+          cls={pnlClass(s?.today.open_unrealized_rupees)}
+        />
         <Stat
           label="All-time net"
           value={rupee(s?.all_time.net_rupees)}
@@ -121,13 +129,19 @@ export function CommoditiesPanel() {
             {opens.map(([k, p]) => (
               <li
                 key={k}
-                className="flex items-baseline justify-between gap-2 rounded-lg bg-white/[0.02] px-3 py-1.5 text-xs"
+                className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 rounded-lg bg-white/[0.02] px-3 py-1.5 text-xs"
               >
                 <span className="font-semibold text-slate-100">
                   {k} <span className="text-slate-400">{(p?.dir || '').toUpperCase()}</span>
                 </span>
                 <span className="font-mono text-[11px] text-slate-400">
                   @ {p?.entry?.toFixed(1)} · SL {p?.stop?.toFixed(1)}
+                  {p?.mark != null ? <> · LTP {p.mark.toFixed(1)}</> : null}
+                </span>
+                <span className={cn('ml-auto font-mono text-[11px] font-semibold', pnlClass(p?.unrealized_rupees))}>
+                  {p?.unrealized_rupees != null
+                    ? `${rupee(p.unrealized_rupees)}${p.unrealized_pct != null ? ` (${p.unrealized_pct > 0 ? '+' : ''}${p.unrealized_pct.toFixed(2)}%)` : ''}`
+                    : 'no live mark'}
                 </span>
               </li>
             ))}
