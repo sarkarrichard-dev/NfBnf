@@ -308,6 +308,18 @@ def scan_commodities_paper(client: DhanClient | None = None) -> list[dict[str, A
         return [{"event": "error", "where": "scan", "error": str(exc)}]
 
 
+def _mark_price(client: DhanClient, spec: CommoditySpec, security_id: int | None) -> float | None:
+    """Last 5m close for one contract — reuses the same cached fetch the scan
+    loop uses, so this costs nothing extra on top of the running lane."""
+    if not security_id:
+        return None
+    try:
+        frame = _fetch(client, spec, security_id, "5")
+        return float(frame["close"].iloc[-1]) if not frame.empty else None
+    except Exception:
+        return None
+
+
 def commodities_status() -> dict[str, Any]:
     s = commodity_settings()
     state = _load_state()
@@ -315,6 +327,31 @@ def commodities_status() -> dict[str, Any]:
     today = now_ist().date().isoformat()
     todays = [t for t in trades if str(t.get("exit_time", ""))[:10] == today]
     meta = load_universe_meta()
+
+    client = DhanClient(settings().dhan)
+    open_positions: dict[str, Any] = {}
+    open_unrealized = 0.0
+    for k, v in state.items():
+        pos = v.get("position") if isinstance(v, dict) else None
+        if not pos:
+            continue
+        pos = dict(pos)
+        spec = BY_KEY.get(k)
+        mark = _mark_price(client, spec, (meta.get(k) or {}).get("security_id")) if spec else None
+        if mark is not None and spec:
+            d = 1 if pos.get("dir") == "LONG" else -1
+            points = (mark - float(pos["entry"])) * d
+            pnl = points * spec.multiplier * s.lots
+            pos["mark"] = round(mark, 2)
+            pos["unrealized_rupees"] = round(pnl, 2)
+            pos["unrealized_pct"] = round(points / float(pos["entry"]) * 100.0, 3) if pos.get("entry") else None
+            open_unrealized += pnl
+        else:  # no live mark — show the position but not a fake ₹0 P&L
+            pos["mark"] = None
+            pos["unrealized_rupees"] = None
+            pos["unrealized_pct"] = None
+        open_positions[k] = pos
+
     return {
         "enabled": s.enabled,
         "symbols": list(s.symbols),
@@ -328,15 +365,12 @@ def commodities_status() -> dict[str, Any]:
             }
             for k in s.symbols
         },
-        "open_positions": {
-            k: v.get("position")
-            for k, v in state.items()
-            if isinstance(v, dict) and v.get("position")
-        },
+        "open_positions": open_positions,
         "today": {
             "closed": len(todays),
             "net_rupees": round(sum(float(t["net_rupees"]) for t in todays), 2),
             "wins": sum(1 for t in todays if float(t["net_rupees"]) > 0),
+            "open_unrealized_rupees": round(open_unrealized, 2),
         },
         "all_time": {
             "closed": len(trades),
