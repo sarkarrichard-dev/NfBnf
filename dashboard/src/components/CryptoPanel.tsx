@@ -173,6 +173,25 @@ export function CryptoPanel() {
     onError: (e: Error) => toast.error(e.message),
   })
 
+  const closePos = useMutation({
+    mutationFn: (key: string) =>
+      api<{ ok: boolean; error?: string; trade?: { pnl_usd: number; pnl_inr: number } }>(
+        '/api/crypto/positions/close',
+        { method: 'POST', body: JSON.stringify({ key }) },
+      ),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        toast.error(res.error || 'Close failed')
+        return
+      }
+      const t = res.trade
+      toast.success(t ? `Closed — ${usd(t.pnl_usd)} (${inr(t.pnl_inr)})` : 'Closed')
+      void qc.invalidateQueries({ queryKey: ['crypto', 'positions'] })
+      void qc.invalidateQueries({ queryKey: ['crypto', 'journal'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
   const allTrades = journal.data?.trades ?? []
   const rows = cryptoRowsForPeriod(allTrades, period, range)
   const st = cryptoStats(rows)
@@ -309,6 +328,7 @@ export function CryptoPanel() {
                   <th>Entry → Mark</th>
                   <th>Unrealised P&L</th>
                   <th>Margin</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody className="font-mono">
@@ -339,6 +359,19 @@ export function CryptoPanel() {
                     </td>
                     <td className="text-slate-400 tabular-nums">
                       ${num(p.margin_total_usd)} · {num(p.leverage, 0)}x
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        disabled={closePos.isPending && closePos.variables === p.key}
+                        onClick={() => {
+                          if (!window.confirm(`Close ${p.asset} (${p.strategy}) now, at the current price?`)) return
+                          closePos.mutate(p.key)
+                        }}
+                        className="rounded-md border border-[var(--down)]/40 px-2 py-1 font-sans text-[11px] font-semibold text-[var(--down)] transition hover:bg-[var(--down)]/10 disabled:opacity-40"
+                      >
+                        {closePos.isPending && closePos.variables === p.key ? 'Closing…' : 'Close'}
+                      </button>
                     </td>
                   </tr>
                 ))}

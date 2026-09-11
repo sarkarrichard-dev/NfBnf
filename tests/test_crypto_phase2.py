@@ -335,6 +335,121 @@ def test_lane_session_window_gates_entries_not_the_scan(paper_env, monkeypatch):
     assert journal.load_state().get("ny_n_break:BTCUSD", {}).get("position") is None
 
 
+def test_close_position_manual_closes_at_the_current_mark(paper_env, monkeypatch):
+    """The dashboard's manual "Close" button — must journal the same shape of
+    row the automatic exits do, with the right P&L off the live mark."""
+    monkeypatch.setattr(lanes.market_data, "ticker", lambda *a, **k: {"mark_price": 63000.0})
+    journal.save_state(
+        {
+            "ny_n_break:BTCUSD": {
+                "strategy": {"position": "whatever the strategy's own view was"},
+                "position": {
+                    "strategy": "ny_n_break",
+                    "asset": "BTCUSD",
+                    "side": "long",
+                    "day": "2026-09-08",
+                    "entry_price": 60000.0,
+                    "entry_time": "2026-09-08T10:00:00+00:00",
+                    "opened_at": "2026-09-08T10:00:00+00:00",
+                    "size": 30,
+                    "contract_value": 0.001,
+                    "leverage": 20,
+                    "margin_total_usd": 90.0,
+                    "notional_usd": 1800.0,
+                    "mode": "paper",
+                },
+            }
+        }
+    )
+    result = lanes.close_position_manual("ny_n_break:BTCUSD")
+    assert result["ok"] is True
+    row = result["trade"]
+    assert row["exit_reason"] == "manual close" and row["exit_price"] == 63000.0
+    gross = (63000.0 - 60000.0) * (30 * 0.001)  # long, coins = size * contract_value
+    assert row["gross_usd"] == pytest.approx(gross, abs=0.01)
+    assert row["pnl_usd"] < row["gross_usd"]  # fees came off
+
+    st = journal.load_state()
+    assert st["ny_n_break:BTCUSD"]["position"] is None
+    assert (
+        st["ny_n_break:BTCUSD"]["strategy"]["position"] is None
+    )  # strategy's own view cleared too
+    assert (
+        journal.recent()[-1]["exit_id"] == row["exit_id"]
+    )  # actually journalled, not just returned
+
+    # closing again (or a key with nothing open) fails cleanly, no crash
+    again = lanes.close_position_manual("ny_n_break:BTCUSD")
+    assert again["ok"] is False and "no open position" in again["error"]
+
+
+def test_close_position_manual_waits_for_a_scan_holding_the_lock(paper_env, monkeypatch):
+    """A manual close and the ~60s scan loop both mutate crypto_state.json /
+    the journal -- they must never interleave. Prove _STATE_LOCK actually
+    blocks a manual close until whoever holds it (here, a stand-in for a
+    scan in progress) releases it."""
+    import threading
+    import time
+
+    monkeypatch.setattr(lanes.market_data, "ticker", lambda *a, **k: {"mark_price": 100.0})
+    journal.save_state(
+        {
+            "ny_n_break:BTCUSD": {
+                "strategy": {"position": "x"},
+                "position": {
+                    "strategy": "ny_n_break",
+                    "asset": "BTCUSD",
+                    "side": "long",
+                    "day": "2026-09-08",
+                    "entry_price": 100.0,
+                    "entry_time": "2026-09-08T10:00:00+00:00",
+                    "opened_at": "2026-09-08T10:00:00+00:00",
+                    "size": 30,
+                    "contract_value": 0.001,
+                    "leverage": 20,
+                    "margin_total_usd": 15.0,
+                    "notional_usd": 300.0,
+                    "mode": "paper",
+                },
+            }
+        }
+    )
+
+    order: list[str] = []
+
+    def hold_lock_briefly():
+        with lanes._STATE_LOCK:  # stand-in for a scan cycle in progress
+            order.append("scan-start")
+            time.sleep(0.1)
+            order.append("scan-end")
+
+    # record from *inside* the locked section the close actually runs, not just
+    # from the outer call -- otherwise this proves nothing about the lock (a
+    # close with the lock ripped out would log the same two outer timestamps)
+    real_locked = lanes._close_position_manual_locked
+
+    def recording_locked(key, client):
+        order.append("close-start")
+        result = real_locked(key, client)
+        order.append("close-end")
+        return result
+
+    monkeypatch.setattr(lanes, "_close_position_manual_locked", recording_locked)
+
+    t = threading.Thread(target=hold_lock_briefly)
+    t.start()
+    time.sleep(0.02)  # let the thread grab the lock first
+    result = lanes.close_position_manual("ny_n_break:BTCUSD")  # must block until released
+    t.join()
+
+    # "close-start" can only appear once _STATE_LOCK is acquired, which can only
+    # happen after hold_lock_briefly's "scan-end" releases it -- without the
+    # lock, close (started ~0.02s in) would finish well before scan releases
+    # it at ~0.1s, giving scan-start/close-start/close-end/scan-end instead.
+    assert order == ["scan-start", "scan-end", "close-start", "close-end"]
+    assert result["ok"] is True
+
+
 def test_prune_removed_strategy_closes_and_drops_the_orphan_slot(paper_env, monkeypatch):
     df5 = paper_env["df5"]
     flat = df5.assign(close=130.0, open=130.0, high=131.0, low=129.0)

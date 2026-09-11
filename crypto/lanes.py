@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
@@ -30,6 +31,15 @@ from crypto.strategies import ny_n_break as nb
 from crypto.strategies.trailing import TrailConfig, bracket_stop_price
 
 logger = logging.getLogger(__name__)
+
+# ponytail: one coarse lock around "read crypto_state.json -> mutate -> write
+# it back (+ journal)" for the whole section, not a per-key one. The only two
+# writers are one ~60s scan cycle and an occasional manual "Close" click from
+# the dashboard, so serializing a whole cycle against a whole manual close is
+# cheap and closes the lost-update / double-journal race outright: a manual
+# close is now atomic with respect to the scan loop, not just with itself.
+# Upgrade to per-key locking only if a real throughput need shows up.
+_STATE_LOCK = threading.Lock()
 
 _ICHI_DAYS = {"15m": 4, "30m": 8, "1h": 15, "2h": 25, "4h": 45, "6h": 60, "1d": 260}
 
@@ -189,7 +199,8 @@ def scan_crypto_paper(client: DeltaClient | None = None) -> list[dict[str, Any]]
     own = client is None
     client = client or DeltaClient(s)
     try:
-        return _scan(s, client)
+        with _STATE_LOCK:  # serialize against a concurrent manual close (see lock docstring)
+            return _scan(s, client)
     except Exception as exc:  # the "never raises" contract — the loop must survive
         logger.warning("crypto scan aborted", exc_info=True)
         return [{"event": "error", "where": "scan", "error": str(exc)}]
@@ -617,6 +628,74 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
     }
 
 
+def close_position_manual(key: str, client: DeltaClient | None = None) -> dict[str, Any]:
+    """The dashboard's manual "Close" button — force-exit one open position
+    right now, at the current mark, instead of waiting for the strategy's own
+    exit or the 1-day hold cap. Richard, 2026-09-11: "there should be a manual
+    exit button for each open trade."
+
+    Reuses the exact same close machinery the automatic paths use
+    (``_live_close`` for a real order, ``_build_exit_row`` for the P&L math
+    and journal row) — this just builds the same ``exit`` event by hand
+    instead of getting it from ``step()`` or the hold-cap check, so a manual
+    close can never compute P&L differently than an automatic one.
+
+    Runs under ``_STATE_LOCK`` — the same lock ``_scan()`` holds for its whole
+    cycle — so this can never interleave with the automatic scan loop reading
+    or writing ``crypto_state.json``/the journal for the same (or any) key.
+    """
+    with _STATE_LOCK:
+        return _close_position_manual_locked(key, client)
+
+
+def _close_position_manual_locked(key: str, client: DeltaClient | None) -> dict[str, Any]:
+    strat, _, sym = key.partition(":")
+    if not strat or not sym:
+        return {"ok": False, "error": f"bad position key {key!r}"}
+
+    s = crypto_settings()
+    client = client or DeltaClient(s)
+    st = journal.load_state()
+    slot = dict(st.get(key) or {})
+    pos = slot.get("position")
+    if not pos:
+        return {"ok": False, "error": f"no open position for {key}"}
+
+    try:
+        mark = float(market_data.ticker(sym, client=client).get("mark_price") or 0)
+    except Exception as exc:
+        return {"ok": False, "error": f"couldn't fetch a live price for {sym}: {exc}"}
+    if mark <= 0:
+        return {"ok": False, "error": f"no live price for {sym} — try again"}
+
+    ev: dict[str, Any] = {
+        "strategy": strat, "asset": sym, "event": "exit",
+        "side": pos["side"], "price": mark, "reason": "manual close",
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    if pos.get("mode") == "live":
+        try:
+            contract = products.all_contracts(client)[sym]
+        except Exception as exc:
+            return {"ok": False, "error": f"contract lookup failed for {sym}: {exc}"}
+        if not _live_close(client, contract, pos, ev):
+            return {"ok": False, "error": "the live close order failed — position is still open, see server log"}
+
+    row = _build_exit_row(ev, slot, strat, sym, _fx_rate(client, s))
+    if row is None:
+        return {"ok": False, "error": "internal error building the exit row"}
+
+    slot["position"] = None
+    if isinstance(slot.get("strategy"), dict):
+        slot["strategy"]["position"] = None
+    st[key] = slot
+    journal.save_state(st)  # persist the close before journalling it
+    if not _already_journalled(row["exit_id"]):
+        journal.journal(row)
+        notify.crypto_closed(row)
+    return {"ok": True, "trade": row}
+
+
 if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
     from dataclasses import replace
 
@@ -628,4 +707,7 @@ if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
     crypto_settings = lambda: off  # noqa: E731 — stub for the self-check
     assert scan_crypto_paper() == []
     assert not enabled()
+
+    assert close_position_manual("not-a-real-key-no-colon")["ok"] is False
+    assert close_position_manual("ny_n_break:NOSUCHPOS")["ok"] is False  # nothing open, no network hit
     print("crypto.lanes self-check ok (all lanes off -> no-op)")
