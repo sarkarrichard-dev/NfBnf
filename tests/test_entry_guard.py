@@ -63,7 +63,9 @@ def test_regime_veto_folds_into_check(monkeypatch):
     quiet = {"regime": "QUIET", "allow_buy": False, "allow_sell": False, "reason": "thin"}
     blocked, why = entry_guard.check("NIFTY", "PAPER", {}, lane="sell", regime_read=quiet)
     assert blocked and "QUIET" in why
-    # HIGH_VOL stands sell down but not buy
+    # the generic gate blocks whichever lane a regime dict says to (regardless
+    # of which regime label it carries) -- real HIGH_VOL no longer sets
+    # allow_sell=False (see test_brain.py), this just proves the mechanism.
     hv = {"regime": "HIGH_VOL", "allow_buy": True, "allow_sell": False, "reason": "wild"}
     assert entry_guard.regime_blocks_lane(hv, "sell")[0]
     assert not entry_guard.regime_blocks_lane(hv, "buy")[0]

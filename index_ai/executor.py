@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
+from index_ai.brain.regime import TIGHTEN_SELL_STOP_KEY
 from index_ai.config import AppSettings
 from index_ai.dhan import DhanClient
 from index_ai.instruments import IndexInstrument, get_instrument
@@ -279,11 +280,19 @@ def execute_plan(
             plan.signal, option_payload, inst.key
         )
         if is_credit_option(option_payload):
+            credit_params = get_strategy_params()
+            if plan.signal.get(TIGHTEN_SELL_STOP_KEY):
+                # HIGH_VOL day (big prior-day range or opening gap) — still sell,
+                # just on a shorter leash than the normal stop.
+                credit_params = replace(
+                    credit_params, credit_stop_loss_pct=credit_params.credit_stop_loss_pct_high_vol
+                )
             option_payload["trail_meta"] = init_credit_trail_meta(
                 option=option_payload,
                 instrument=inst,
                 action=str(plan.signal["action"]),
                 entry_index_price=float(plan.signal["price"]),
+                params=credit_params,
                 supertrend_direction=int(plan.signal.get("supertrend_direction") or 0),
                 supertrend_stop=float(plan.signal.get("supertrend_stop") or 0),
             )

@@ -61,9 +61,10 @@ def test_regime_stands_down_on_high_vol_and_quiet():
 
     r = classify(today, wild, cpr_width_pct=0.2)
     assert r.regime == HIGH_VOL
-    # HIGH_VOL stands the sell lane and futures down but allows directional
-    # buying — range expansion is what a long option is paid for.
-    assert r.allow_buy and not (r.allow_sell or r.allow_futures)
+    # HIGH_VOL stands futures down and allows directional buying — range
+    # expansion is what a long option is paid for. Selling still runs too
+    # (Richard, 2026-09-11), just on a tighter stop (tighten_sell_stop).
+    assert r.allow_buy and r.allow_sell and r.tighten_sell_stop and not r.allow_futures
 
     flat = _day(24010, 24030, 23995, 24010, start="2026-08-29 09:15")
     assert classify(flat, calm, cpr_width_pct=0.7).regime == QUIET
@@ -94,16 +95,20 @@ def test_gate_fails_open_when_model_absent(tmp_path, monkeypatch):
 
 
 def test_gate_blocks_on_stood_down_regime():
-    wild = _day(24000, 24400, 23700, 24100)
-    today = _day(24010, 24120, 23990, 24100, start="2026-08-29 09:15")
-    read = classify(today, wild, cpr_width_pct=0.2)
+    # HIGH_VOL no longer stands the sell lane down (it trades on a tighter
+    # stop instead — see test_regime_stands_down_on_high_vol_and_quiet), so
+    # QUIET is the regime that still fully stands a lane down here.
+    calm = _day(24000, 24060, 23960, 24010)
+    flat = _day(24010, 24030, 23995, 24010, start="2026-08-29 09:15")
+    read = classify(flat, calm, cpr_width_pct=0.7)
+    assert read.regime == QUIET
     v = check(
         {"lane": "sell", "instrument": "NIFTY", "structure": "SELL_ATM_PUT"},
         lane="sell",
         regime=read,
     )
     assert v["allowed"] is False
-    assert "HIGH_VOL" in v["reason"]
+    assert "QUIET" in v["reason"]
 
 
 def test_gate_disabled_by_env(monkeypatch):

@@ -65,6 +65,41 @@ def test_attach_credit_risk_metrics() -> None:
     assert option["max_loss_rupees"] == round(60 * 65, 2)
 
 
+def test_init_credit_trail_meta_uses_the_passed_in_stop_pct() -> None:
+    """A HIGH_VOL day still sells, just on a tighter stop -- executor.py builds
+    a StrategyParams with a lower credit_stop_loss_pct and passes it in; this
+    is the piece of plumbing that actually shrinks the stop."""
+    from dataclasses import replace
+
+    from index_ai.strategies.strategy_params import get_strategy_params
+
+    inst = get_instrument("NIFTY")
+    option = attach_credit_risk_metrics(
+        {"legs": _bull_put_legs(), "structure": "BULL_PUT_SPREAD", "quantity": 65}, inst
+    )
+    normal = get_strategy_params()
+    tightened = replace(normal, credit_stop_loss_pct=normal.credit_stop_loss_pct_high_vol)
+    assert tightened.credit_stop_loss_pct < normal.credit_stop_loss_pct
+
+    meta_normal = init_credit_trail_meta(
+        option=option,
+        instrument=inst,
+        action="SELL_BULL_PUT_SPREAD",
+        entry_index_price=24000.0,
+        params=normal,
+    )
+    meta_tight = init_credit_trail_meta(
+        option=option,
+        instrument=inst,
+        action="SELL_BULL_PUT_SPREAD",
+        entry_index_price=24000.0,
+        params=tightened,
+    )
+    assert meta_tight["stop_loss_pct"] == tightened.credit_stop_loss_pct
+    # a smaller stop_pct on the same max loss -> a smaller rupee stop -> exits sooner
+    assert meta_tight["stop_loss_rupees"] < meta_normal["stop_loss_rupees"]
+
+
 def test_credit_profit_target_exit_when_trail_disabled() -> None:
     inst = get_instrument("NIFTY")
     legs = _bull_put_legs()
