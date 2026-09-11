@@ -20,6 +20,30 @@ def test_paper_open_does_not_block_live_scanner() -> None:
     assert len(open_trades_for_mode("PAPER")) >= 1
 
 
+def test_no_option_reason_echoes_the_real_buy_sell_reasons() -> None:
+    """The generic 'No option selected.' plan reason read like an error with
+    no context — it should surface the actual buy/sell reasons instead."""
+    from index_ai.scanner import _explain_no_option
+
+    reason = _explain_no_option(
+        "NO_TRADE",
+        "No option selected.",
+        {"reason": "No candlestick pattern at support/resistance this bar."},
+        {"reason": "AUTO: bear-call credit blocked — the day is rallying."},
+    )
+    assert reason == (
+        "buy: No candlestick pattern at support/resistance this bar. · "
+        "sell: AUTO: bear-call credit blocked — the day is rallying."
+    )
+
+    # a real (non-generic) plan reason is left alone
+    assert _explain_no_option("NO_TRADE", "Kill switch active.", {}, {}) == "Kill switch active."
+    # a trade that *was* allowed is left alone even if the reason string matches
+    assert _explain_no_option("BUY_CALL", "No option selected.", {}, {}) == "No option selected."
+    # no buy/sell reason available at all -> keep the generic string, not ""
+    assert _explain_no_option("NO_TRADE", "No option selected.", {}, {}) == "No option selected."
+
+
 def test_paper_lane_event_dict_does_not_collide_with_log() -> None:
     """A lane's event dict carries its own "event" key; splatting it into
     _log(event, **fields) used to raise TypeError and kill the whole stage."""

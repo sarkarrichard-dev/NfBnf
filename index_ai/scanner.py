@@ -472,6 +472,21 @@ async def _run_pre_open_brief_if_due(client: DhanClient, cfg: AppSettings) -> No
         pass
 
 
+def _explain_no_option(
+    action: str, plan_reason: Any, buy_data: dict[str, Any], sell_data: dict[str, Any]
+) -> Any:
+    """`plan.reason` defaults to the generic "No option selected." whenever
+    neither lane picked a trade — on its own that reads like an error. Echo
+    the real buy/sell reasons instead, so the "scan" log line is
+    self-explanatory without needing the separate "no_trade" line after it."""
+    if plan_reason != "No option selected." or action != "NO_TRADE":
+        return plan_reason
+    br = str(buy_data.get("reason") or "").strip()
+    sr = str(sell_data.get("reason") or "").strip()
+    parts = [p for p in (f"buy: {br}" if br else "", f"sell: {sr}" if sr else "") if p]
+    return " · ".join(parts) if parts else plan_reason
+
+
 async def _scan_index(
     client: DhanClient,
     cfg: AppSettings,
@@ -497,6 +512,7 @@ async def _scan_index(
     plan_data = result.get("plan") or {}
 
     cpr = result.get("cpr_regime") or {}
+    plan_reason = _explain_no_option(action, plan_data.get("reason"), buy_data, sell_data)
     _log(
         "scan",
         instrument=instrument_key,
@@ -508,7 +524,7 @@ async def _scan_index(
         cpr_width_class=cpr.get("width_class"),
         regime=(result.get("regime_read") or {}).get("regime"),
         plan_allowed=plan_data.get("allowed"),
-        plan_reason=plan_data.get("reason"),
+        plan_reason=plan_reason,
     )
 
     active_mode = cfg.risk.trading_mode
