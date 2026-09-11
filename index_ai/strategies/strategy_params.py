@@ -79,6 +79,11 @@ class StrategyParams:
     auto_buy_trending_only: bool = True
     credit_profit_target_pct: float = 0.50
     credit_stop_loss_pct: float = 0.60
+    # HIGH_VOL regime days only (a big prior-day range or opening gap) — the
+    # sell lane still trades, but on this tighter stop instead of the normal
+    # one. Richard, 2026-09-11: keep selling through a big gap, just cut the
+    # leash short rather than standing the whole lane down.
+    credit_stop_loss_pct_high_vol: float = 0.30
     enable_profit_trail: bool = True
     profit_trail_arm_rupees_per_lot: float = 500.0
     profit_trail_giveback_pct: float = 0.25
@@ -165,6 +170,7 @@ def get_strategy_params() -> StrategyParams:
         auto_buy_trending_only=_bool("AUTO_BUY_TRENDING_ONLY", True),
         credit_profit_target_pct=_float("CREDIT_PROFIT_TARGET_PCT", 0.50),
         credit_stop_loss_pct=_float("CREDIT_STOP_LOSS_PCT", 0.60),
+        credit_stop_loss_pct_high_vol=_float("CREDIT_STOP_LOSS_PCT_HIGH_VOL", 0.30),
         enable_profit_trail=_bool("ENABLE_PROFIT_TRAIL", True),
         profit_trail_arm_rupees_per_lot=_float("PROFIT_TRAIL_ARM_RUPEES_PER_LOT", 500.0),
         profit_trail_giveback_pct=_float("PROFIT_TRAIL_GIVEBACK_PCT", 0.25),
@@ -260,6 +266,12 @@ def strategy_tuning_summary() -> dict[str, object]:
         "buy_block_contra_oi": p.buy_block_contra_oi,
         "credit_profit_target_pct": p.credit_profit_target_pct,
         "credit_stop_loss_pct": p.credit_stop_loss_pct,
+        "credit_stop_loss_pct_high_vol": p.credit_stop_loss_pct_high_vol,
+        "high_vol_note": (
+            "A HIGH_VOL day (big prior-day range or opening gap) no longer stands the "
+            f"sell lane down — it trades on a tighter stop ({p.credit_stop_loss_pct_high_vol:.0%} "
+            f"of max loss instead of the normal {p.credit_stop_loss_pct:.0%})."
+        ),
         "enable_profit_trail": p.enable_profit_trail,
         "profit_trail_arm_rupees_per_lot": p.profit_trail_arm_rupees_per_lot,
         "profit_trail_giveback_pct": p.profit_trail_giveback_pct,
@@ -327,6 +339,7 @@ def strategy_tuning_summary() -> dict[str, object]:
             "CREDIT_SHORT_STRIKE_STEPS",
             "CREDIT_PROFIT_TARGET_PCT",
             "CREDIT_STOP_LOSS_PCT",
+            "CREDIT_STOP_LOSS_PCT_HIGH_VOL",
             "ENABLE_PROFIT_TRAIL",
             "PROFIT_TRAIL_ARM_RUPEES_PER_LOT",
             "PROFIT_TRAIL_GIVEBACK_PCT",

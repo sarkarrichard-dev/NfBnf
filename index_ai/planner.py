@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from index_ai.brain.regime import TIGHTEN_SELL_STOP_KEY
 from index_ai.candles import (
     latest_two_sessions,
     prepare_intraday_signal_frames,
@@ -174,6 +175,7 @@ def plan_instrument(
     )
 
     open_range_pct = (regime_read or {}).get("open_range_pct")
+    tighten_sell_stop = bool((regime_read or {}).get(TIGHTEN_SELL_STOP_KEY))
     for opp, opp_regime in ((buy_opp, cpr_regime), (sell_opp, sell_regime)):
         if not opp:
             continue
@@ -182,6 +184,7 @@ def plan_instrument(
             sig["intraday_trend"] = intraday_trend
             if open_range_pct is not None:
                 sig["open_range_pct"] = open_range_pct
+            sig[TIGHTEN_SELL_STOP_KEY] = tighten_sell_stop
         if not opp.get("option"):
             continue
         tgt, label = _pivot_target(

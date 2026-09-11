@@ -129,8 +129,9 @@ def _viable_sell_blocks(instrument: str) -> tuple[bool, str]:
 
 def regime_blocks_lane(read: dict[str, Any] | None, lane: str) -> tuple[bool, str]:
     """Brain market-regime veto (index_ai/brain/regime.py): QUIET stands both
-    lanes down, RANGE blocks buying, HIGH_VOL blocks selling, TREND allows all.
-    Uses the read's own allow_* flags so it tracks the classifier."""
+    lanes down, RANGE blocks buying, HIGH_VOL allows selling but on a tighter
+    stop (see TIGHTEN_SELL_STOP_KEY), TREND allows all. Uses the read's own
+    allow_* flags so it tracks the classifier."""
     if not read or not _enforce_regime_gate():
         return False, ""
     key = f"allow_{str(lane).lower()}"

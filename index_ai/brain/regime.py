@@ -7,9 +7,12 @@ mapping from regime to lane is well understood mechanically:
 
     TREND      -> directional lanes work, theta-selling into a run gets hurt
     RANGE      -> credit selling works, breakout buying churns
-    HIGH_VOL   -> sell stands down (gaps blow through spread stops, spreads
-                  widen); directional buying is allowed — range expansion is
-                  what a long option is paid for
+    HIGH_VOL   -> selling still runs, but on a tighter stop (a gap or wide
+                  prior-day range can blow through a spread's normal stop, so
+                  the leash shrinks instead of standing the lane down —
+                  Richard, 2026-09-11: "it should not stop... it should still
+                  trade and take selling positions" on a big-gap day, just
+                  more cautiously); directional buying is allowed too
     QUIET      -> premiums too thin for selling to clear friction
 
 Inputs are prior-day and opening-range measurements available before the first
@@ -25,6 +28,11 @@ import pandas as pd
 
 TREND, RANGE, HIGH_VOL, QUIET = "TREND", "RANGE", "HIGH_VOL", "QUIET"
 
+# The signal-dict key planner.py stamps this onto and executor.py reads back
+# off `plan.signal` — a shared constant so the two ends can't drift apart on
+# a typo (they used to be two hand-typed string literals).
+TIGHTEN_SELL_STOP_KEY = "tighten_sell_stop"
+
 
 @dataclass(frozen=True)
 class RegimeRead:
@@ -37,6 +45,10 @@ class RegimeRead:
     allow_sell: bool
     allow_futures: bool
     reason: str
+    # HIGH_VOL only: the sell lane stays open but should use a shrunk stop
+    # (index_ai.strategies.strategy_params.credit_stop_loss_pct_high_vol)
+    # instead of its normal one. False everywhere else.
+    tighten_sell_stop: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -93,10 +105,11 @@ def classify(
             open_range_pct,
             gap_pct,
             True,
-            False,
+            True,
             False,
             f"prior range {prev_range_pct:.2f}% / gap {gap_pct:+.2f}% — "
-            "sell stands down, directional buying allowed (wider moves, tighter stop expected)",
+            "wide/gappy day: selling still runs, on a tighter stop; buying allowed too",
+            tighten_sell_stop=True,
         )
     if prev_range_pct <= QUIET_PREV_RANGE and open_range_pct < TRENDY_OPEN_RANGE * 0.6:
         return RegimeRead(
@@ -172,7 +185,7 @@ if __name__ == "__main__":  # ponytail self-check
     today_trendy = day(24010, 24120, 23990, 24100, start="2026-08-29 09:15")
 
     r = classify(today_trendy, wild, cpr_width_pct=0.2)
-    assert r.regime == HIGH_VOL and not r.allow_sell and r.allow_buy, r
+    assert r.regime == HIGH_VOL and r.allow_sell and r.allow_buy and r.tighten_sell_stop, r
 
     r = classify(today_trendy, calm, cpr_width_pct=0.2)
     assert r.regime == TREND and r.allow_buy and r.allow_futures, r
@@ -189,7 +202,7 @@ if __name__ == "__main__":  # ponytail self-check
 
     gapped = day(24300, 24350, 24250, 24300, start="2026-08-29 09:15")
     r = classify(gapped, calm, cpr_width_pct=0.2)
-    assert r.regime == HIGH_VOL, r  # +1.2% gap
+    assert r.regime == HIGH_VOL and r.tighten_sell_stop, r  # +1.2% gap
 
-    assert allows(r, "sell") is False and allows(r, "unknown_lane") is True
+    assert allows(r, "sell") is True and allows(r, "unknown_lane") is True
     print("regime.py self-check ok")
