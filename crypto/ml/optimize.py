@@ -13,7 +13,17 @@ machine learning and AI", not left at the video defaults. Same discipline as
     ``strategy-findings.md`` "3-day hold optimum whose neighbours flipped" trap.
 
 Output → ``memory/crypto_strategy_params.json``; ``crypto.lanes`` reads it via
-``tuned_params(name)``. ``retune_all()`` runs nightly from the crypto loop.
+``tuned_params(name)``.
+
+Richard (2026-09-12): he does not trust this — it scores parameters against
+*downloaded historical candles*, not real market behaviour, and he wants
+"all testing on live data from the market" instead. So ``retune_all()`` no
+longer runs automatically; it stays available as a manual/diagnostic tool
+(``POST /api/crypto/ml/optimize``, or set ``CRYPTO_BACKTEST_AUTOTUNE=true``
+to restore the nightly run) but its output is not treated as ground truth.
+The trusted path going forward is ``crypto/ml/model.py`` (trains only on the
+real live journal, gates only once it beats trading everything OOS) plus the
+per-(strategy, instrument) Strategy P&L scorecard built from real trades.
 """
 
 from __future__ import annotations
