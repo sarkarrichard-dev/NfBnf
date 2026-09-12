@@ -23,6 +23,8 @@ import { Sparkline } from './Sparkline'
 import { CryptoSetupPanel } from './CryptoSetupPanel'
 import { CryptoExecutionPanel } from './CryptoExecutionPanel'
 import { CryptoDayReviewPanel } from './CryptoDayReviewPanel'
+import { TradeLogTable } from './TradeLogTable'
+import { cryptoToLogRows, cryptoToTradeRows } from '../lib/cryptoRows'
 
 type Status = {
   lanes: {
@@ -383,55 +385,14 @@ export function CryptoPanel() {
         )}
       </section>
 
-      {/* trade history — the selected period / range */}
-      <section className={cn(fx.panel, 'p-4')}>
-        <h3 className="mb-3 text-sm font-semibold text-cyan-50/95">
-          Trade history <span className="text-cyan-200/45">({rows.length})</span>
-        </h3>
-        {rows.length ? (
-          <div className="max-h-[28rem] overflow-auto rounded-lg border border-[var(--hair)] bg-black/25">
-            <table className="min-w-full text-xs">
-              <thead className="sticky top-0 z-10 bg-slate-950/95 text-cyan-200/50">
-                <tr className="border-b border-slate-800 [&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
-                  <th>Day</th>
-                  <th>Asset</th>
-                  <th>Strategy</th>
-                  <th>Side</th>
-                  <th>Entry → Exit</th>
-                  <th>P&L</th>
-                  <th>Reason</th>
-                </tr>
-              </thead>
-              <tbody className="font-mono">
-                {[...rows].reverse().map((t, i) => (
-                  <tr
-                    key={i}
-                    className="border-b border-slate-800/60 text-slate-200 [&>td]:px-3 [&>td]:py-2"
-                  >
-                    <td className="text-slate-500">{t.day}</td>
-                    <td>{t.asset}</td>
-                    <td className="text-slate-400">{t.strategy}</td>
-                    <td className={t.side === 'long' ? 'text-[var(--up)]' : 'text-[var(--down)]'}>
-                      {t.side}
-                    </td>
-                    <td className="text-slate-400 tabular-nums">
-                      ${num(t.entry_price)} → ${num(t.exit_price)}
-                    </td>
-                    <td className={cn('tabular-nums', pnlCls(t.pnl_usd))}>
-                      {usd(t.pnl_usd)} <span className="text-slate-600">{inr(t.pnl_inr)}</span>
-                    </td>
-                    <td className="text-slate-500">{t.exit_reason ?? ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-sm text-cyan-200/45">
-            {allTrades.length ? 'No trades in this period.' : 'No closed trades yet.'}
-          </p>
-        )}
-      </section>
+      {/* trade history — same shared table + entry/exit times as every other
+          section (Index, Futures, Commodities) and the combined Trade History tab */}
+      <TradeLogTable
+        logRows={cryptoToLogRows(allTrades)}
+        trades={cryptoToTradeRows(allTrades)}
+        period={period}
+        range={range}
+      />
 
       {s?.ml ? <LearningRow ml={s.ml} /> : null}
 

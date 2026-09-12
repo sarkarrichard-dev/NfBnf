@@ -1,8 +1,13 @@
+import { useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
+import { useCommoditiesJournal } from '../hooks/useCommoditiesJournal'
 import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
+import type { DateRange, PeriodKey } from '../types/analytics'
+import { PeriodBar } from './PeriodBar'
+import { TradeLogTable } from './TradeLogTable'
 
 type OpenPos = {
   dir?: string
@@ -73,6 +78,10 @@ export function CommoditiesPanel() {
   })
   const s = q.data
   const opens = Object.entries(s?.open_positions ?? {}).filter(([, p]) => p)
+
+  const [period, setPeriod] = useState<PeriodKey>('month')
+  const [range, setRange] = useState<DateRange>({ from: '', to: '' })
+  const journal = useCommoditiesJournal(true)
 
   return (
     <div className={cn(fx.panel, 'space-y-5 p-4')}>
@@ -167,40 +176,20 @@ export function CommoditiesPanel() {
         </div>
       ) : null}
 
-      <div>
-        <p className={fx.cardLabel}>Recent trades</p>
-        {s?.recent_trades?.length ? (
-          <div className="mt-1 overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-[12px]">
-              <thead className="text-[10.5px] uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="py-1 pr-2">Instrument</th>
-                  <th className="py-1 pr-2">Dir</th>
-                  <th className="py-1 pr-2 text-right">Entry</th>
-                  <th className="py-1 pr-2 text-right">Exit</th>
-                  <th className="py-1 pr-2">Reason</th>
-                  <th className="py-1 pr-2 text-right">Net</th>
-                </tr>
-              </thead>
-              <tbody className="tabular-nums">
-                {s.recent_trades.slice(0, 15).map((t, i) => (
-                  <tr key={i} className="border-t border-[var(--hair-soft)]">
-                    <td className="py-1 pr-2 text-slate-200">{t.label || t.instrument}</td>
-                    <td className="py-1 pr-2 text-slate-400">{(t.direction || '').toUpperCase()}</td>
-                    <td className="py-1 pr-2 text-right text-slate-400">{t.entry?.toFixed(1)}</td>
-                    <td className="py-1 pr-2 text-right text-slate-400">{t.exit?.toFixed(1)}</td>
-                    <td className="py-1 pr-2 text-slate-500">{t.exit_reason}</td>
-                    <td className={cn('py-1 pr-2 text-right font-semibold', pnlClass(t.net_rupees))}>
-                      {rupee(t.net_rupees)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="mt-1 text-[11px] text-slate-600">No trades yet.</p>
-        )}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className={fx.cardLabel}>Trade history</p>
+          <PeriodBar period={period} onPeriodChange={setPeriod} range={range} onRangeChange={setRange} />
+        </div>
+        {/* same shared table + entry/exit times as every other section (Index,
+            Crypto, Futures) and the combined Trade History tab */}
+        <TradeLogTable
+          logRows={journal.logRows}
+          trades={journal.trades}
+          period={period}
+          range={range}
+          hideTitle
+        />
       </div>
 
       <p className="text-[11px] leading-relaxed text-slate-600">
