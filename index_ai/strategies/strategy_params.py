@@ -9,6 +9,7 @@ from functools import lru_cache
 from dotenv import load_dotenv
 
 from index_ai.config import ENV_PATH
+from index_ai.env import env_bool as _bool, env_float as _float, env_int as _int
 
 
 @dataclass(frozen=True)
@@ -87,27 +88,6 @@ class StrategyParams:
     enable_profit_trail: bool = True
     profit_trail_arm_rupees_per_lot: float = 500.0
     profit_trail_giveback_pct: float = 0.25
-
-
-def _bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except ValueError:
-        return default
-
-
-def _float(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except ValueError:
-        return default
 
 
 @lru_cache(maxsize=1)

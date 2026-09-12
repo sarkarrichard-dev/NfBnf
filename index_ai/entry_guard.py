@@ -26,15 +26,8 @@ import os
 from datetime import datetime
 from typing import Any
 
+from index_ai.env import env_int as _int
 from index_ai.market_clock import now_ist, parse_ist_datetime, today_ist_date
-
-
-def _int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, "").strip() or default)
-    except ValueError:
-        return default
-
 
 REENTRY_COOLDOWN_MIN = _int("ENTRY_REENTRY_COOLDOWN_MIN", 4)
 CHOP_CLOSES_PER_HOUR = _int("ENTRY_CHOP_CLOSES_PER_HOUR", 3)
