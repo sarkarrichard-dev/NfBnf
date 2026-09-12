@@ -51,7 +51,7 @@ def test_epoch_filter_drops_pre_epoch_rows(monkeypatch):
 def test_fresh_start_aborts_when_a_safety_probe_raises(monkeypatch, capsys):
     monkeypatch.setattr(fs, "_server_running", lambda: False)
 
-    def boom():
+    def boom(sections):
         raise fs._SafetyProbeFailed("db is locked")
 
     monkeypatch.setattr(fs, "_live_positions_open", boom)
@@ -83,7 +83,9 @@ def test_live_probe_flags_a_live_sent_row(monkeypatch):
         ],
     )
     monkeypatch.setattr("crypto.day_review.open_positions", lambda: [])
-    assert fs._live_positions_open() == ["index NIFTY SELL_BULL_PUT_SPREAD (LIVE_SENT)"]
+    assert fs._live_positions_open(["index"]) == ["index NIFTY SELL_BULL_PUT_SPREAD (LIVE_SENT)"]
+    # a section not being reset isn't even probed
+    assert fs._live_positions_open(["futures"]) == []
 
 
 def test_live_probe_raises_not_returns_empty_on_error(monkeypatch):
@@ -94,4 +96,51 @@ def test_live_probe_raises_not_returns_empty_on_error(monkeypatch):
 
     monkeypatch.setattr(learning, "open_trades", boom)
     with pytest.raises(fs._SafetyProbeFailed):
-        fs._live_positions_open()
+        fs._live_positions_open(["index"])
+
+
+def test_scoped_reset_touches_only_the_chosen_sections(tmp_path, monkeypatch):
+    """Richard, 2026-09-12: reset crypto/futures/commodities without touching
+    the already-reset index side. The index journal, its trained model, and
+    another section's files must all survive a crypto-only reset untouched."""
+    monkeypatch.setattr(fs, "MEMORY_DIR", tmp_path)
+    monkeypatch.setattr(fs, "_server_running", lambda: False)
+    monkeypatch.setattr(fs, "_live_positions_open", lambda sections: [])
+
+    (tmp_path / "models").mkdir()
+    index_files = ["trade_memory.sqlite", "models/brain_model.joblib", "day_review.json"]
+    crypto_files = ["crypto_journal.jsonl", "crypto_state.json", "models/crypto_model.joblib"]
+    futures_files = ["futures_journal.jsonl", "futures_paper.json"]
+    commodity_files = ["commodity_journal.jsonl", "commodity_state.json"]
+    kept_market_data = ["commodity_universe.json", "crypto_products.json"]
+    for name in index_files + crypto_files + futures_files + commodity_files + kept_market_data:
+        (tmp_path / name).write_text("x", encoding="utf-8")
+
+    assert {p.name for p in fs._targets(["crypto"])} == {
+        "crypto_journal.jsonl",
+        "crypto_state.json",
+        "crypto_model.joblib",
+    }
+
+    rc = fs.main(["--sections", "crypto,futures,commodities", "--commit"])
+    assert rc == 0
+
+    # the reset sections are gone from their live location, EXCEPT the
+    # journal files, which get recreated empty (see the assertions below)
+    reset_journals = {"crypto_journal.jsonl", "futures_journal.jsonl", "commodity_journal.jsonl"}
+    for name in crypto_files + futures_files + commodity_files:
+        if name in reset_journals:
+            continue
+        assert not (tmp_path / name).exists(), f"{name} should have been archived away"
+    # ...but every index file, and the untouched market-data caches, survive
+    for name in index_files + kept_market_data:
+        assert (tmp_path / name).exists(), f"{name} should NOT have been touched"
+    # the data epoch file must not exist -- this reset never called set_data_epoch()
+    assert not (tmp_path / "data_epoch.txt").exists()
+    # a fresh empty journal exists for each reset section, ready for the next trade
+    assert (tmp_path / "crypto_journal.jsonl").read_text(encoding="utf-8") == ""
+    assert (tmp_path / "futures_journal.jsonl").read_text(encoding="utf-8") == ""
+    assert (tmp_path / "commodity_journal.jsonl").read_text(encoding="utf-8") == ""
+    # everything really did land in the archive, nested under its real path
+    archived = list((tmp_path / "archive").rglob("*"))
+    assert any(p.name == "crypto_model.joblib" and p.parent.name == "models" for p in archived)
