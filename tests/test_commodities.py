@@ -113,6 +113,76 @@ def test_lane_plumbing_open_then_close(tmp_path, monkeypatch):
     )
 
 
+def test_atr_scaled_spec_scales_the_stop_to_each_contracts_own_volatility(monkeypatch):
+    """Richard, 2026-09-12: gold and silver don't move the same amount, so one
+    flat stop-loss percentage for every commodity is wrong for at least some
+    of them. A calmer measured instrument must come out tighter than a wilder
+    one, using the same numbers actually measured off real MCX daily bars."""
+    monkeypatch.setattr(lanes, "_atr_cache", {})  # isolate from other tests
+
+    def fake_measure(spec, security_id, client):
+        return {"GOLDM": 1.56, "CRUDEOILM": 3.98}.get(spec.key)
+
+    monkeypatch.setattr(lanes, "_measure_daily_atr_pct", fake_measure)
+
+    calm = lanes.atr_scaled_spec(BY_KEY["GOLDM"], 1, client=object())
+    wild = lanes.atr_scaled_spec(BY_KEY["CRUDEOILM"], 2, client=object())
+    assert calm.initial_stop_pct < wild.initial_stop_pct
+    assert calm.initial_stop_pct == round(lanes.ATR_K_INITIAL_STOP * 1.56, 3)
+    assert calm.trail_pct == round(lanes.ATR_K_TRAIL * 1.56, 3)
+    # everything else on the spec (multiplier, tick, label...) is untouched
+    assert calm.multiplier == BY_KEY["GOLDM"].multiplier and calm.label == BY_KEY["GOLDM"].label
+
+    # a fresh call within the 24h TTL must not re-measure
+    monkeypatch.setattr(
+        lanes,
+        "_measure_daily_atr_pct",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("shouldn't refetch")),
+    )
+    again = lanes.atr_scaled_spec(BY_KEY["GOLDM"], 1, client=object())
+    assert again.initial_stop_pct == calm.initial_stop_pct
+
+    # measurement never available -> the static spec, unchanged, not a crash
+    monkeypatch.setattr(lanes, "_atr_cache", {})
+    monkeypatch.setattr(lanes, "_measure_daily_atr_pct", lambda *a, **k: None)
+    fallback = lanes.atr_scaled_spec(BY_KEY["SILVERMIC"], 3, client=object())
+    assert fallback == BY_KEY["SILVERMIC"]
+
+
+def test_tick_opens_a_position_using_the_atr_scaled_stop(monkeypatch):
+    """The whole point: a live scan must actually use the measured stop, not
+    silently keep the old flat guess."""
+    from index_ai.strategies.futures.engine import LONG, TrendRead
+
+    monkeypatch.setattr(lanes, "_atr_cache", {})
+    monkeypatch.setattr(
+        lanes, "_measure_daily_atr_pct", lambda spec, sid, client: 1.56
+    )  # GOLDM-like
+    monkeypatch.setattr(lanes, "entries_open", lambda *a, **k: True)
+    monkeypatch.setattr(lanes, "past_squareoff", lambda *a, **k: False)
+
+    n = 400
+    idx = pd.date_range("2026-06-01 09:00", periods=n, freq="5min")
+    c = 6000.0 + np.linspace(0, 40, n)
+    frame = pd.DataFrame(
+        {"datetime": idx, "open": c, "high": c + 2, "low": c - 2, "close": c, "volume": [50.0] * n}
+    )
+    monkeypatch.setattr(lanes, "_fetch", lambda client, spec, sid, interval: frame)
+    monkeypatch.setattr(
+        lanes, "trend_read", lambda *a, **k: TrendRead(LONG, c[-1] - 10, 1, 1, 1, c[0], "forced")
+    )
+    monkeypatch.setattr(lanes, "entry_trigger", lambda *a, **k: (True, "forced"))
+
+    spec = BY_KEY["GOLDM"]  # static default is 0.45%, ATR-scaled should differ
+    ev = lanes.tick(object(), spec, 1, lanes.commodity_settings(), {}, 0)
+    assert ev["event"] == "entry"
+    pos = ev["position"]
+    expected_stop_pct = round(lanes.ATR_K_INITIAL_STOP * 1.56, 3)
+    assert expected_stop_pct != spec.initial_stop_pct  # the fixture is a real change, not a no-op
+    implied_pct = abs(pos["entry"] - pos["stop"]) / pos["entry"] * 100.0
+    assert implied_pct == pytest.approx(expected_stop_pct, abs=0.01)
+
+
 def test_status_reports_mtm_for_an_open_position(tmp_path, monkeypatch):
     """commodities_status() must attach a live mark + unrealized P&L to an open
     position — this is what the dashboard's MTM grid reads. Regression for the

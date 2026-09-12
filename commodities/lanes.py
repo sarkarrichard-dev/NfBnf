@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import time as _time
+from dataclasses import replace
 from typing import Any
 
 import pandas as pd
@@ -116,6 +117,83 @@ def _fetch(client: DhanClient, spec: CommoditySpec, security_id: int, interval: 
     return frame
 
 
+# ---- ATR-scaled risk ------------------------------------------------------
+#
+# Richard, 2026-09-12: "each script has its own way of moving... for gold the
+# 0.45 is very small but for silver it may be very big... we need the
+# flexibility to save capital [without] restricting the stop loss to a
+# certain percentage which may be less for some scripts but way more for
+# others." Measured (2026-09-12, 90 real MCX daily bars, median daily true
+# range as % of price): CRUDEOILM ~3.98%, NATGASMINI ~3.06%, SILVERMIC
+# ~2.45%, GOLDM ~1.56% — a 2.5x spread between the calmest and the wildest,
+# so one flat percentage across all four was always going to be wrong for at
+# least some of them.
+#
+# The ratios below are not new or unproven — they're the same point-to-ATR
+# ratios the stock-futures lane already runs live with
+# (index_ai/strategies/futures/stock_config.py), just applied to each
+# commodity's own measured *percent* volatility instead of absolute points
+# (gold at ~₹1,50,000 and gas at ~₹270 aren't comparable in rupees).
+ATR_K_INITIAL_STOP = 0.22
+ATR_K_TRAIL_ACTIVATE = 0.22
+ATR_K_TRAIL = 0.40
+ATR_K_DAILY_STOP = 0.55
+_ATR_TTL_S = 24 * 3600.0  # volatility drifts slowly; no need to re-measure every scan
+_atr_cache: dict[str, tuple[float, float]] = {}  # key -> (measured_at_monotonic, atr_pct)
+
+
+def _measure_daily_atr_pct(spec: CommoditySpec, security_id: int, client: DhanClient) -> float | None:
+    """Median daily true range as % of that day's close, over ~90 calendar
+    days of real MCX daily candles. None on any failure — callers fall back
+    to a stale cached value, or the spec's own static guess; never raises."""
+    now = now_ist()
+    try:
+        raw = client.historical_daily(
+            candle_instrument(spec, security_id),
+            from_date=(now - pd.Timedelta(days=90)).strftime("%Y-%m-%d"),
+            to_date=now.strftime("%Y-%m-%d"),
+        )
+        df = chart_response_to_frame(raw)
+    except Exception:
+        return None
+    if df is None or df.empty or len(df) < 10:
+        return None
+    prev_close = df["close"].shift()
+    tr = pd.concat(
+        [df["high"] - df["low"], (df["high"] - prev_close).abs(), (df["low"] - prev_close).abs()],
+        axis=1,
+    ).max(axis=1).dropna()
+    if tr.empty:
+        return None
+    pct = float((tr / df["close"]).median() * 100.0)
+    return pct if pct > 0 else None
+
+
+def atr_scaled_spec(spec: CommoditySpec, security_id: int, client: DhanClient) -> CommoditySpec:
+    """``spec`` with its four risk-percent fields replaced by ones scaled off
+    this contract's own measured daily volatility, instead of the one
+    hand-picked guess every instrument shared before. Cached 24h. Falls back
+    to the last successful measurement, or to ``spec`` unchanged if one has
+    never succeeded — never blocks a scan over a Dhan hiccup."""
+    hit = _atr_cache.get(spec.key)
+    now = _time.monotonic()
+    atr = hit[1] if hit and now - hit[0] < _ATR_TTL_S else None
+    if atr is None:
+        measured = _measure_daily_atr_pct(spec, security_id, client)
+        atr = measured if measured is not None else (hit[1] if hit else None)
+        if atr is not None:
+            _atr_cache[spec.key] = (now, atr)
+    if atr is None:
+        return spec
+    return replace(
+        spec,
+        initial_stop_pct=round(ATR_K_INITIAL_STOP * atr, 3),
+        trail_activate_pct=round(ATR_K_TRAIL_ACTIVATE * atr, 3),
+        trail_pct=round(ATR_K_TRAIL * atr, 3),
+        daily_stop_pct=round(ATR_K_DAILY_STOP * atr, 3),
+    )
+
+
 def _sessions(df: pd.DataFrame) -> dict[Any, pd.DataFrame]:
     if df.empty:
         return {}
@@ -193,6 +271,7 @@ def tick(
     state: dict[str, Any], open_total: int,
 ) -> dict[str, Any]:
     key = spec.key
+    spec = atr_scaled_spec(spec, security_id, client)  # this instrument's own measured risk, not a flat guess
     ev: dict[str, Any] = {"instrument": key, "event": "none"}
     slot = state.setdefault(key, {"position": None})
     pos = slot.get("position")
@@ -320,6 +399,25 @@ def _mark_price(client: DhanClient, spec: CommoditySpec, security_id: int | None
         return None
 
 
+def _contract_status(key: str, meta: dict[str, Any], client: DhanClient) -> dict[str, Any]:
+    row = meta.get(key) or {}
+    spec = BY_KEY.get(key)
+    if not spec:
+        return {"label": key}
+    effective = atr_scaled_spec(spec, row.get("security_id"), client) if row.get("security_id") else spec
+    return {
+        "label": spec.label,
+        "expiry": row.get("expiry"),
+        "trading_symbol": row.get("trading_symbol"),
+        "multiplier": spec.multiplier,
+        "initial_stop_pct": effective.initial_stop_pct,
+        "trail_activate_pct": effective.trail_activate_pct,
+        "trail_pct": effective.trail_pct,
+        "daily_stop_pct": effective.daily_stop_pct,
+        "risk_source": "measured" if effective is not spec else "default",
+    }
+
+
 def commodities_status() -> dict[str, Any]:
     s = commodity_settings()
     state = _load_state()
@@ -357,13 +455,7 @@ def commodities_status() -> dict[str, Any]:
         "symbols": list(s.symbols),
         "lots": s.lots,
         "contracts": {
-            k: {
-                "label": BY_KEY[k].label if k in BY_KEY else k,
-                "expiry": (meta.get(k) or {}).get("expiry"),
-                "trading_symbol": (meta.get(k) or {}).get("trading_symbol"),
-                "multiplier": BY_KEY[k].multiplier if k in BY_KEY else None,
-            }
-            for k in s.symbols
+            k: _contract_status(k, meta, client) for k in s.symbols
         },
         "open_positions": open_positions,
         "today": {
@@ -385,4 +477,16 @@ if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
     os.environ["ENABLE_COMMODITIES_PAPER"] = "false"
     assert scan_commodities_paper() == []
     assert not enabled()
-    print("commodities.lanes self-check ok (disabled -> no-op)")
+
+    # ATR scaling: a calmer instrument (small measured %) must come out with
+    # a tighter stop than a wilder one (large measured %) -- the whole point.
+    calm, wild = BY_KEY["GOLDM"], BY_KEY["CRUDEOILM"]
+    _atr_cache["GOLDM"] = (_time.monotonic(), 1.56)  # ~measured 2026-09-12
+    _atr_cache["CRUDEOILM"] = (_time.monotonic(), 3.98)
+    calm_scaled = atr_scaled_spec(calm, 1, client=None)  # cache hit -> no network
+    wild_scaled = atr_scaled_spec(wild, 2, client=None)
+    assert calm_scaled.initial_stop_pct < wild_scaled.initial_stop_pct
+    assert calm_scaled.initial_stop_pct == round(ATR_K_INITIAL_STOP * 1.56, 3)
+    # a measurement that never succeeds falls back to the static default untouched
+    assert atr_scaled_spec(BY_KEY["SILVERMIC"], None, client=None) == BY_KEY["SILVERMIC"]
+    print("commodities.lanes self-check ok (disabled -> no-op; ATR scaling sane)")

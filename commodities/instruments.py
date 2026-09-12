@@ -33,6 +33,13 @@ class CommoditySpec:
     multiplier: float        # ₹ P&L per 1.0 price move, per lot
     tick: float              # min price increment (₹)
     dst_session: bool        # evening close tracks US DST (23:55 in summer)
+    # The four risk fields below are the *fallback* only — one guess per
+    # instrument, hand-picked when this section was built. lanes.py's
+    # atr_scaled_spec() overrides all four every scan with numbers measured
+    # from that contract's own real daily volatility (a flat guess treats
+    # gold and silver the same even though gold moves ~2.5x less per day —
+    # see commodities/lanes.py's ATR_K_* constants). These only take effect
+    # if a fresh measurement was never available.
     initial_stop_pct: float  # % of entry price
     trail_activate_pct: float
     trail_pct: float
