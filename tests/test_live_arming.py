@@ -77,3 +77,17 @@ def test_feature_flags_cannot_toggle_anything_financial(monkeypatch):
         with pytest.raises(ValueError):
             set_feature_flag(forbidden, True)
     assert any(f["flag"] == "ENABLE_TICK_FEED" for f in feature_flags())
+
+
+def test_commodities_toggle_shows_on_when_env_unset(monkeypatch):
+    """Richard, 2026-09-12: the Settings tab showed ENABLE_COMMODITIES_PAPER as
+    off while the Commodities tab said "running · paper" -- feature_flags()'s
+    own default_on set had been left out of step with
+    commodities.config.commodity_settings()'s real default (True when unset)."""
+    from commodities.config import commodity_settings
+
+    monkeypatch.delenv("ENABLE_COMMODITIES_PAPER", raising=False)
+    assert commodity_settings().enabled is True
+    row = next(f for f in feature_flags() if f["flag"] == "ENABLE_COMMODITIES_PAPER")
+    assert row["enabled"] is True
+    assert row["set_in_env"] is False
