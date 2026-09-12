@@ -1,7 +1,3 @@
-import { useQuery } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { usePollMs } from '../hooks/usePageVisible'
-
 export type LaneStatus = {
   enabled?: boolean
   instruments?: string[]
@@ -68,81 +64,5 @@ export function LaneCard({ title, data }: { title: string; data?: LaneStatus }) 
         </ul>
       ) : null}
     </section>
-  )
-}
-
-export function LanesPanel() {
-  const poll = usePollMs(20_000)
-
-  const futures = useQuery({
-    queryKey: ['lane-futures'],
-    queryFn: () => api<LaneStatus>('/api/futures/status'),
-    refetchInterval: poll,
-  })
-
-  const recent = [...(futures.data?.recent_trades ?? [])]
-    .sort((a, b) => String(b.exit_time ?? '').localeCompare(String(a.exit_time ?? '')))
-    .slice(0, 8)
-
-  return (
-    <div className="space-y-3">
-      <div className="grid gap-3">
-        <LaneCard title="Directional futures (paper)" data={futures.data} />
-      </div>
-      <p className="text-xs text-slate-500">
-        Index options run through the live execution engine — see Trade History (source: index) for their P&amp;L.
-      </p>
-
-      {recent.length ? (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="text-slate-500">
-              <tr>
-                <th className="py-1 pr-3 font-medium">Exit</th>
-                <th className="py-1 pr-3 font-medium">Instrument</th>
-                <th className="py-1 pr-3 font-medium">Structure</th>
-                <th className="py-1 pr-3 font-medium">Reason</th>
-                <th className="py-1 pr-3 text-right font-medium">Gross</th>
-                <th className="py-1 pr-3 text-right font-medium">Charges</th>
-                <th className="py-1 text-right font-medium">Net</th>
-              </tr>
-            </thead>
-            <tbody className="text-slate-300">
-              {recent.map((t, i) => {
-                const net = Number(t.net_rupees ?? 0)
-                const br = (t.charges_breakdown ?? {}) as Record<string, number>
-                const chargeTip = Object.entries(br)
-                  .filter(([k]) => k !== 'total')
-                  .map(([k, v]) => `${k}: ₹${Number(v).toFixed(2)}`)
-                  .join('\n')
-                return (
-                  <tr key={i} className="border-t border-slate-800/60">
-                    <td className="py-1 pr-3 font-mono">{String(t.exit_time ?? '').slice(11, 16)}</td>
-                    <td className="py-1 pr-3">{String(t.instrument ?? '')}</td>
-                    <td className="py-1 pr-3">{String(t.structure ?? t.side ?? t.direction ?? '')}</td>
-                    <td className="py-1 pr-3 text-slate-400">{String(t.exit_reason ?? '')}</td>
-                    <td className="py-1 pr-3 text-right font-mono">{rupees(Number(t.gross_rupees ?? 0))}</td>
-                    <td
-                      className="py-1 pr-3 text-right font-mono text-slate-400"
-                      title={chargeTip || undefined}
-                    >
-                      {rupees(Number(t.friction_rupees ?? 0))}
-                    </td>
-                    <td className={`py-1 text-right font-mono font-semibold ${pnlClass(net)}`}>
-                      {rupees(net)}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="text-sm text-slate-500">
-          No futures paper trades logged yet. Enable the lane with ENABLE_FUTURES_PAPER
-          or ENABLE_STOCK_FUTURES_PAPER.
-        </p>
-      )}
-    </div>
   )
 }

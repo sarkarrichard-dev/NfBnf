@@ -47,9 +47,6 @@ const BrainPanel = lazy(() =>
 const FeaturesPanel = lazy(() =>
   import('./components/FeaturesPanel').then((m) => ({ default: m.FeaturesPanel })),
 )
-const LanesPanel = lazy(() =>
-  import('./components/LanesPanel').then((m) => ({ default: m.LanesPanel })),
-)
 const DayReviewPanel = lazy(() =>
   import('./components/DayReviewPanel').then((m) => ({ default: m.DayReviewPanel })),
 )
@@ -295,19 +292,12 @@ function App() {
             />
           </Suspense>
           {status.data?.ui?.strategy_internals !== false ? (
-            <div className="mt-8 grid gap-6 xl:grid-cols-[1.6fr,1fr]">
-              <CollapsibleSection title="Strategy lanes (paper) — legacy view">
+            <div className="mt-8">
+              <CollapsibleSection title="AI brain & ML gate">
                 <Suspense fallback={<PanelFallback />}>
-                  <LanesPanel />
+                  <BrainPanel />
                 </Suspense>
               </CollapsibleSection>
-              <aside className="space-y-4">
-                <CollapsibleSection title="AI brain & ML gate">
-                  <Suspense fallback={<PanelFallback />}>
-                    <BrainPanel />
-                  </Suspense>
-                </CollapsibleSection>
-              </aside>
             </div>
           ) : null}
         </>

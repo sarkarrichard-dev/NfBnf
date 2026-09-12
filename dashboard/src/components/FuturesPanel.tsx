@@ -1,9 +1,14 @@
+import { useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
+import { useFuturesJournal } from '../hooks/useFuturesJournal'
 import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
+import type { DateRange, PeriodKey } from '../types/analytics'
 import { LaneCard, pnlClass, rupees, type LaneStatus } from './LanesPanel'
+import { PeriodBar } from './PeriodBar'
+import { TradeLogTable } from './TradeLogTable'
 
 type Agg = {
   trades?: number
@@ -113,45 +118,6 @@ function PerStockTable({ rows }: { rows: [string, Agg][] }) {
   )
 }
 
-function RecentTrades({ trades }: { trades: Record<string, unknown>[] }) {
-  const rows = [...trades]
-    .sort((a, b) => String(b.exit_time ?? '').localeCompare(String(a.exit_time ?? '')))
-    .slice(0, 12)
-  if (!rows.length) return <p className="text-xs text-slate-500">No paper trades logged yet.</p>
-  return (
-    <div className="overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
-      <table className="min-w-full text-xs">
-        <thead className="text-slate-400">
-          <tr className="border-b border-slate-800 [&>th]:px-3 [&>th]:py-2 [&>th]:font-medium">
-            <th className="text-left">Exit</th>
-            <th className="text-left">Instrument</th>
-            <th className="text-left">Dir</th>
-            <th className="text-left">Reason</th>
-            <th className="text-right">Gross</th>
-            <th className="text-right">Charges</th>
-            <th className="text-right">Net</th>
-          </tr>
-        </thead>
-        <tbody className="font-mono text-slate-300">
-          {rows.map((t, i) => {
-            const net = Number(t.net_rupees ?? 0)
-            return (
-              <tr key={i} className="border-b border-slate-800/60 [&>td]:px-3 [&>td]:py-1.5">
-                <td>{String(t.exit_time ?? '').slice(0, 16)}</td>
-                <td className="font-sans">{String(t.instrument ?? '')}</td>
-                <td>{String(t.direction ?? t.side ?? '')}</td>
-                <td className="text-slate-500">{String(t.exit_reason ?? '')}</td>
-                <td className="text-right">{rupees(Number(t.gross_rupees ?? 0))}</td>
-                <td className="text-right text-slate-400">{rupees(Number(t.friction_rupees ?? 0))}</td>
-                <td className={cn('text-right font-semibold', pnlClass(net))}>{rupees(net)}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
-  )
-}
 
 export function FuturesPanel() {
   const poll = usePollMs(20_000)
@@ -166,6 +132,9 @@ export function FuturesPanel() {
     queryFn: () => api<BacktestResponse>('/api/futures/backtest'),
     staleTime: Infinity,
   })
+  const [period, setPeriod] = useState<PeriodKey>('month')
+  const [range, setRange] = useState<DateRange>({ from: '', to: '' })
+  const journal = useFuturesJournal(true)
 
   const bt = backtest.data?.stock
   const perStock = Object.entries(bt?.per_stock ?? {}).sort(
@@ -181,7 +150,19 @@ export function FuturesPanel() {
       <section className={cn(fx.panel, 'space-y-3 p-4')}>
         <h3 className="text-sm font-bold text-slate-100">Directional index-futures — paper lane</h3>
         <LaneCard title="Directional futures (paper)" data={status.data} />
-        <RecentTrades trades={status.data?.recent_trades ?? []} />
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className={fx.cardLabel}>Trade history</p>
+          <PeriodBar period={period} onPeriodChange={setPeriod} range={range} onRangeChange={setRange} />
+        </div>
+        {/* same shared table + entry/exit times as every other section (Index,
+            Crypto, Commodities) and the combined Trade History tab */}
+        <TradeLogTable
+          logRows={journal.logRows}
+          trades={journal.trades}
+          period={period}
+          range={range}
+          hideTitle
+        />
       </section>
 
       {/* stock-futures backtest */}
