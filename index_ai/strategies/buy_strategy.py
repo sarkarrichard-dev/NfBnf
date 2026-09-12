@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from index_ai.options_oi import OptionOiContext
 from index_ai.strategies.bar_volume import volume_confirms
 from index_ai.strategies.candlestick_patterns import detect_candlestick_setup
 from index_ai.strategies.cpr_regime import CprRegime
@@ -22,12 +23,18 @@ def evaluate_buy_signal(
     regime: CprRegime,
     *,
     params: StrategyParams | None = None,
+    oi: OptionOiContext | None = None,
 ) -> StrategySignal:
     """
-    Option buying from OHLC patterns + candle support/resistance.
+    Option buying from OHLC patterns + support/resistance.
 
     CPR regime is attached for dashboard context but does NOT block mid-day
-    trending patterns that develop from candle structure.
+    trending patterns that develop from candle structure. ``oi`` (Richard,
+    2026-09-12) supplies the real option-chain OI walls — when present and not
+    crossed, those replace the naive candle-range S/R for near/far checks, same
+    as the sell lane already does. Breakout continuation patterns also now
+    require ``entry_confirmation_bars`` consecutive closes beyond the level
+    (not a single-bar poke) to reject fake breakouts before they're taken.
     """
     cfg = params or get_strategy_params()
     pattern_lb = min(int(cfg.breakout_lookback), 30)
@@ -42,11 +49,16 @@ def evaluate_buy_signal(
     ema_slow = float(row["ema_slow"])
     pivot, bc, tc = previous_day_cpr(previous_day)
 
+    oi_support = oi.max_put_oi_strike if oi is not None else None
+    oi_resistance = oi.max_call_oi_strike if oi is not None else None
     setup = detect_candlestick_setup(
         df,
         sr_lookback=max(20, cfg.breakout_lookback),
         trend_lookback=15,
         breakout_lookback=cfg.breakout_lookback,
+        confirm_bars=cfg.entry_confirmation_bars,
+        oi_support=oi_support,
+        oi_resistance=oi_resistance,
     )
     st = supertrend_snapshot(
         df,
@@ -99,6 +111,7 @@ def evaluate_buy_signal(
         )
 
     direction = str(setup.get("direction") or "none")
+    sr_tag = " (OI wall)" if setup.get("sr_source") == "oi_wall" else ""
     conf = 0.58
     if setup.get("pattern") in {"bullish_engulfing", "bearish_engulfing"}:
         conf = 0.68
@@ -106,6 +119,8 @@ def evaluate_buy_signal(
         conf = 0.72
     if setup.get("intraday_trend") in {"UP", "DOWN"}:
         conf = min(0.78, conf + 0.04)
+    if sr_tag:  # real OI walls beat a naive N-bar candle range as S/R
+        conf = min(0.82, conf + 0.05)
 
     if direction == "bull":
         if cfg.require_supertrend_align and st.get("ready") and st["direction"] != 1:
@@ -121,7 +136,7 @@ def evaluate_buy_signal(
             conf = max(0.55, conf - 0.05)
         return StrategySignal(
             action="BUY_CALL",
-            reason=f"Buy: {setup['reason']}. CPR context: {regime.day_bias}.",
+            reason=f"Buy: {setup['reason']}{sr_tag}. CPR context: {regime.day_bias}.",
             confidence=round(conf, 3),
             entry_quality=str(setup.get("pattern") or "candlestick"),
             **base_fields,
@@ -141,7 +156,7 @@ def evaluate_buy_signal(
             conf = max(0.55, conf - 0.05)
         return StrategySignal(
             action="BUY_PUT",
-            reason=f"Buy: {setup['reason']}. CPR context: {regime.day_bias}.",
+            reason=f"Buy: {setup['reason']}{sr_tag}. CPR context: {regime.day_bias}.",
             confidence=round(conf, 3),
             entry_quality=str(setup.get("pattern") or "candlestick"),
             **base_fields,

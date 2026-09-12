@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 
 from index_ai.strategies.breakout import detect_breakout
-from index_ai.strategies.candlestick_sr import intraday_candle_trend, swing_levels
+from index_ai.strategies.candlestick_sr import intraday_candle_trend, near_level, swing_levels
 
 
 def _body(row: pd.Series) -> float:
@@ -32,10 +32,21 @@ def detect_candlestick_setup(
     sr_lookback: int = 30,
     trend_lookback: int = 15,
     breakout_lookback: int = 20,
+    confirm_bars: int = 1,
+    oi_support: float | None = None,
+    oi_resistance: float | None = None,
 ) -> dict[str, Any]:
     """
     Scan last bars for reversal / continuation patterns near S/R.
     Returns pattern name, direction (bull/bear/none), and context.
+
+    ``oi_support``/``oi_resistance`` (Richard, 2026-09-12: "the OI profile for
+    support/resistance") are the real option-chain walls — the strikes with the
+    most put/call open interest. When both are given and not crossed, they
+    replace the naive candle-range S/R for the near/far checks below; the
+    candle range still supplies the breakout levels. ``confirm_bars`` is
+    forwarded to ``detect_breakout`` to require a hold, not a single-bar poke,
+    before a breakout counts (see that function's docstring).
     """
     if frame is None or len(frame) < 3:
         return {"ready": False, "pattern": "", "direction": "none"}
@@ -44,8 +55,21 @@ def detect_candlestick_setup(
     if not sr.get("ready"):
         return {"ready": False, "pattern": "", "direction": "none"}
 
+    sr_source = "candle_range"
+    if oi_support is not None and oi_resistance is not None and oi_support < oi_resistance:
+        close = float(frame.iloc[-1]["close"])
+        near_support, near_resistance = near_level(close, oi_support, oi_resistance)
+        sr = {
+            **sr,
+            "support": round(oi_support, 2),
+            "resistance": round(oi_resistance, 2),
+            "near_support": near_support,
+            "near_resistance": near_resistance,
+        }
+        sr_source = "oi_wall"
+
     trend = intraday_candle_trend(frame, lookback=trend_lookback)
-    br = detect_breakout(frame, lookback=breakout_lookback)
+    br = detect_breakout(frame, lookback=breakout_lookback, confirm_bars=confirm_bars)
     curr = frame.iloc[-1]
     prev = frame.iloc[-2]
     body = _body(curr)
@@ -82,7 +106,9 @@ def detect_candlestick_setup(
         reason_parts.append(f"Bearish engulfing at resistance {sr['resistance']:.0f}")
 
     # Hammer at support
-    elif sr.get("near_support") and _lower_wick(curr) >= body * 2 and _upper_wick(curr) <= body * 0.5:
+    elif (
+        sr.get("near_support") and _lower_wick(curr) >= body * 2 and _upper_wick(curr) <= body * 0.5
+    ):
         pattern = "hammer"
         direction = "bull"
         reason_parts.append(f"Hammer at support {sr['support']:.0f}")
@@ -134,6 +160,7 @@ def detect_candlestick_setup(
         "resistance": sr.get("resistance"),
         "near_support": sr.get("near_support"),
         "near_resistance": sr.get("near_resistance"),
+        "sr_source": sr_source,
         "breakout": br,
         "reason": " ".join(reason_parts),
     }

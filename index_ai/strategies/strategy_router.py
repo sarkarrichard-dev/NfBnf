@@ -135,7 +135,7 @@ def evaluate_dual_opportunities(
     sell_regime = regime
 
     if style in {"AUTO", "BUY"} and allow_option_buying:
-        buy = evaluate_buy_signal(frame, previous_day, regime, params=params)
+        buy = evaluate_buy_signal(frame, previous_day, regime, params=params, oi=oi)
 
     if style in {"AUTO", "CREDIT"} and allow_option_selling and params.enable_credit_strategies:
         if sell_today is not None and len(sell_today) >= min_ema_bars(params.ema_slow_period):

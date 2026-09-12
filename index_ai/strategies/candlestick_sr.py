@@ -6,6 +6,20 @@ from typing import Any
 
 import pandas as pd
 
+TOL_PCT = 0.0015
+
+
+def near_level(close: float, support: float, resistance: float) -> tuple[bool, bool]:
+    """(near_support, near_resistance) — same proximity tolerance ``swing_levels``
+    uses, factored out so callers can apply it to other levels (e.g. OI walls)."""
+    near_support = abs(close - support) / max(close, 1.0) <= TOL_PCT or close <= support * (
+        1 + TOL_PCT
+    )
+    near_resistance = abs(close - resistance) / max(
+        close, 1.0
+    ) <= TOL_PCT or close >= resistance * (1 - TOL_PCT)
+    return near_support, near_resistance
+
 
 def swing_levels(
     frame: pd.DataFrame,
@@ -29,9 +43,7 @@ def swing_levels(
     resistance = max(range_high, session_high)
     support = min(range_low, session_low)
 
-    tol_pct = 0.0015
-    near_support = abs(close - support) / max(close, 1.0) <= tol_pct or close <= support * (1 + tol_pct)
-    near_resistance = abs(close - resistance) / max(close, 1.0) <= tol_pct or close >= resistance * (1 - tol_pct)
+    near_support, near_resistance = near_level(close, support, resistance)
 
     return {
         "ready": True,
