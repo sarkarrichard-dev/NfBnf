@@ -32,7 +32,15 @@ type Status = {
   lots: number
   contracts: Record<
     string,
-    { label?: string; expiry?: string | null; trading_symbol?: string | null; multiplier?: number | null }
+    {
+      label?: string
+      expiry?: string | null
+      trading_symbol?: string | null
+      multiplier?: number | null
+      initial_stop_pct?: number
+      trail_pct?: number
+      risk_source?: 'measured' | 'default'
+    }
   >
   open_positions: Record<string, OpenPos>
   today: { closed: number; net_rupees: number; wins: number; open_unrealized_rupees?: number }
@@ -111,12 +119,22 @@ export function CommoditiesPanel() {
           {Object.entries(s?.contracts ?? {}).map(([k, c]) => (
             <div
               key={k}
-              className="flex items-baseline justify-between gap-2 rounded-lg border border-[var(--hair-soft)] px-3 py-1.5"
+              className="flex flex-col gap-0.5 rounded-lg border border-[var(--hair-soft)] px-3 py-1.5"
             >
-              <span className="text-xs font-semibold text-slate-200">{c.label || k}</span>
-              <span className="font-mono text-[10.5px] text-slate-500">
-                {c.trading_symbol || k} · exp {c.expiry ?? '—'}
-              </span>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-200">{c.label || k}</span>
+                <span className="font-mono text-[10.5px] text-slate-500">
+                  {c.trading_symbol || k} · exp {c.expiry ?? '—'}
+                </span>
+              </div>
+              {c.initial_stop_pct != null ? (
+                <span className="font-mono text-[10px] text-slate-500">
+                  stop {c.initial_stop_pct}% · trail {c.trail_pct}%{' '}
+                  <span className={c.risk_source === 'measured' ? 'text-[var(--up)]' : 'text-slate-600'}>
+                    ({c.risk_source === 'measured' ? "this contract's own volatility" : 'default — not yet measured'})
+                  </span>
+                </span>
+              ) : null}
             </div>
           ))}
         </div>
