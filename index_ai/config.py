@@ -229,6 +229,7 @@ def feature_flags() -> list[dict[str, Any]]:
             "ENABLE_SPREAD_SAMPLING",
             "ENABLE_FUTURES_PAPER",
             "ENABLE_STOCK_FUTURES_PAPER",
+            "ENABLE_COMMODITIES_PAPER",
             "ENABLE_BRAIN_GATE",
             "AUTO_START_SCANNER",
             "ENABLE_SENSEX",
