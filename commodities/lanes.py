@@ -25,6 +25,7 @@ from commodities.config import CommoditySettings, commodity_settings, signal_con
 from commodities.instruments import BY_KEY, CommoditySpec, candle_instrument, load_universe_meta
 from commodities.session import entries_open, mcx_day, past_squareoff
 from index_ai import notify
+from index_ai.atomic_io import atomic_write_json
 from index_ai.config import MEMORY_DIR, settings
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.market_clock import now_ist, now_ist_iso
@@ -53,23 +54,7 @@ def _load_state() -> dict[str, Any]:
 
 
 def _save_state(state: dict[str, Any]) -> None:
-    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(state, indent=2, default=str)
-    tmp = STATE_PATH.with_suffix(".json.tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    for attempt in range(6):  # Windows: AV / sync agents briefly lock the target
-        try:
-            os.replace(tmp, STATE_PATH)
-            return
-        except PermissionError:
-            if attempt == 5:
-                break
-            _time.sleep(0.25)
-    STATE_PATH.write_text(payload, encoding="utf-8")
-    try:
-        tmp.unlink()
-    except OSError:
-        pass
+    atomic_write_json(STATE_PATH, state)
 
 
 def _journal(trade: dict[str, Any]) -> None:

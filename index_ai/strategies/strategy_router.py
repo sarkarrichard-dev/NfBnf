@@ -181,17 +181,3 @@ def route_intraday_signal(
         allow_option_buying=allow_option_buying,
     )
     return dual.primary, dual.regime
-
-
-def enrich_signal_with_regime(signal: StrategySignal, regime: CprRegime) -> StrategySignal:
-    """Legacy helper — attach CPR fields if missing."""
-    return copy_signal(
-        signal,
-        pivot=regime.pivot,
-        bc=regime.bc,
-        tc=regime.tc,
-        cpr_width_pct=regime.width_pct,
-        cpr_width_class=regime.width_class,
-        cpr_regime=regime.day_bias,
-        cpr_virgin=regime.virgin_cpr,
-    )

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from index_ai.config import DB_PATH, MEMORY_DIR
+from index_ai.env import env_bool as _env_bool, env_float as _env_float, env_int as _env_int
 from index_ai.market_clock import (
     format_ist_display,
     is_entry_session_timestamp,
@@ -1116,27 +1117,6 @@ def _today_realized_pnl(*, live_only: bool) -> float:
             continue
         total += float(row["pnl"] or 0)
     return total
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except ValueError:
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, str(default)))
-    except ValueError:
-        return default
 
 
 def setup_loss_profile(*, limit: int = 120) -> dict[str, Any]:
