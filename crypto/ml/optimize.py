@@ -167,6 +167,7 @@ def optimize_one(name: str, *, frames: dict[str, pd.DataFrame] | None = None,
     space = SEARCH_SPACE[name]
     s = crypto_settings()
     tf = _SIMPLE[name][1]
+    tf = tf(s) if callable(tf) else tf  # ak_roxx_pro/ichimoku's timeframe is settings-dependent
     frames = frames if frames is not None else _fetch(symbols, tf, days)
     if not frames:
         return {"tuned": False, "reason": "no candle history"}
