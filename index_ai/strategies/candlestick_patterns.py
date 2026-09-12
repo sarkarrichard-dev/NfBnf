@@ -151,6 +151,15 @@ def detect_candlestick_setup(
             f"Intraday DOWN trend — bearish bar at resistance {sr['resistance']:.0f}"
         )
 
+    # breakout_resistance/breakdown_support fire off `br` (the candle-range
+    # breakout dict) regardless of the OI override above — they never consult
+    # sr["near_support"]/sr["near_resistance"]. Reporting sr_source="oi_wall"
+    # for them would credit the OI wall (and buy_strategy's confidence boost)
+    # for a pattern the wall had no part in, just because OI data happened to
+    # be available that scan. Only the sr-based patterns earn that tag.
+    if pattern in {"breakout_resistance", "breakdown_support"}:
+        sr_source = "candle_range"
+
     return {
         "ready": bool(pattern),
         "pattern": pattern,
