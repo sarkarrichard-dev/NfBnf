@@ -54,6 +54,29 @@ def test_optimize_one_reports_shape_and_never_claims_unstable_is_stable(monkeypa
         assert r["net_usd"] > 0  # stable is only ever set on a positive winner
 
 
+def test_optimize_one_resolves_a_settings_dependent_timeframe_before_fetching(monkeypatch):
+    """ak_roxx_pro's _SIMPLE timeframe entry is `lambda s: AkRoxxConfig().timeframe`,
+    not a plain string like the other strategies. optimize_one() used to hand that
+    lambda object straight to market_data.candles() as the `tf` argument -- every
+    real call silently failed (caught, logged, "no candle history"), so ak_roxx_pro
+    was never actually tuned since it was added to SEARCH_SPACE. Confirmed live:
+    the nightly job failed on this every single run (2026-09-12 server.log)."""
+    seen_tf: list[str] = []
+
+    def fake_candles(sym, tf, days=0):
+        seen_tf.append(tf)
+        return _ou(400, 1)
+
+    monkeypatch.setattr("crypto.delta.market_data.candles", fake_candles)
+    r = opt.optimize_one("ak_roxx_pro", days=1, symbols=["BTCUSD"], max_combos=2)
+    assert seen_tf and all(isinstance(tf, str) for tf in seen_tf), seen_tf
+    assert seen_tf[0] == "1h"
+    # candle fetch actually succeeded -> real scoring ran, not the "no candle
+    # history" bail-out the lambda-object bug always hit
+    assert r.get("reason") != "no candle history"
+    assert {"stable", "params", "eligible", "candidates"} <= set(r)
+
+
 def test_tuned_params_only_returns_stable_positive(tmp_path, monkeypatch):
     p = tmp_path / "params.json"
     monkeypatch.setattr(opt, "_PARAMS_PATH", p)
