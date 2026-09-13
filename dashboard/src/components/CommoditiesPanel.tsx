@@ -126,11 +126,7 @@ export function CommoditiesPanel() {
           </p>
         </div>
         <div className="min-w-0">
-          {equity.length > 1 ? (
-            <EquityCurve values={equity} height={96} className="w-full" />
-          ) : (
-            <p className="text-right font-mono text-[11px] text-slate-600">building the curve…</p>
-          )}
+          <EquityCurve values={equity} height={96} className="w-full" />
         </div>
       </div>
 
