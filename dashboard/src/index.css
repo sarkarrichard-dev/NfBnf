@@ -87,6 +87,11 @@ body {
   min-height: 100vh;
   color: #f4f4f5;
   background-color: var(--ground);
+  background-image:
+    radial-gradient(1200px 620px at 62% -10%, rgba(242, 166, 60, 0.13), transparent 62%),
+    radial-gradient(900px 520px at 100% 0%, rgba(51, 192, 110, 0.06), transparent 55%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
 
