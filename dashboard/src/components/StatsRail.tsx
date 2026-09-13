@@ -8,7 +8,7 @@ import { Sparkline } from './Sparkline'
 import { EquityCurve } from './charts/EquityCurve'
 import type { AnalyticsResponse, DateRange, PeriodKey, TradeRow } from '../types/analytics'
 
-const PERIOD_LABEL: Record<PeriodKey, string> = {
+export const PERIOD_LABEL: Record<PeriodKey, string> = {
   today: 'today',
   week: 'this week',
   month: 'this month',

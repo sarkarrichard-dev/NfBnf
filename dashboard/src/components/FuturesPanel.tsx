@@ -1,13 +1,16 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { useFuturesJournal } from '../hooks/useFuturesJournal'
 import { cn } from '../lib/cn'
+import { computePeriodStats, cumulativePnl, tradesForPeriod } from '../lib/pnl'
 import { fx } from '../lib/theme'
 import type { DateRange, PeriodKey } from '../types/analytics'
+import { EquityCurve } from './charts/EquityCurve'
 import { LaneCard, pnlClass, rupees, type LaneStatus } from './LanesPanel'
 import { PeriodBar } from './PeriodBar'
+import { PERIOD_LABEL } from './StatsRail'
 import { TradeLogTable } from './TradeLogTable'
 
 type Agg = {
@@ -135,6 +138,12 @@ export function FuturesPanel() {
   const [period, setPeriod] = useState<PeriodKey>('month')
   const [range, setRange] = useState<DateRange>({ from: '', to: '' })
   const journal = useFuturesJournal(true)
+  const periodTrades = useMemo(
+    () => tradesForPeriod(journal.trades, period, range),
+    [journal.trades, period, range],
+  )
+  const periodStats = useMemo(() => computePeriodStats(periodTrades), [periodTrades])
+  const equity = useMemo(() => cumulativePnl(periodTrades), [periodTrades])
 
   const bt = backtest.data?.stock
   const perStock = Object.entries(bt?.per_stock ?? {}).sort(
@@ -149,11 +158,33 @@ export function FuturesPanel() {
       {/* live paper lane */}
       <section className={cn(fx.panel, 'space-y-3 p-4')}>
         <h3 className="text-sm font-bold text-slate-100">Directional index-futures — paper lane</h3>
-        <LaneCard title="Directional futures (paper)" data={status.data} />
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className={fx.cardLabel}>Trade history</p>
-          <PeriodBar period={period} onPeriodChange={setPeriod} range={range} onRangeChange={setRange} />
+
+        <PeriodBar period={period} onPeriodChange={setPeriod} range={range} onRangeChange={setRange} />
+
+        {/* cockpit headline: one number you can't miss, then the curve */}
+        <div className="grid items-center gap-4 rounded-lg border border-[var(--hair-soft)] bg-white/[0.015] p-3.5 lg:grid-cols-[minmax(0,1fr),1.5fr]">
+          <div>
+            <p className={fx.cardLabel}>Realised P&amp;L · {PERIOD_LABEL[period]}</p>
+            <p className={cn('mt-1 font-mono text-[2rem] font-extrabold leading-none tabular-nums', pnlClass(periodStats.pnl_rupees))}>
+              {rupees(periodStats.pnl_rupees)}
+            </p>
+            <p className="mt-1.5 font-mono text-[11px] text-slate-500">
+              {periodStats.closed} closed ·{' '}
+              {periodStats.win_rate == null ? '—' : `${(periodStats.win_rate * 100).toFixed(0)}%`} win
+            </p>
+          </div>
+          <div className="min-w-0">
+            {equity.length > 1 ? (
+              <EquityCurve values={equity} height={96} className="w-full" />
+            ) : (
+              <p className="text-right font-mono text-[11px] text-slate-600">building the curve…</p>
+            )}
+          </div>
         </div>
+
+        <LaneCard title="Directional futures (paper)" data={status.data} />
+
+        <p className={fx.cardLabel}>Trade history</p>
         {/* same shared table + entry/exit times as every other section (Index,
             Crypto, Commodities) and the combined Trade History tab */}
         <TradeLogTable

@@ -200,6 +200,16 @@ export function computePeriodStats(trades: TradeRow[]): PeriodStats {
   }
 }
 
+/** Cumulative realised P&L, oldest closed trade first — the equity-curve series
+ *  for any section whose journal maps onto the shared TradeRow shape. */
+export function cumulativePnl(trades: TradeRow[]): number[] {
+  const closed = trades
+    .filter((t) => t.pnl != null)
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+  let running = 0
+  return closed.map((t) => (running += Number(t.pnl) || 0))
+}
+
 export function openLegRows(
   logRows: LogRow[],
   trades: TradeRow[],
