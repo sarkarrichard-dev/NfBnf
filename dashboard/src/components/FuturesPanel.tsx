@@ -12,6 +12,7 @@ import { LaneCard, pnlClass, rupees, type LaneStatus } from './LanesPanel'
 import { PeriodBar } from './PeriodBar'
 import { PERIOD_LABEL } from './StatsRail'
 import { TradeLogTable } from './TradeLogTable'
+import { EmptyState } from './ui/EmptyState'
 
 type Agg = {
   trades?: number
@@ -198,10 +199,10 @@ export function FuturesPanel() {
           Stock futures — intraday replay (decision gate)
         </h3>
         {!bt || !bt.per_stock || !perStock.length ? (
-          <p className="text-xs text-slate-500">
-            No backtest run yet. Run <code className="text-slate-400">python -m
-            scripts.backtest_stock_futures</code>.
-          </p>
+          <EmptyState>
+            No backtest run yet. Run{' '}
+            <code className="text-slate-400">python -m scripts.backtest_stock_futures</code>.
+          </EmptyState>
         ) : (
           <>
             <VerdictBanner bt={bt} />

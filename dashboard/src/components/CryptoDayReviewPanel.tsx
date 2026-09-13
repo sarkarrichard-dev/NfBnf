@@ -5,6 +5,7 @@ import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
 import { inr, pnlCls, usd } from '../lib/cryptoFmt'
 import { Button } from './ui/Button'
+import { EmptyState } from './ui/EmptyState'
 
 type AssetGroup = {
   trades: number
@@ -140,7 +141,7 @@ export function CryptoDayReviewPanel() {
         </h2>
         <p className="mb-3 text-xs text-slate-500">Today only. Updates as trades close.</p>
         {!groups.length ? (
-          <p className="text-sm text-slate-500">No trades yet today.</p>
+          <EmptyState>No trades yet today.</EmptyState>
         ) : (
           <div className="space-y-2.5">
             {groups.map(([name, g]) => {

@@ -12,6 +12,7 @@ import type { DateRange, LogRow, PeriodKey, PositionsFilter, TradeRow } from '..
 import { PositionRow } from './PositionRow'
 import { TradeLogTable } from './TradeLogTable'
 import { Button } from './ui/Button'
+import { EmptyState } from './ui/EmptyState'
 
 type Tab = 'open' | 'history'
 
@@ -157,14 +158,14 @@ export function JournalPanel({ logRows, trades, period, range, mtmUpdatedAt }: P
               <tbody>
                 {!allOpen.length ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-6 text-center text-slate-500">
-                      No open positions in this period.
+                    <td colSpan={8} className="p-3">
+                      <EmptyState>No open positions in this period.</EmptyState>
                     </td>
                   </tr>
                 ) : !visibleOpen.length ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-6 text-center text-slate-500">
-                      No legs match this filter.
+                    <td colSpan={8} className="p-3">
+                      <EmptyState>No legs match this filter.</EmptyState>
                     </td>
                   </tr>
                 ) : (

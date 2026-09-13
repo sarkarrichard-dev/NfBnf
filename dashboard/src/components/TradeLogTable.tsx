@@ -10,6 +10,7 @@ import {
 } from '../lib/pnl'
 import { fx } from '../lib/theme'
 import type { DateRange, LogRow, PeriodKey, TradeRow } from '../types/analytics'
+import { EmptyState } from './ui/EmptyState'
 
 type Props = {
   logRows: LogRow[]
@@ -50,13 +51,11 @@ export function TradeLogTable({ logRows, trades, period, range, mtmUpdatedAt, hi
     return (
       <section className={cn(fx.panel, 'p-4')}>
         {!hideTitle ? <h2 className="mb-2 text-base font-semibold text-cyan-50/95">Trade log</h2> : null}
-        <div className="flex min-h-24 items-center justify-center rounded-lg border border-dashed border-[var(--hair)] bg-white/[0.01] px-4 py-6 text-center">
-          <p className="text-sm text-cyan-200/45">
-            {tradeCount > 0
-              ? 'Loading leg details…'
-              : 'No trades closed in this period yet — try a wider range, or check back once the strategy fires.'}
-          </p>
-        </div>
+        <EmptyState>
+          {tradeCount > 0
+            ? 'Loading leg details…'
+            : 'No trades closed in this period yet — try a wider range, or check back once the strategy fires.'}
+        </EmptyState>
       </section>
     )
   }
