@@ -21,7 +21,7 @@ def test_status_ok(monkeypatch):
     body = r.json()
     assert "BTCUSD" in body["symbols"] and "ETHUSD" in body["symbols"]
     assert body["available_symbols"] == _FAKE_LISTED
-    assert body["sizing"]["lots"] >= 1 and "deploy_cap_usd" in body["sizing"]
+    assert body["sizing"]["margin_per_position_usd"] > 0 and "deploy_cap_usd" in body["sizing"]
     assert body["session_ist"]["start"] and body["session_ist"]["end"]
     assert "ipv4" in body["egress"] and "delta_sees_ip" in body["egress"]
 
@@ -59,10 +59,15 @@ def test_config_validates_and_clamps(monkeypatch):
     monkeypatch.setattr("index_ai.config.update_env_values", lambda v: saved.update(v))
     r = client.post(
         "/api/crypto/config",
-        json={"lots": 0, "deploy_cap_usd": -5, "leverage": 999, "max_concurrent": 50},
+        json={
+            "margin_per_position_usd": 0,
+            "deploy_cap_usd": -5,
+            "leverage": 999,
+            "max_concurrent": 50,
+        },
     )
     assert r.status_code == 200
-    assert saved["CRYPTO_LOTS"] == "1"  # min 1
+    assert saved["CRYPTO_MARGIN_PER_POSITION_USD"] == "1.0"  # min 1
     assert saved["CRYPTO_DEPLOY_USD"] == "0.0"  # cap floored at 0
     assert "CRYPTO_LEVERAGE" not in saved  # leverage is .env-only, not a dashboard knob
     assert saved["CRYPTO_MAX_CONCURRENT"] == "10"
@@ -97,7 +102,7 @@ def test_lots_table(monkeypatch):
     monkeypatch.delenv("DELTA_API_KEY", raising=False)
     monkeypatch.delenv("DELTA_API_SECRET", raising=False)
     monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,DOGEUSD")  # DOGE not in the fake master
-    monkeypatch.setenv("CRYPTO_LOTS", "3")
+    monkeypatch.setenv("CRYPTO_MARGIN_PER_POSITION_USD", "100")
     monkeypatch.setattr(
         products,
         "all_contracts",
@@ -106,11 +111,17 @@ def test_lots_table(monkeypatch):
     monkeypatch.setattr(market_data, "ticker", lambda sym, client=None: {"mark_price": 60_000.0})
 
     body = client.get("/api/crypto/lots").json()
-    assert body["lots"] == 3
+    assert body["margin_per_position_usd"] == 100.0
     rows = {r["symbol"]: r for r in body["table"]}
     assert rows["BTCUSD"]["coin_per_lot"] == 0.001
     assert rows["BTCUSD"]["margin_per_lot_usd"] > 0
+    # $100 budget covers more than one $60000*0.001/20x-ish lot
+    assert rows["BTCUSD"]["lots"] >= 1
+    assert rows["BTCUSD"]["deployed_usd"] == round(
+        rows["BTCUSD"]["lots"] * rows["BTCUSD"]["margin_per_lot_usd"], 2
+    )
     assert rows["DOGEUSD"]["margin_per_lot_usd"] is None  # not a live perp — no fake 0
+    assert rows["DOGEUSD"]["lots"] is None
 
 
 def test_credentials_requires_confirm():

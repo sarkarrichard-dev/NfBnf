@@ -54,11 +54,11 @@ def crypto_status() -> dict:
             "cpr_trend": s.cpr_trend_enabled,
         },
         "sizing": {
-            "lots": s.lots,
+            "margin_per_position_usd": s.margin_per_position_usd,
             "deploy_cap_usd": s.deploy_usd,
             "leverage": s.leverage,
-            "max_concurrent": s.max_concurrent,          # per strategy
-            "max_open_total": s.max_open_total,          # 0 = unlimited
+            "max_concurrent": s.max_concurrent,  # per strategy
+            "max_open_total": s.max_open_total,  # 0 = unlimited
             "max_hold_days": s.max_hold_days,
             "paper_bankroll_usd": s.paper_bankroll_usd,
         },
@@ -185,9 +185,11 @@ def crypto_health() -> dict:
 
 @router.get("/lots", include_in_schema=False)
 def crypto_lots() -> dict:
-    """Per selected symbol: what one lot (= one contract) costs — coin size,
-    notional, and margin in $ and ₹. Uses Delta's own margin_required when keys
-    are set, else the local estimate. Best-effort; a symbol with no mark yields
+    """Per selected symbol: what the configured $ margin budget buys — one
+    contract's cost (coin size, notional, margin in $ and ₹), how many
+    contracts that budget covers at the current mark, and the $ actually
+    deployed at that count. Uses Delta's own margin_required when keys are
+    set, else the local estimate. Best-effort; a symbol with no mark yields
     null fields, never a fake 0."""
     s = crypto_settings()
     client = DeltaClient(s)
@@ -200,9 +202,18 @@ def crypto_lots() -> dict:
     for sym in s.symbols:
         c = contracts.get(sym)
         if c is None:
-            rows.append({"symbol": sym, "coin_per_lot": None, "notional_per_lot_usd": None,
-                         "margin_per_lot_usd": None, "margin_per_lot_inr": None,
-                         "note": "not a live Delta perp"})
+            rows.append(
+                {
+                    "symbol": sym,
+                    "coin_per_lot": None,
+                    "notional_per_lot_usd": None,
+                    "margin_per_lot_usd": None,
+                    "margin_per_lot_inr": None,
+                    "lots": None,
+                    "deployed_usd": None,
+                    "note": "not a live Delta perp",
+                }
+            )
             continue
         try:
             mark = _num(market_data.ticker(sym, client=client).get("mark_price")) or 0.0
@@ -211,17 +222,32 @@ def crypto_lots() -> dict:
         econ = sizing.lot_economics(c, mark, leverage=s.leverage, fx_usdinr=fx)
         if s.credentials_ready and mark > 0:
             try:
-                mr = client.margin_required(c.product_id, max(1, s.lots), "buy")
+                mr = client.margin_required(c.product_id, 1, "buy")
                 per_lot = _num(mr.get("initial_margin")) or _num(mr.get("required_margin"))
-                if per_lot and s.lots:
-                    econ["margin_per_lot_usd"] = round(per_lot / s.lots, 2)
-                    econ["margin_per_lot_inr"] = round(per_lot / s.lots * fx, 0) if fx else None
+                if per_lot:
+                    econ["margin_per_lot_usd"] = round(per_lot, 2)
+                    econ["margin_per_lot_inr"] = round(per_lot * fx, 0) if fx else None
                     econ["source"] = "delta"
             except DeltaError:
                 pass
+        per_lot_usd = econ.get("margin_per_lot_usd")
+        if per_lot_usd:
+            lots = sizing.lots_from_margin_budget(
+                c, mark, margin_usd=s.margin_per_position_usd, leverage=s.leverage
+            )
+            econ["lots"] = lots
+            econ["deployed_usd"] = round(lots * per_lot_usd, 2)
+        else:
+            econ["lots"] = None
+            econ["deployed_usd"] = None
         rows.append({"symbol": sym, **econ})
-    return {"lots": s.lots, "leverage": s.leverage, "deploy_cap_usd": s.deploy_usd,
-            "fx_usdinr": round(fx, 4), "table": rows}
+    return {
+        "margin_per_position_usd": s.margin_per_position_usd,
+        "leverage": s.leverage,
+        "deploy_cap_usd": s.deploy_usd,
+        "fx_usdinr": round(fx, 4),
+        "table": rows,
+    }
 
 
 @router.get("/contracts", include_in_schema=False)
@@ -331,6 +357,16 @@ def crypto_close_position(key: str = Body(..., embed=True)) -> dict:
     return close_position_manual(key)
 
 
+@router.post("/positions/close-all", include_in_schema=False)
+def crypto_close_all_positions() -> dict:
+    """Manual "Close all" button — force-exit every open position now, each at
+    its own current mark. Same machinery as the single Close button, run once
+    per open position; one failure doesn't stop the rest."""
+    from crypto.lanes import close_all_positions_manual
+
+    return close_all_positions_manual()
+
+
 @router.get("/journal", include_in_schema=False)
 def crypto_journal(limit: int = 100) -> dict:
     return {"trades": journal.recent(max(1, min(500, limit)))}
@@ -384,7 +420,7 @@ def crypto_today() -> dict:
 
 @router.post("/config", include_in_schema=False)
 def set_config(
-    lots: int | None = Body(None, embed=True),
+    margin_per_position_usd: float | None = Body(None, embed=True),
     deploy_cap_usd: float | None = Body(None, embed=True),
     deploy_usd: float | None = Body(None, embed=True),  # legacy alias for deploy_cap_usd
     max_concurrent: int | None = Body(None, embed=True),
@@ -413,8 +449,8 @@ def set_config(
         if not keep:
             raise HTTPException(400, "None of those symbols are live Delta perpetuals.")
         values["CRYPTO_SYMBOLS"] = ",".join(keep)
-    if lots is not None:
-        values["CRYPTO_LOTS"] = str(max(1, int(lots)))
+    if margin_per_position_usd is not None:
+        values["CRYPTO_MARGIN_PER_POSITION_USD"] = str(max(1.0, float(margin_per_position_usd)))
     cap = deploy_cap_usd if deploy_cap_usd is not None else deploy_usd
     if cap is not None:
         values["CRYPTO_DEPLOY_USD"] = str(max(0.0, float(cap)))

@@ -30,15 +30,20 @@ type Status = {
   arm_phrase: string
   egress: Egress
   kill_switch: KillSwitch
-  sizing: { lots: number; leverage: number }
+  sizing: { margin_per_position_usd: number; leverage: number }
 }
-type LotRow = { symbol: string; margin_per_lot_usd: number | null }
-type Lots = { lots: number; table: LotRow[] }
+type LotRow = { symbol: string; margin_per_lot_usd: number | null; lots: number | null; deployed_usd: number | null }
+type Lots = { margin_per_position_usd: number; leverage: number; table: LotRow[] }
 
 /**
  * Crypto Execution — mirrors the index ExecutionPanel: a sliding PAPER/LIVE
- * pill, a LOTS stepper, and the arm strip. Its own two locks and its own phrase
- * ("ARM CRYPTO LIVE"), separate from the index arm. Leverage is fixed at 100x.
+ * pill, a $ per position input, and the arm strip. Its own two locks and its
+ * own phrase ("ARM CRYPTO LIVE"), separate from the index arm.
+ *
+ * Sizing is dollar-first (Richard, 2026-09-14): the operator sets one $ margin
+ * budget per position, and each symbol auto-sizes to however many contracts
+ * that budget covers at its own price and the configured leverage — a fixed
+ * lot count meant wildly different money per symbol (a BTC lot vs. a SOL lot).
  */
 export function CryptoExecutionPanel() {
   const qc = useQueryClient()
@@ -55,10 +60,11 @@ export function CryptoExecutionPanel() {
   const s = status.data
   const isLive = (s?.trading_mode ?? 'PAPER').toUpperCase() === 'LIVE'
   const armed = !!s?.live_armed
-  const lots = s?.sizing.lots ?? 1
+  const leverage = s?.sizing.leverage ?? lotsQ.data?.leverage ?? 20
+  const margin = s?.sizing.margin_per_position_usd ?? 50
   const [phrase, setPhrase] = useState('')
   const [arming, setArming] = useState(false)
-  const [lotsDraft, setLotsDraft] = useState('')  // '' = show the live `lots`
+  const [marginDraft, setMarginDraft] = useState('')  // '' = show the live `margin`
 
   const setMode = useMutation({
     mutationFn: (mode: string) =>
@@ -88,9 +94,12 @@ export function CryptoExecutionPanel() {
     onError: (e: Error) => toast.error(e.message),
   })
 
-  const adjustLots = useMutation({
-    mutationFn: (n: number) =>
-      api('/api/crypto/config', { method: 'POST', body: JSON.stringify({ lots: n }) }),
+  const adjustMargin = useMutation({
+    mutationFn: (usd: number) =>
+      api('/api/crypto/config', {
+        method: 'POST',
+        body: JSON.stringify({ margin_per_position_usd: usd }),
+      }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['crypto'] }),
     onError: (e: Error) => toast.error(e.message),
   })
@@ -98,24 +107,15 @@ export function CryptoExecutionPanel() {
   const ks = s?.kill_switch
   const eg = s?.egress
   const busy = setMode.isPending || armLive.isPending
-  const bumpLots = (d: number) => {
-    const next = Math.min(50, Math.max(1, lots + d))
-    if (next !== lots && !adjustLots.isPending) adjustLots.mutate(next)
-  }
-  const commitLots = () => {
-    const n = Math.round(Number(lotsDraft))
-    setLotsDraft('')
-    if (Number.isFinite(n) && n >= 1) {
-      const next = Math.min(50, n)
-      if (next !== lots) adjustLots.mutate(next)
-    }
+  const commitMargin = () => {
+    const n = Math.round(Number(marginDraft))
+    setMarginDraft('')
+    if (Number.isFinite(n) && n >= 1 && n !== margin) adjustMargin.mutate(n)
   }
 
-  // total margin for the current lot count, summed over the symbols Delta prices
-  const totalMargin = (lotsQ.data?.table ?? []).reduce(
-    (a, r) => a + (r.margin_per_lot_usd ?? 0) * (lotsQ.data?.lots ?? lots),
-    0,
-  )
+  // actual $ this budget deploys per symbol, summed — what "$X per position"
+  // really commits across the whole active symbol list
+  const totalDeployed = (lotsQ.data?.table ?? []).reduce((a, r) => a + (r.deployed_usd ?? 0), 0)
 
   return (
     <section
@@ -187,54 +187,41 @@ export function CryptoExecutionPanel() {
           ) : null}
         </div>
 
-        {/* Lots stepper */}
+        {/* $ per position — auto-sizes to however many contracts that covers per symbol */}
         <div>
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-            Lots per trade
+            $ per position
           </p>
           <div
             className={cn(
-              'flex items-center gap-2 rounded-lg p-0.5 transition-shadow',
-              adjustLots.isPending && 'shadow-[0_0_0_1px_var(--acc)]',
+              'flex items-center gap-1 rounded-lg p-0.5 transition-shadow',
+              adjustMargin.isPending && 'shadow-[0_0_0_1px_var(--acc)]',
             )}
           >
-            <Button
-              aria-label="Decrease lots"
-              disabled={lots <= 1 || adjustLots.isPending}
-              onClick={() => bumpLots(-1)}
-            >
-              −
-            </Button>
+            <span className="text-lg font-semibold text-slate-500">$</span>
             <input
               type="number"
               min={1}
-              max={50}
-              inputMode="numeric"
-              aria-label="Lots per trade"
-              value={lotsDraft === '' ? lots : lotsDraft}
-              onChange={(e) => setLotsDraft(e.target.value)}
-              onFocus={() => setLotsDraft(String(lots))}
-              onBlur={commitLots}
+              step={1}
+              inputMode="decimal"
+              aria-label="Dollar margin per position"
+              value={marginDraft === '' ? margin : marginDraft}
+              onChange={(e) => setMarginDraft(e.target.value)}
+              onFocus={() => setMarginDraft(String(margin))}
+              onBlur={commitMargin}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') e.currentTarget.blur()
               }}
               className={cn(
-                'w-14 rounded-md border border-[var(--hair)] bg-black/30 px-1 py-0.5 text-center text-lg font-semibold tabular-nums text-slate-50 outline-none focus:border-[var(--acc)]',
-                adjustLots.isPending && 'animate-pulse text-[var(--acc)]',
+                'w-20 rounded-md border border-[var(--hair)] bg-black/30 px-1 py-0.5 text-center text-lg font-semibold tabular-nums text-slate-50 outline-none focus:border-[var(--acc)]',
+                adjustMargin.isPending && 'animate-pulse text-[var(--acc)]',
               )}
             />
-            <Button
-              aria-label="Increase lots"
-              disabled={lots >= 50 || adjustLots.isPending}
-              onClick={() => bumpLots(1)}
-            >
-              +
-            </Button>
           </div>
           <p className="mt-1 text-xs tabular-nums text-slate-500">
-            {totalMargin > 0
-              ? `≈ ${usd0(totalMargin)} margin @ 100x · ${lots} lot${lots === 1 ? '' : 's'} per symbol`
-              : `${lots} contract${lots === 1 ? '' : 's'} per symbol · 100x`}
+            {totalDeployed > 0
+              ? `≈ ${usd0(totalDeployed)} deployed @ ${leverage}x across ${(lotsQ.data?.table ?? []).filter((r) => r.lots).length} symbols`
+              : `per symbol, auto-sized @ ${leverage}x`}
           </p>
         </div>
       </div>

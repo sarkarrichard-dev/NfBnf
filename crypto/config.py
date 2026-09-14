@@ -24,8 +24,15 @@ DELTA_PROD_URL = "https://api.india.delta.exchange"
 # (crypto/delta/products.available_symbols); USDT / USDC are the quote asset,
 # not tradable perps, so they are not here. "PaxUsd" = PAXGUSD (PAX Gold).
 CRYPTO_ALLOWLIST: tuple[str, ...] = (
-    "BTCUSD", "ETHUSD", "BNBUSD", "XRPUSD", "SOLUSD",
-    "TRXUSD", "DOGEUSD", "ADAUSD", "PAXGUSD",
+    "BTCUSD",
+    "ETHUSD",
+    "BNBUSD",
+    "XRPUSD",
+    "SOLUSD",
+    "TRXUSD",
+    "DOGEUSD",
+    "ADAUSD",
+    "PAXGUSD",
 )
 
 # Default active set. Override at runtime with CRYPTO_SYMBOLS (a comma-separated
@@ -69,18 +76,22 @@ class CryptoSettings:
     api_key: str
     api_secret: str
     base_url: str
-    force_ipv4: bool           # pin Delta traffic to IPv4 (CRYPTO_FORCE_IPV4)
-    symbols: tuple[str, ...]   # perps to trade — CRYPTO_SYMBOLS
-    # sizing (lot-based — see crypto/sizing.py). One universal lot count; 1 lot =
-    # 1 Delta contract, so every symbol trades `lots` contracts.
-    lots: int                  # universal lot count, min 1
-    deploy_usd: float          # optional per-trade margin cap in USD; 0 = no cap
-    leverage: float            # default 20x (was 100x — a 100x position stops out on a
-                               #  0.1% price wiggle; 20x makes the P&L-% stops a real
-                               #  price stop). CRYPTO_LEVERAGE overrides; clamped per-product.
-    max_concurrent: int        # open positions allowed PER STRATEGY (each strategy trades its own book)
-    max_open_total: int        # portfolio-wide safety cap across all strategies; 0 = unlimited
-    max_hold_days: int         # force-close a position open across more than this many day boundaries (crypto has no session)
+    force_ipv4: bool  # pin Delta traffic to IPv4 (CRYPTO_FORCE_IPV4)
+    symbols: tuple[str, ...]  # perps to trade — CRYPTO_SYMBOLS
+    # sizing (dollar-budget-based — see crypto/sizing.py). One universal dollar
+    # amount the operator wants to risk in margin per position; each symbol
+    # auto-sizes to however many contracts that budget covers at the current
+    # mark and leverage (Richard, 2026-09-14: "each crypto has its own lot
+    # size which is very vague... instead of lots if we say i wanna use 100
+    # dollars, it will calculate how many lots those dollars will cover").
+    margin_per_position_usd: float  # universal $ margin target per position
+    deploy_usd: float  # optional hard per-trade margin cap in USD on top; 0 = no cap
+    leverage: float  # default 20x (was 100x — a 100x position stops out on a
+    #  0.1% price wiggle; 20x makes the P&L-% stops a real
+    #  price stop). CRYPTO_LEVERAGE overrides; clamped per-product.
+    max_concurrent: int  # open positions allowed PER STRATEGY (each strategy trades its own book)
+    max_open_total: int  # portfolio-wide safety cap across all strategies; 0 = unlimited
+    max_hold_days: int  # force-close a position open across more than this many day boundaries (crypto has no session)
     paper_bankroll_usd: float
     # lanes — the section runs when any strategy is enabled. ny_n_break,
     # ichimoku and ak_roxx_pro default on. The video strategies (bb_reversal /
@@ -121,8 +132,8 @@ class CryptoSettings:
     tp_trigger_pnl_pct: float
     peak_trail_pnl_pct: float
     # live execution (Phase 4) — two independent locks, see crypto/live.py
-    trading_mode: str          # PAPER (default) | LIVE
-    live_armed: bool           # CRYPTO_ALLOW_LIVE
+    trading_mode: str  # PAPER (default) | LIVE
+    live_armed: bool  # CRYPTO_ALLOW_LIVE
     max_daily_loss_usd: float
     max_consec_losses: int
 
@@ -133,11 +144,7 @@ class CryptoSettings:
     @property
     def live_orders_enabled(self) -> bool:
         """The only gate the executor trusts. All three must hold."""
-        return (
-            self.trading_mode.upper() == "LIVE"
-            and self.live_armed
-            and self.credentials_ready
-        )
+        return self.trading_mode.upper() == "LIVE" and self.live_armed and self.credentials_ready
 
 
 def crypto_settings() -> CryptoSettings:
@@ -150,7 +157,7 @@ def crypto_settings() -> CryptoSettings:
         base_url=os.getenv("DELTA_BASE_URL", DELTA_PROD_URL).rstrip("/"),
         force_ipv4=_b("CRYPTO_FORCE_IPV4", True),
         symbols=_symbols(),
-        lots=max(1, _i("CRYPTO_LOTS", 1)),
+        margin_per_position_usd=max(1.0, _f("CRYPTO_MARGIN_PER_POSITION_USD", 50.0)),
         deploy_usd=max(0.0, _f("CRYPTO_DEPLOY_USD", 0.0)),
         leverage=max(1.0, _f("CRYPTO_LEVERAGE", 20.0)),
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
@@ -190,7 +197,7 @@ CRYPTO_ENV_KEYS = (
     "DELTA_BASE_URL",
     "CRYPTO_FORCE_IPV4",
     "CRYPTO_SYMBOLS",
-    "CRYPTO_LOTS",
+    "CRYPTO_MARGIN_PER_POSITION_USD",
     "CRYPTO_NY_NBREAK_ENABLED",
     "CRYPTO_ICHIMOKU_ENABLED",
     "CRYPTO_AK_ROXX_ENABLED",
@@ -223,7 +230,7 @@ CRYPTO_ENV_KEYS = (
 
 if __name__ == "__main__":  # self-check
     s = crypto_settings()
-    assert s.lots >= 1
+    assert s.margin_per_position_usd > 0.0
     assert s.deploy_usd >= 0.0
     assert s.leverage >= 1.0
     assert s.max_concurrent >= 1 and s.max_open_total >= 0 and s.max_hold_days >= 1
@@ -238,6 +245,7 @@ if __name__ == "__main__":  # self-check
         h, m = w.split(":")
         assert 0 <= int(h) < 24 and 0 <= int(m) < 60
     import os as _o
+
     _o.environ["CRYPTO_SYMBOLS"] = "btcusd, ethusd ,BTCUSD"
     assert _symbols() == ("BTCUSD", "ETHUSD")
     _o.environ.pop("CRYPTO_SYMBOLS")

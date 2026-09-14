@@ -25,7 +25,7 @@ from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient
 from crypto.ml import gate as ml_gate
 from crypto.session import crypto_day, in_crypto_session, in_ny_window, ny_session_date
-from crypto.sizing import size_position
+from crypto.sizing import lots_from_margin_budget, size_position
 from crypto.strategies import cpr_trend
 from crypto.strategies import ichimoku as ichi
 from crypto.strategies import ny_n_break as nb
@@ -91,7 +91,9 @@ def _nb_cfg(s) -> nb.NBreakConfig:
     # cap gets more room (still tunable via the env var).
     default_cap = "6" if getattr(s, "nbreak_allround", False) else "3"
     return nb.NBreakConfig(
-        max_trades_per_session=int(os.getenv("CRYPTO_NBREAK_MAX_TRADES", default_cap) or default_cap),
+        max_trades_per_session=int(
+            os.getenv("CRYPTO_NBREAK_MAX_TRADES", default_cap) or default_cap
+        ),
         trail=_trail_cfg(s),
     )
 
@@ -147,14 +149,14 @@ _SIMPLE: dict[str, "Any"] = {}
 def _register_simple() -> None:
     from crypto.strategies import ak_roxx_pro, bb_reversal, ema_jaguar, vp_edge
 
-    _SIMPLE.update({
-        "bb_reversal": lambda s: (bb_reversal, "5m", 2, _bb_cfg(s)),
-        "ema_jaguar": lambda s: (ema_jaguar, "5m", 2, _ema_jaguar_cfg(s)),
-        "vp_edge": lambda s: (vp_edge, "15m", 6, _vp_edge_cfg(s)),
-        "ak_roxx_pro": lambda s: (
-            ak_roxx_pro, _ak_roxx_cfg(s).timeframe, 20, _ak_roxx_cfg(s)
-        ),
-    })
+    _SIMPLE.update(
+        {
+            "bb_reversal": lambda s: (bb_reversal, "5m", 2, _bb_cfg(s)),
+            "ema_jaguar": lambda s: (ema_jaguar, "5m", 2, _ema_jaguar_cfg(s)),
+            "vp_edge": lambda s: (vp_edge, "15m", 6, _vp_edge_cfg(s)),
+            "ak_roxx_pro": lambda s: (ak_roxx_pro, _ak_roxx_cfg(s).timeframe, 20, _ak_roxx_cfg(s)),
+        }
+    )
 
 
 _register_simple()
@@ -257,21 +259,32 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
         for sym in s.symbols:
             contract = contracts.get(sym)
             if not contract or not contract.usable:
-                events.append({"event": "skip", "strategy": strat, "asset": sym,
-                               "reason": "no usable contract"})
+                events.append(
+                    {
+                        "event": "skip",
+                        "strategy": strat,
+                        "asset": sym,
+                        "reason": "no usable contract",
+                    }
+                )
                 continue
             key = f"{strat}:{sym}"
             slot = dict(st.get(key) or {})
+            prev_strategy_state = slot.get("strategy")
             # outside the lane window with nothing open to manage → don't even
             # run the strategy: stepping it would churn its internal state
             # (armed levels, trade counters, traded-pivot lists) for an entry
             # we'd only suppress, and it wouldn't re-arm when the window opens.
             # A position opened earlier is still stepped so its exits fire.
             if not entries_open and not slot.get("position"):
-                events.append({
-                    "strategy": strat, "asset": sym, "event": "wait",
-                    "reason": f"outside crypto session {s.session_start}-{s.session_end} IST",
-                })
+                events.append(
+                    {
+                        "strategy": strat,
+                        "asset": sym,
+                        "event": "wait",
+                        "reason": f"outside crypto session {s.session_start}-{s.session_end} IST",
+                    }
+                )
                 continue
             try:
                 if strat == "ny_n_break":
@@ -282,8 +295,13 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                     nb_session = True if s.nbreak_allround else in_ny
                     nb_date = crypto_day(now_utc) if s.nbreak_allround else ny_date
                     new_state, ev = nb.step(
-                        sym, c5, c15, state=slot.get("strategy"), cfg=_nb_cfg(s),
-                        in_session=nb_session, session_date=nb_date,
+                        sym,
+                        c5,
+                        c15,
+                        state=slot.get("strategy"),
+                        cfg=_nb_cfg(s),
+                        in_session=nb_session,
+                        session_date=nb_date,
                     )
                     day, frame = nb_date, c5
                 elif strat == "ichimoku":
@@ -306,6 +324,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
 
                 slot["strategy"] = new_state
                 action = ev.get("event")
+                entered_signal = action == "enter"
 
                 # crypto has no session — force-close a position held across more
                 # than max_hold_days UTC-day boundaries, whatever the strategy
@@ -319,7 +338,9 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 ):
                     action = "exit"
                     ev = {
-                        "strategy": strat, "asset": sym, "event": "exit",
+                        "strategy": strat,
+                        "asset": sym,
+                        "event": "exit",
                         "side": slot["position"]["side"],
                         "price": float(frame["close"].iloc[-1]),
                         "reason": f"{s.max_hold_days}-day max hold",
@@ -340,21 +361,47 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                     st[key] = slot
                     journal.save_state(st)
                     open_by_strat[strat] = max(0, open_by_strat.get(strat, 0) - 1)
-                    events.append({"strategy": strat, "asset": sym, "event": "reaped",
-                                   "reason": "closed on exchange"})
+                    events.append(
+                        {
+                            "strategy": strat,
+                            "asset": sym,
+                            "event": "reaped",
+                            "reason": "closed on exchange",
+                        }
+                    )
                     continue
 
                 # window closed while we still hold a position: manage it (exits
                 # above already ran) but take no new entry the strategy emits.
                 if action == "enter" and not entries_open:
-                    events.append({"strategy": strat, "asset": sym, "event": "wait",
-                                   "reason": "outside crypto session"})
+                    events.append(
+                        {
+                            "strategy": strat,
+                            "asset": sym,
+                            "event": "wait",
+                            "reason": "outside crypto session",
+                        }
+                    )
                     action = "wait"
 
                 if action == "enter":
-                    _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
-                                 open_by_strat.get(strat, 0), sum(open_by_strat.values()),
-                                 frame, client=client, live=live, live_wallet=live_wallet)
+                    _apply_entry(
+                        ev,
+                        new_state,
+                        slot,
+                        s,
+                        contract,
+                        strat,
+                        sym,
+                        day,
+                        now_utc,
+                        open_by_strat.get(strat, 0),
+                        sum(open_by_strat.values()),
+                        frame,
+                        client=client,
+                        live=live,
+                        live_wallet=live_wallet,
+                    )
                     if slot.get("position"):
                         open_by_strat[strat] = open_by_strat.get(strat, 0) + 1
                 elif action == "exit":
@@ -375,8 +422,18 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         open_by_strat[strat] = max(0, open_by_strat.get(strat, 0) - 1)
                         ev.update(pnl_usd=row["pnl_usd"], pnl_inr=row["pnl_inr"])
             except Exception as exc:
-                events.append({"event": "error", "strategy": strat, "asset": sym, "error": str(exc)})
+                events.append(
+                    {"event": "error", "strategy": strat, "asset": sym, "error": str(exc)}
+                )
                 continue
+
+            # a signal that fired "enter" but never became a real lane position
+            # (rejected by max_concurrent/sizing/ML gate, or the window closed)
+            # must not keep the strategy's per-tick state change either — it
+            # already burned trades_today / consumed a swing level for nothing;
+            # undo it so the same setup can be retried once capacity frees up.
+            if entered_signal and not slot.get("position"):
+                slot["strategy"] = prev_strategy_state
 
             st[key] = slot
             try:
@@ -421,7 +478,10 @@ def _live_close(client, contract, pos: dict, ev: dict) -> bool:
     sym = pos.get("asset", "")
     try:
         resp = executor.place_exit(
-            client, contract, pos["side"], int(pos["size"]),
+            client,
+            contract,
+            pos["side"],
+            int(pos["size"]),
             client_order_id=f"x-{pos.get('strategy')}-{sym}-{ev.get('ts')}",
         )
         fp = executor.fill_price(client, resp.get("order_id"))
@@ -435,7 +495,9 @@ def _live_close(client, contract, pos: dict, ev: dict) -> bool:
         # journal it. Only a genuinely-still-open position is a stuck exposure.
         state = executor.position_state(client, sym)
         if state == "flat":
-            logger.warning("crypto live exit rejected but %s is FLAT on Delta — closing locally", sym)
+            logger.warning(
+                "crypto live exit rejected but %s is FLAT on Delta — closing locally", sym
+            )
             ev["exit_price_source"] = "estimate"
             return True
         logger.error("LIVE EXIT FAILED for %s %s (Delta: %s): %s", sym, pos.get("side"), state, exc)
@@ -461,7 +523,8 @@ def _reap_exchange_close(client, slot: dict, strat: str, sym: str, fx: float, ev
         mark = None
     close_ev = {
         "price": mark or pos.get("stop_price") or pos.get("entry_price"),
-        "reason": "closed on exchange", "ts": ev.get("ts"),
+        "reason": "closed on exchange",
+        "ts": ev.get("ts"),
         "exit_price_source": "estimate" if not mark else "mark",
     }
     row = _build_exit_row(close_ev, slot, strat, sym, fx)
@@ -473,13 +536,31 @@ def _reap_exchange_close(client, slot: dict, strat: str, sym: str, fx: float, ev
             notify.crypto_closed(row)
         logger.info(
             "crypto: %s %s closed on the exchange (bracket/manual), journalled at ~%s",
-            sym, str(pos.get("side")).upper(), close_ev["price"],
+            sym,
+            str(pos.get("side")).upper(),
+            close_ev["price"],
         )
     return True
 
 
-def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
-                 strat_open, total_open, frame=None, *, client=None, live=False, live_wallet=0.0):
+def _apply_entry(
+    ev,
+    new_state,
+    slot,
+    s,
+    contract,
+    strat,
+    sym,
+    day,
+    now_utc,
+    strat_open,
+    total_open,
+    frame=None,
+    *,
+    client=None,
+    live=False,
+    live_wallet=0.0,
+):
     if slot.get("position"):  # defensive — the engine already guards, but never double-open
         ev.update(event="hold", reason="position already open")
         return
@@ -489,13 +570,22 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
         return
     if s.max_open_total and total_open >= s.max_open_total:
         new_state["position"] = None
-        ev.update(event="wait", reason=f"portfolio cap: {s.max_open_total} open across all strategies")
+        ev.update(
+            event="wait", reason=f"portfolio cap: {s.max_open_total} open across all strategies"
+        )
         return
     entry_px = float(ev["price"])
     side = ev["side"]
     wallet = live_wallet if live else s.paper_bankroll_usd
+    lots = lots_from_margin_budget(
+        contract, entry_px, margin_usd=s.margin_per_position_usd, leverage=s.leverage
+    )
     sr = size_position(
-        contract, entry_px, lots=s.lots, deploy_usd=s.deploy_usd, leverage=s.leverage,
+        contract,
+        entry_px,
+        lots=lots,
+        deploy_usd=s.deploy_usd,
+        leverage=s.leverage,
         wallet_usd=wallet,
     )
     if not sr.ok:
@@ -521,7 +611,11 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
             return
         try:
             resp = executor.place_entry(
-                client, contract, side, sr.size, leverage=sr.leverage,
+                client,
+                contract,
+                side,
+                sr.size,
+                leverage=sr.leverage,
                 sl_price=bracket_stop_price(entry_px, side, _trail_cfg(s)),
                 client_order_id=f"{strat}-{sym}-{ev.get('ts')}",
             )
@@ -547,12 +641,18 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
             logger.warning("crypto fill lookup failed — using signal price", exc_info=True)
 
     pos = {
-        "strategy": strat, "asset": sym, "side": side, "day": day,
+        "strategy": strat,
+        "asset": sym,
+        "side": side,
+        "day": day,
         "mode": "live" if live else "paper",
-        "entry_price": entry_px, "entry_price_source": entry_src,
+        "entry_price": entry_px,
+        "entry_price_source": entry_src,
         "entry_time": ev.get("ts"),
-        "size": fill_size, "contract_value": contract.contract_value,
-        "leverage": sr.leverage, "margin_total_usd": sr.margin_total_usd,
+        "size": fill_size,
+        "contract_value": contract.contract_value,
+        "leverage": sr.leverage,
+        "margin_total_usd": sr.margin_total_usd,
         "notional_usd": round(fill_size * contract.contract_value * entry_px, 2),
         "stop_price": bracket_stop_price(entry_px, side, _trail_cfg(s)),
         "opened_at": now_utc.isoformat(),
@@ -561,8 +661,12 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
         "features": snapshot,
     }
     slot["position"] = pos
-    ev.update(size=fill_size, margin_usd=pos["margin_total_usd"], notional_usd=pos["notional_usd"],
-              mode=pos["mode"])
+    ev.update(
+        size=fill_size,
+        margin_usd=pos["margin_total_usd"],
+        notional_usd=pos["notional_usd"],
+        mode=pos["mode"],
+    )
     notify.crypto_opened(pos)
 
 
@@ -592,13 +696,17 @@ def _prune_removed_strategies(st, enabled, client, fx, now_utc, events) -> None:
             mark = mark or float(pos.get("entry_price") or 0)
             row = _build_exit_row(
                 {"price": mark, "reason": "strategy removed", "ts": now_utc.isoformat()},
-                slot, strat, sym, fx,
+                slot,
+                strat,
+                sym,
+                fx,
             )
             if row and not _already_journalled(row["exit_id"]):
                 journal.journal(row)
                 notify.crypto_closed(row)
-                events.append({"strategy": strat, "asset": sym, "event": "exit",
-                               "reason": "strategy removed"})
+                events.append(
+                    {"strategy": strat, "asset": sym, "event": "exit", "reason": "strategy removed"}
+                )
         st.pop(key, None)
         changed = True
     if changed:
@@ -621,19 +729,33 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
     )
     pnl_usd = gross - cost
     return {
-        "venue": "delta", "day": pos["day"], "strategy": strat, "asset": sym,
+        "venue": "delta",
+        "day": pos["day"],
+        "strategy": strat,
+        "asset": sym,
         "mode": pos.get("mode", "paper"),
         "exit_id": f"{strat}:{sym}:{pos.get('entry_time')}:{pos.get('opened_at')}",
         "opened_at": pos.get("opened_at"),
-        "order_id": pos.get("order_id"), "exit_order_id": ev.get("live_order_id"),
-        "side": pos["side"], "size": pos["size"], "leverage": pos["leverage"],
-        "entry_price": pos["entry_price"], "entry_time": pos["entry_time"],
-        "exit_price": exit_px, "exit_time": ev.get("ts"),
+        "order_id": pos.get("order_id"),
+        "exit_order_id": ev.get("live_order_id"),
+        "side": pos["side"],
+        "size": pos["size"],
+        "leverage": pos["leverage"],
+        "entry_price": pos["entry_price"],
+        "entry_time": pos["entry_time"],
+        "exit_price": exit_px,
+        "exit_time": ev.get("ts"),
         "closed_at": datetime.now(timezone.utc).isoformat(),
-        "margin_usd": pos["margin_total_usd"], "notional_usd": pos["notional_usd"],
-        "gross_usd": round(gross, 4), "fees_usd": round(cost, 4),
-        "pnl_usd": round(pnl_usd, 4), "pnl_inr": round(pnl_usd * fx, 2), "fx_usdinr": round(fx, 4),
-        "pnl_pct": round(gross / float(pos["notional_usd"]) * 100.0, 4) if pos.get("notional_usd") else 0.0,
+        "margin_usd": pos["margin_total_usd"],
+        "notional_usd": pos["notional_usd"],
+        "gross_usd": round(gross, 4),
+        "fees_usd": round(cost, 4),
+        "pnl_usd": round(pnl_usd, 4),
+        "pnl_inr": round(pnl_usd * fx, 2),
+        "fx_usdinr": round(fx, 4),
+        "pnl_pct": round(gross / float(pos["notional_usd"]) * 100.0, 4)
+        if pos.get("notional_usd")
+        else 0.0,
         "entry_reason": pos.get("entry_reason"),
         "exit_reason": ev.get("reason"),
         "peak_pnl_pct": pos.get("peak_pnl_pct"),
@@ -683,8 +805,12 @@ def _close_position_manual_locked(key: str, client: DeltaClient | None) -> dict[
         return {"ok": False, "error": f"no live price for {sym} — try again"}
 
     ev: dict[str, Any] = {
-        "strategy": strat, "asset": sym, "event": "exit",
-        "side": pos["side"], "price": mark, "reason": "manual close",
+        "strategy": strat,
+        "asset": sym,
+        "event": "exit",
+        "side": pos["side"],
+        "price": mark,
+        "reason": "manual close",
         "ts": datetime.now(timezone.utc).isoformat(),
     }
     if pos.get("mode") == "live":
@@ -693,7 +819,10 @@ def _close_position_manual_locked(key: str, client: DeltaClient | None) -> dict[
         except Exception as exc:
             return {"ok": False, "error": f"contract lookup failed for {sym}: {exc}"}
         if not _live_close(client, contract, pos, ev):
-            return {"ok": False, "error": "the live close order failed — position is still open, see server log"}
+            return {
+                "ok": False,
+                "error": "the live close order failed — position is still open, see server log",
+            }
 
     row = _build_exit_row(ev, slot, strat, sym, _fx_rate(client, s))
     if row is None:
@@ -710,18 +839,45 @@ def _close_position_manual_locked(key: str, client: DeltaClient | None) -> dict[
     return {"ok": True, "trade": row}
 
 
+def close_all_positions_manual(client: DeltaClient | None = None) -> dict[str, Any]:
+    """The dashboard's "Close all" button — force-exit every currently open
+    position (paper and live), one at a time, each through the exact same
+    close_position_manual() path (and its lock) as an individual Close click.
+    A key that fails (no live price, a failed live order) doesn't stop the
+    rest — the caller sees which closed and which didn't."""
+    keys = [k for k, v in journal.load_state().items() if isinstance(v, dict) and v.get("position")]
+    client = client or DeltaClient(crypto_settings())
+    results = {k: close_position_manual(k, client) for k in keys}
+    failed = {k: r.get("error") for k, r in results.items() if not r.get("ok")}
+    return {
+        "ok": not failed,
+        "attempted": len(keys),
+        "closed": [k for k, r in results.items() if r.get("ok")],
+        "failed": failed,
+    }
+
+
 if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
     from dataclasses import replace
 
     off = replace(
-        crypto_settings(), ny_nbreak_enabled=False, ichimoku_enabled=False,
-        ak_roxx_enabled=False, bb_reversal_enabled=False, ema_jaguar_enabled=False,
-        vp_edge_enabled=False, cpr_trend_enabled=False, trading_mode="PAPER", live_armed=False,
+        crypto_settings(),
+        ny_nbreak_enabled=False,
+        ichimoku_enabled=False,
+        ak_roxx_enabled=False,
+        bb_reversal_enabled=False,
+        ema_jaguar_enabled=False,
+        vp_edge_enabled=False,
+        cpr_trend_enabled=False,
+        trading_mode="PAPER",
+        live_armed=False,
     )
     crypto_settings = lambda: off  # noqa: E731 — stub for the self-check
     assert scan_crypto_paper() == []
     assert not enabled()
 
     assert close_position_manual("not-a-real-key-no-colon")["ok"] is False
-    assert close_position_manual("ny_n_break:NOSUCHPOS")["ok"] is False  # nothing open, no network hit
+    assert (
+        close_position_manual("ny_n_break:NOSUCHPOS")["ok"] is False
+    )  # nothing open, no network hit
     print("crypto.lanes self-check ok (all lanes off -> no-op)")
