@@ -130,28 +130,28 @@ export function DayReviewPanel() {
 
         {(r?.went_right?.length || r?.went_wrong?.length) ? (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] p-3">
-              <h4 className="mb-1.5 text-xs uppercase tracking-wide text-emerald-300/80">
+            <div className="rounded-lg border border-[var(--up)]/20 bg-[var(--up)]/[0.04] p-3">
+              <h4 className="mb-1.5 text-xs uppercase tracking-wide text-[var(--up)]/80">
                 What went right
               </h4>
               <ul className="space-y-1 text-sm text-slate-300">
                 {(r?.went_right ?? []).map((x, i) => (
                   <li key={i} className="flex gap-1.5">
-                    <span className="text-emerald-400">+</span>
+                    <span className="text-[var(--up)]">+</span>
                     {x}
                   </li>
                 ))}
                 {!r?.went_right?.length ? <li className="text-slate-500">—</li> : null}
               </ul>
             </div>
-            <div className="rounded-lg border border-rose-500/20 bg-rose-500/[0.04] p-3">
-              <h4 className="mb-1.5 text-xs uppercase tracking-wide text-rose-300/80">
+            <div className="rounded-lg border border-[var(--down)]/20 bg-[var(--down)]/[0.04] p-3">
+              <h4 className="mb-1.5 text-xs uppercase tracking-wide text-[var(--down)]/80">
                 What went wrong
               </h4>
               <ul className="space-y-1 text-sm text-slate-300">
                 {(r?.went_wrong ?? []).map((x, i) => (
                   <li key={i} className="flex gap-1.5">
-                    <span className="text-rose-400">−</span>
+                    <span className="text-[var(--down)]">−</span>
                     {x}
                   </li>
                 ))}
@@ -162,8 +162,8 @@ export function DayReviewPanel() {
         ) : null}
 
         {r?.watch?.length ? (
-          <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] p-3">
-            <h4 className="mb-1.5 text-xs uppercase tracking-wide text-amber-300/80">
+          <div className="mt-3 rounded-lg border border-[var(--warn)]/20 bg-[var(--warn)]/[0.04] p-3">
+            <h4 className="mb-1.5 text-xs uppercase tracking-wide text-[var(--warn)]/80">
               Watch tomorrow
             </h4>
             <ul className="space-y-1 text-sm text-slate-300">
@@ -218,11 +218,11 @@ export function DayReviewPanel() {
                 </div>
                 <dl className="mt-2 space-y-1 text-xs">
                   <div className="flex gap-2">
-                    <dt className="shrink-0 text-emerald-300/70">Why in</dt>
+                    <dt className="shrink-0 text-[var(--up)]/70">Why in</dt>
                     <dd className="text-slate-300">{t.signal_reason || '—'}</dd>
                   </div>
                   <div className="flex gap-2">
-                    <dt className="shrink-0 text-rose-300/70">Why out</dt>
+                    <dt className="shrink-0 text-[var(--down)]/70">Why out</dt>
                     <dd className="text-slate-300">
                       {t.is_open ? 'still open' : t.exit_reason || '—'}
                     </dd>

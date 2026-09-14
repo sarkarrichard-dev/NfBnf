@@ -80,8 +80,8 @@ export const OperationsPanel = memo(function OperationsPanel() {
           className={cn(
             'rounded-lg border px-3 py-1.5 text-sm font-semibold',
             canEnter
-              ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200'
-              : 'border-red-400/40 bg-red-400/10 text-red-200',
+              ? 'border-[var(--up)]/40 bg-[var(--up)]/10 text-[var(--up)]'
+              : 'border-[var(--down)]/40 bg-[var(--down)]/10 text-[var(--down)]',
           )}
         >
           {canEnter ? 'Ready to enter trades' : 'Not entering trades'}
@@ -93,7 +93,7 @@ export const OperationsPanel = memo(function OperationsPanel() {
           {blockers.map((b) => (
             <li
               key={b.code || b.title}
-              className="rounded border border-red-500/30 bg-red-950/25 px-3 py-2 text-xs text-red-100"
+              className="rounded border border-[var(--down)]/40 bg-[var(--down)]/10 px-3 py-2 text-xs text-[var(--down)]"
             >
               <strong>{b.title}</strong> — {b.detail}
             </li>
@@ -105,19 +105,19 @@ export const OperationsPanel = memo(function OperationsPanel() {
         {(data?.ok ?? []).map((item) => (
           <div
             key={item.code || item.title}
-            className="rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-2.5 py-2 text-xs"
+            className="rounded-lg border border-[var(--up)]/25 bg-[var(--up)]/10 px-2.5 py-2 text-xs"
           >
-            <p className="font-medium text-emerald-200">{item.title}</p>
-            <p className="mt-0.5 text-emerald-100/70">{item.detail}</p>
+            <p className="font-medium text-[var(--up)]">{item.title}</p>
+            <p className="mt-0.5 text-[var(--up)]/70">{item.detail}</p>
           </div>
         ))}
         {(data?.warnings ?? []).map((item) => (
           <div
             key={item.code || item.title}
-            className="rounded-lg border border-amber-500/25 bg-amber-950/20 px-2.5 py-2 text-xs"
+            className="rounded-lg border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-2.5 py-2 text-xs"
           >
-            <p className="font-medium text-amber-200">{item.title}</p>
-            <p className="mt-0.5 text-amber-100/80">{item.detail}</p>
+            <p className="font-medium text-[var(--warn)]">{item.title}</p>
+            <p className="mt-0.5 text-[var(--warn)]/80">{item.detail}</p>
           </div>
         ))}
       </div>

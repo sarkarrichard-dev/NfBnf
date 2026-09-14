@@ -202,8 +202,8 @@ function LegRow({ row, cols }: { row: LogRow; cols: ColFlags }) {
   const isRejected = row.status === 'LIVE_REJECTED'
   const sideCls =
     row.side === 'Sell'
-      ? 'text-red-300 border-red-500/30 bg-red-500/10'
-      : 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10'
+      ? 'text-[var(--down)] border-[var(--down)]/30 bg-[var(--down)]/10'
+      : 'text-[var(--up)] border-[var(--up)]/30 bg-[var(--up)]/10'
   const mtm = rowOpenMtm(row)
   const pnl =
     row.leg_pnl != null
@@ -234,7 +234,7 @@ function LegRow({ row, cols }: { row: LogRow; cols: ColFlags }) {
     <tr
       className={cn(
         'border-b border-slate-800/60 text-slate-200',
-        row.is_open && 'bg-emerald-500/[0.03]',
+        row.is_open && 'bg-[var(--up)]/[0.03]',
         isRejected && 'opacity-80',
       )}
     >
@@ -284,7 +284,7 @@ function LegRow({ row, cols }: { row: LogRow; cols: ColFlags }) {
         {pnl != null ? money(pnl) : '—'}
       </td>
       <td className="px-2 py-2 text-xs">
-        <span className={isRejected ? 'font-semibold text-red-400' : ''}>
+        <span className={isRejected ? 'font-semibold text-[var(--down)]' : ''}>
           {row.display_status || row.status || '—'}
         </span>
       </td>

@@ -86,31 +86,3 @@ export function Button({
     </button>
   )
 }
-
-/** Segmented control — used for period pickers and tab-like switches. */
-export function ButtonGroup({ children }: { children: ReactNode }) {
-  return (
-    <div className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-900/50 p-1">
-      {children}
-    </div>
-  )
-}
-
-export function ToggleButton({
-  active,
-  className,
-  ...rest
-}: ButtonProps & { active?: boolean }) {
-  return (
-    <Button
-      variant="ghost"
-      className={cn(
-        'rounded border-0',
-        active && 'bg-[var(--acc-soft)] text-[var(--acc)] hover:brightness-110',
-        className,
-      )}
-      aria-pressed={active}
-      {...rest}
-    />
-  )
-}

@@ -62,7 +62,7 @@ export function FeaturesPanel() {
             <span
               className={cn(
                 'rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                f.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-700/50 text-slate-400',
+                f.enabled ? 'bg-[var(--up)]/15 text-[var(--up)]' : 'bg-slate-700/50 text-slate-400',
               )}
             >
               {f.enabled ? 'on' : 'off'}

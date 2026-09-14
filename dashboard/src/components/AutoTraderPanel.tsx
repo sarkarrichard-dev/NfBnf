@@ -65,9 +65,9 @@ type AutoStatus = {
 }
 
 function actionClass(action?: string): string {
-  if (action === 'BUY_CALL') return 'border-emerald-500/30 bg-emerald-500/5'
-  if (action === 'BUY_PUT') return 'border-red-500/30 bg-red-500/5'
-  if (action === 'ERROR' || action === 'SKIP') return 'border-amber-500/30'
+  if (action === 'BUY_CALL') return 'border-[var(--up)]/30 bg-[var(--up)]/5'
+  if (action === 'BUY_PUT') return 'border-[var(--down)]/30 bg-[var(--down)]/5'
+  if (action === 'ERROR' || action === 'SKIP') return 'border-[var(--warn)]/30'
   return 'border-slate-700'
 }
 
@@ -157,20 +157,20 @@ export function AutoTraderPanel() {
       <p
         className={cn(
           'text-sm',
-          status?.last_error || status?.auth_blocked ? 'text-red-300' : 'text-slate-400',
+          status?.last_error || status?.auth_blocked ? 'text-[var(--down)]' : 'text-slate-400',
         )}
       >
         {parts.join(' · ')}
       </p>
 
       {tripped.length ? (
-        <p className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-sm text-amber-200">
+        <p className="rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 px-3 py-2 text-sm text-[var(--warn)]">
           Circuit breaker open on {tripped.join(', ')} — skipped until cooldown clears.
         </p>
       ) : null}
 
       {drift.length ? (
-        <p className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-sm text-amber-200">
+        <p className="rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 px-3 py-2 text-sm text-[var(--warn)]">
           Broker/journal drift: {drift.map((d) => `${d.kind} on ${d.security_id} (${d.expected_qty}→${d.broker_qty})`).join('; ')}
         </p>
       ) : null}
@@ -184,9 +184,9 @@ export function AutoTraderPanel() {
               className={cn(
                 'rounded border px-1.5 py-0.5 font-mono text-[10px]',
                 st.tripped
-                  ? 'border-amber-700 text-amber-300'
+                  ? 'border-[var(--warn)]/60 text-[var(--warn)]'
                   : st.failed > 0
-                    ? 'border-rose-800 text-rose-300'
+                    ? 'border-[var(--down)]/60 text-[var(--down)]'
                     : 'border-slate-700 text-slate-400',
               )}
             >
@@ -197,7 +197,7 @@ export function AutoTraderPanel() {
       ) : null}
 
       {heatmap.data?.error ? (
-        <p className="text-sm text-red-300">{heatmap.data.error}</p>
+        <p className="text-sm text-[var(--down)]">{heatmap.data.error}</p>
       ) : !cells.length ? (
         <p className="text-sm text-slate-500">No heatmap data — start scanner or wait for market.</p>
       ) : (

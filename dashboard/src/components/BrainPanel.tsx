@@ -73,13 +73,13 @@ export function BrainPanel() {
       <div className="flex flex-wrap items-center gap-2">
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-            armed ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-700/50 text-slate-300'
+            armed ? 'bg-[var(--up)]/15 text-[var(--up)]' : 'bg-slate-700/50 text-slate-300'
           }`}
         >
           {armed ? `Gate armed @ ${((data?.min_win_prob_gate ?? 0) * 100).toFixed(0)}%` : 'Gate not armed'}
         </span>
         {data?.seeded_with_backtest ? (
-          <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-xs text-amber-300">
+          <span className="rounded-full bg-[var(--warn)]/15 px-2.5 py-1 text-xs text-[var(--warn)]">
             seeded with backtest rows
           </span>
         ) : null}
@@ -99,8 +99,8 @@ export function BrainPanel() {
 
       {!armed ? (
         <p className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-400">
-          The gate arms only when walk-forward validation shows it beats trading every setup,
-          measured in rupees. Right now it does not{delta != null ? ` (${rupees(delta)} out-of-sample)` : ''},
+          The gate arms only when testing on trades it hasn't seen before shows it beats trading
+          every setup, measured in rupees. Right now it does not{delta != null ? ` (${rupees(delta)} on that held-back test)` : ''},
           so every setup passes and only the regime filter is active.
         </p>
       ) : null}
@@ -108,8 +108,8 @@ export function BrainPanel() {
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ['Training rows', `${data?.rows ?? 0} (${data?.live_rows ?? 0} live)`],
-          ['OOS without gate', rupees(data?.oos_static_rupees)],
-          ['OOS with gate', rupees(data?.oos_gated_rupees)],
+          ['Held-back test, gate off', rupees(data?.oos_static_rupees)],
+          ['Held-back test, gate on', rupees(data?.oos_gated_rupees)],
           ['Gate edge', rupees(delta)],
           ['Trades kept', data?.kept_fraction != null ? `${(data.kept_fraction * 100).toFixed(0)}%` : '—'],
           ['Model file', data?.model_present ? 'Present' : 'Missing'],
@@ -134,8 +134,8 @@ export function BrainPanel() {
                 key={name}
                 className={`rounded border px-2 py-1 font-mono text-xs ${
                   w >= 0
-                    ? 'border-emerald-800 text-emerald-300'
-                    : 'border-rose-800 text-rose-300'
+                    ? 'border-[var(--up)]/60 text-[var(--up)]'
+                    : 'border-[var(--down)]/60 text-[var(--down)]'
                 }`}
                 title={w >= 0 ? 'higher value → more likely a win' : 'higher value → more likely a loss'}
               >

@@ -1,11 +1,7 @@
 import { cn } from '../../lib/cn'
 import { STRATEGIES } from '../../lib/strategies'
 import { useStrategyStatus } from '../../hooks/useStrategyStatus'
-
-const rupee = (v?: number | null) =>
-  v == null ? '—' : `${v < 0 ? '-' : ''}₹${Math.abs(Math.round(v)).toLocaleString('en-IN')}`
-const pnlClass = (v?: number | null) =>
-  v == null || v === 0 ? 'text-slate-300' : v > 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'
+import { pnlClass, rupees } from '../LanesPanel'
 
 /** Deployments — what is actually running: strategy × lane × mode, with
  *  today's paper P&L per lane. One row per catalog strategy. */
@@ -53,10 +49,10 @@ export function DeploymentsView() {
                     </span>
                   </td>
                   <td className={cn('py-2 pr-3 text-right font-mono tabular-nums', pnlClass(live?.today?.net_rupees))}>
-                    {live?.today ? rupee(live.today.net_rupees) : '—'}
+                    {live?.today ? rupees(live.today.net_rupees) : '—'}
                   </td>
                   <td className={cn('py-2 pr-3 text-right font-mono tabular-nums', pnlClass(live?.allTime?.net_rupees))}>
-                    {live?.allTime ? rupee(live.allTime.net_rupees) : '—'}
+                    {live?.allTime ? rupees(live.allTime.net_rupees) : '—'}
                   </td>
                   <td className="py-2 text-right font-mono tabular-nums text-slate-300">{live?.open ?? 0}</td>
                 </tr>

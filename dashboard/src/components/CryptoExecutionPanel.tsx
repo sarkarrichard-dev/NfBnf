@@ -170,8 +170,8 @@ export function CryptoExecutionPanel() {
             >
               {isLive ? 'LIVE' : 'PAPER'}
             </span>
-            <span className="z-0 flex-1 text-center text-slate-500">Paper</span>
-            <span className="z-0 flex-1 text-center text-slate-500">Live</span>
+            <span className="z-0 flex-1 text-center text-slate-400">Paper</span>
+            <span className="z-0 flex-1 text-center text-slate-400">Live</span>
           </button>
           {isLive ? (
             <p
@@ -299,7 +299,7 @@ export function CryptoExecutionPanel() {
 
       {isLive ? (
         <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-          <dt className="text-slate-500">Whitelist on your Delta key</dt>
+          <dt className="text-slate-500">Allowed on your Delta key</dt>
           <dd className="font-mono text-slate-300">
             IPv4 {eg?.ipv4 ?? '—'}
             {eg?.ipv6 ? <span className="text-slate-600"> · IPv6 {eg.ipv6}</span> : null}
@@ -312,9 +312,9 @@ export function CryptoExecutionPanel() {
             )}
           >
             {eg?.delta_sees_ip
-              ? `${eg.delta_sees_ip} — not whitelisted; add this`
+              ? `${eg.delta_sees_ip} — not on the allow-list; add this`
               : eg?.forcing_ipv4
-                ? 'IPv4 pinned — whitelist the IPv4 above'
+                ? 'IPv4 pinned — add the IPv4 above to the allow-list'
                 : 'ok'}
           </dd>
           <dt className="text-slate-500">Kill switch</dt>

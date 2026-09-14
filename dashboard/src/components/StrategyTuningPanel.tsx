@@ -24,13 +24,13 @@ export function StrategyTuningPanel({ strategy }: Props) {
     ['Style', data.strategy_style],
     ['EMA', `${data.ema_fast_period} / ${data.ema_slow_period}`],
     ['Buy first', data.auto_trend_buy_first ? 'Yes' : 'No'],
-    ['Sideways credit', data.auto_credit_sideways_only ? 'Yes' : 'No'],
+    ['Credit sell only when sideways', data.auto_credit_sideways_only ? 'Yes' : 'No'],
     ['Breakout', data.breakout_lookback],
     ['Confirm bars', data.entry_confirmation_bars],
     ['Supertrend', `${data.supertrend_period} / ${data.supertrend_multiplier}`],
-    ['Sell gate', data.credit_confidence_gate],
-    ['Credit stop', data.credit_stop_loss_pct],
-    ['Credit profit', data.credit_profit_target_pct],
+    ['Credit sell confidence gate', data.credit_confidence_gate],
+    ['Credit sell stop %', data.credit_stop_loss_pct],
+    ['Credit sell target %', data.credit_profit_target_pct],
   ]
 
   return (

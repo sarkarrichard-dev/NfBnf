@@ -4,6 +4,7 @@ import { fx } from '../../lib/theme'
 import { money, pctRate, pnlClass, tradesForPeriod } from '../../lib/pnl'
 import { PeriodBar } from '../PeriodBar'
 import { SourceToggle, useTradeSource } from '../SourceToggle'
+import { StatTile } from '../ui/StatTile'
 import { EquityCurve } from '../charts/EquityCurve'
 import { PnlCalendar } from '../charts/PnlCalendar'
 import { useCryptoJournal } from '../../hooks/useCryptoJournal'
@@ -20,23 +21,6 @@ import type {
   PeriodKey,
   TradeRow,
 } from '../../types/analytics'
-
-function Tile({
-  label,
-  value,
-  cls,
-}: {
-  label: string
-  value: string
-  cls?: string
-}) {
-  return (
-    <div className={fx.card}>
-      <p className={fx.cardLabel}>{label}</p>
-      <p className={cn(fx.cardValue, 'text-base', cls || 'text-slate-100')}>{value}</p>
-    </div>
-  )
-}
 
 function Panel({
   title,
@@ -185,17 +169,17 @@ export function ReportsPage({
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        <Tile label="Realised P&L" value={money(m.net)} cls={pnlClass(m.net)} />
-        <Tile label="Trades" value={String(m.count)} />
-        <Tile label="Win rate" value={pctRate(m.winRate)} />
-        <Tile label="Avg win" value={money(m.avgWin)} cls="text-[var(--up)]" />
-        <Tile label="Avg loss" value={money(m.avgLoss)} cls="text-[var(--down)]" />
-        <Tile
+        <StatTile label="Realised P&L" value={money(m.net)} valueClass={pnlClass(m.net)} />
+        <StatTile label="Trades" value={String(m.count)} />
+        <StatTile label="Win rate" value={pctRate(m.winRate)} />
+        <StatTile label="Avg win" value={money(m.avgWin)} valueClass="text-[var(--up)]" />
+        <StatTile label="Avg loss" value={money(m.avgLoss)} valueClass="text-[var(--down)]" />
+        <StatTile
           label="Profit factor"
           value={m.pf === Infinity ? '∞' : m.pf ? m.pf.toFixed(2) : '—'}
-          cls={m.pf >= 1 ? 'text-[var(--up)]' : 'text-[var(--down)]'}
+          valueClass={m.pf >= 1 ? 'text-[var(--up)]' : 'text-[var(--down)]'}
         />
-        <Tile
+        <StatTile
           label="Avg capital / trade"
           value={
             m.avgCapital != null
@@ -203,10 +187,10 @@ export function ReportsPage({
               : '—'
           }
         />
-        <Tile
+        <StatTile
           label="Return on capital"
           value={m.roc != null ? `${(m.roc * 100).toFixed(1)}%` : '—'}
-          cls={(m.roc ?? 0) >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'}
+          valueClass={(m.roc ?? 0) >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'}
         />
       </div>
 

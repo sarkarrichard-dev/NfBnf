@@ -18,14 +18,14 @@ function PositionRowInner({ row }: { row: LogRow }) {
   const trend = getSeries(seriesKey)
 
   return (
-    <tr className="border-b border-slate-800/70 bg-emerald-500/[0.03] text-slate-200">
+    <tr className="border-b border-slate-800/70 bg-[var(--up)]/[0.03] text-slate-200">
       <td className="px-3 py-2">
         <span
           className={cn(
             'inline-flex h-6 w-6 items-center justify-center rounded text-[11px] font-bold',
             isBuy
-              ? 'border border-emerald-500/35 bg-emerald-500/15 text-emerald-300'
-              : 'border border-red-500/35 bg-red-500/15 text-red-300',
+              ? 'border border-[var(--up)]/35 bg-[var(--up)]/15 text-[var(--up)]'
+              : 'border border-[var(--down)]/35 bg-[var(--down)]/15 text-[var(--down)]',
           )}
           title={isBuy ? 'Buy' : 'Sell'}
         >
@@ -46,7 +46,7 @@ function PositionRowInner({ row }: { row: LogRow }) {
       <td
         className={cn(
           'px-3 py-2 text-right tabular-nums font-semibold',
-          qty >= 0 ? 'text-emerald-400' : 'text-red-400',
+          qty >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]',
         )}
       >
         {qty >= 0 ? '+' : ''}

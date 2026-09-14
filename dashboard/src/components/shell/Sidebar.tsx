@@ -27,8 +27,12 @@ export function Sidebar({
   return (
     <>
       {open ? (
-        <button
-          aria-label="Close menu"
+        // Dismiss-by-click backdrop, not a keyboard control — a real <button> here
+        // sat in the desktop Tab order even though `md:hidden` hid it visually.
+        // Closing while open by keyboard already works: picking a nav item calls
+        // onSelect, which closes the menu.
+        <div
+          aria-hidden="true"
           onClick={onClose}
           className="fixed inset-0 z-30 bg-black/50 md:hidden"
         />
@@ -45,7 +49,7 @@ export function Sidebar({
         {groups.map((g, gi) => (
           <div key={gi} className="mb-5">
             {g.label ? (
-              <p className="mb-1.5 px-2 font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-slate-600">
+              <p className="mb-1.5 px-2 font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-slate-400">
                 {g.label}
               </p>
             ) : null}

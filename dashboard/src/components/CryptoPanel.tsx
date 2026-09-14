@@ -17,6 +17,7 @@ import {
 } from '../lib/cryptoFmt'
 import type { DateRange, PeriodKey } from '../types/analytics'
 import { Button } from './ui/Button'
+import { StatTile } from './ui/StatTile'
 import { CollapsibleSection } from './CollapsibleSection'
 import { PeriodBar } from './PeriodBar'
 import { Sparkline } from './Sparkline'
@@ -88,7 +89,6 @@ type PaperPos = {
 }
 type Positions = {
   paper: PaperPos[]
-  live: unknown[]
   open_unrealized_usd: number
   open_unrealized_inr: number
 }
@@ -112,31 +112,6 @@ function equityCurve(rows: { pnl_usd: number }[]): number[] {
   const out: number[] = []
   for (const r of rows) out.push((out[out.length - 1] ?? 0) + (Number(r.pnl_usd) || 0))
   return out
-}
-
-function StatTile({
-  label,
-  value,
-  sub,
-  valueCls,
-  points,
-}: {
-  label: string
-  value: string
-  sub?: string
-  valueCls?: string
-  points?: number[]
-}) {
-  return (
-    <article className={fx.card}>
-      <p className={fx.cardLabel}>{label}</p>
-      <p className={cn(fx.cardValue, valueCls || 'text-slate-100')}>{value}</p>
-      {sub ? <p className="mt-0.5 text-[11px] text-slate-500 tabular-nums">{sub}</p> : null}
-      {points && points.length > 1 ? (
-        <Sparkline points={points} className="mt-1 w-full" height={14} />
-      ) : null}
-    </article>
-  )
 }
 
 export function CryptoPanel() {
@@ -206,7 +181,7 @@ export function CryptoPanel() {
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-slate-400">
         Delta Exchange India · perpetual futures. Paper by default; the Mode switch below arms
         real orders.
       </p>
@@ -239,12 +214,12 @@ export function CryptoPanel() {
             label="Win rate"
             value={st.win_rate == null ? '—' : `${(st.win_rate * 100).toFixed(1)}%`}
           />
-          <StatTile label="Realized ($)" value={usd(st.net_usd)} valueCls={pnlCls(st.net_usd)} />
-          <StatTile label="Realized (₹)" value={inr(st.net_inr)} valueCls={pnlCls(st.net_inr)} />
+          <StatTile label="Realized ($)" value={usd(st.net_usd)} valueClass={pnlCls(st.net_usd)} />
+          <StatTile label="Realized (₹)" value={inr(st.net_inr)} valueClass={pnlCls(st.net_inr)} />
           <StatTile
             label="Open MTM"
             value={usd(openMtmUsd)}
-            valueCls={pnlCls(openMtmUsd)}
+            valueClass={pnlCls(openMtmUsd)}
             sub={`${inr(openMtmInr)} · ${positions.data?.paper?.length ?? 0} pos`}
           />
         </div>
@@ -274,7 +249,7 @@ export function CryptoPanel() {
             on={!!s?.lanes.cpr_trend}
             onClick={() => cfg.mutate({ cpr_trend_enabled: !s?.lanes.cpr_trend })}
           />
-          <span className="text-[11px] text-slate-600">all off = paused</span>
+          <span className="text-[11px] text-slate-400">all off = paused</span>
         </div>
 
         {/* symbol picker */}
@@ -519,7 +494,7 @@ function LearningRow({ ml }: { ml: NonNullable<Status['ml']> }) {
       <span className="text-slate-300">{state}</span>
       <span className="text-slate-600">
         {ml.rows} trades · {ml.live_rows} live
-        {ok(ml.oos_delta_usd) ? ` · OOS Δ ${usd(ml.oos_delta_usd)}` : ''}
+        {ok(ml.oos_delta_usd) ? ` · held-back test edge ${usd(ml.oos_delta_usd)}` : ''}
         {ml.enabled ? '' : ' · gate off'}
       </span>
       <span className="text-slate-600">separate from the index model</span>
@@ -535,7 +510,7 @@ function LearningRow({ ml }: { ml: NonNullable<Status['ml']> }) {
                   {Object.entries(v.params ?? {})
                     .map(([p, val]) => `${p}=${val}`)
                     .join('/')}{' '}
-                  (OOS {usd(v.net_usd ?? 0)})
+                  (held-back test {usd(v.net_usd ?? 0)})
                 </span>
               ) : (
                 <span className="text-slate-600">no stable positive combo</span>
