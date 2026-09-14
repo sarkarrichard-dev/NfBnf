@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from index_ai.config import MEMORY_DIR
+from index_ai.config import MEMORY_DIR, settings
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.instruments import get_instrument
 from index_ai.market_clock import now_ist, now_ist_iso
@@ -391,23 +391,56 @@ def _recent_trades(limit: int = 50) -> list[dict[str, Any]]:
     return [json.loads(x) for x in lines[-limit:] if x.strip()][::-1]
 
 
+def _mark_price(client: DhanClient, key: str) -> float | None:
+    """Last 5m close for one instrument — reuses the same cached fetch the scan
+    loop uses, so this costs nothing extra on top of the running lane."""
+    try:
+        frame = _fetch(client, key, "5")
+        return float(frame["close"].iloc[-1]) if not frame.empty else None
+    except Exception:
+        return None
+
+
 def futures_paper_status() -> dict[str, Any]:
     state = _load_state()
     trades = _recent_trades(200)
     today = now_ist().date().isoformat()
     todays = [t for t in trades if str(t.get("exit_time", ""))[:10] == today]
+
+    client = DhanClient(settings().dhan)
+    open_positions: dict[str, Any] = {}
+    open_unrealized = 0.0
+    for k, v in state.items():
+        pos = v.get("position") if isinstance(v, dict) else None
+        if not pos:
+            continue
+        pos = dict(pos)
+        mark = _mark_price(client, k)
+        if mark is not None:
+            d = 1 if pos.get("dir") == "LONG" else -1
+            points = (mark - float(pos["entry"])) * d
+            pnl = points * _cfg(k).lot_size
+            pos["mark"] = round(mark, 2)
+            pos["unrealized_rupees"] = round(pnl, 2)
+            pos["unrealized_pct"] = (
+                round(points / float(pos["entry"]) * 100.0, 3) if pos.get("entry") else None
+            )
+            open_unrealized += pnl
+        else:  # no live mark — show the position but not a fake ₹0 P&L
+            pos["mark"] = None
+            pos["unrealized_rupees"] = None
+            pos["unrealized_pct"] = None
+        open_positions[k] = pos
+
     return {
         "enabled": enabled() or stock_paper_enabled(),
         "instruments": instruments(),
-        "open_positions": {
-            k: v.get("position")
-            for k, v in state.items()
-            if isinstance(v, dict) and v.get("position")
-        },
+        "open_positions": open_positions,
         "today": {
             "closed": len(todays),
             "net_rupees": round(sum(float(t["net_rupees"]) for t in todays), 2),
             "wins": sum(1 for t in todays if float(t["net_rupees"]) > 0),
+            "open_unrealized_rupees": round(open_unrealized, 2),
         },
         "all_time": {
             "closed": len(trades),

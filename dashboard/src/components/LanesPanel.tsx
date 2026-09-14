@@ -1,10 +1,21 @@
+import { cn } from '../lib/cn'
 import { pnlClass } from '../lib/pnl'
+
+type OpenPosition = {
+  dir?: string
+  entry?: number
+  stop?: number
+  entry_time?: string
+  mark?: number | null
+  unrealized_rupees?: number | null
+  unrealized_pct?: number | null
+}
 
 export type LaneStatus = {
   enabled?: boolean
   instruments?: string[]
-  open_positions?: Record<string, Record<string, unknown>>
-  today?: { closed?: number; net_rupees?: number; wins?: number }
+  open_positions?: Record<string, OpenPosition>
+  today?: { closed?: number; net_rupees?: number; wins?: number; open_unrealized_rupees?: number }
   all_time?: { closed?: number; net_rupees?: number }
 }
 
@@ -55,15 +66,38 @@ export function LaneCard({ title, data }: { title: string; data?: LaneStatus }) 
       </dl>
 
       {open.length ? (
-        <ul className="mt-2 space-y-1">
-          {open.map(([k, pos]) => (
-            <li key={k} className="rounded bg-slate-900/50 px-2 py-1 font-mono text-[11px] text-slate-300">
-              {k} · {String(pos.structure ?? pos.side ?? pos.dir ?? '')}{' '}
-              {pos.short_k != null ? `${pos.short_k}/${pos.long_k ?? '—'}` : String(pos.strike ?? pos.entry ?? '')}
-              {pos.max_loss_rupees != null ? ` · risk ${rupees(Number(pos.max_loss_rupees))}` : ''}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-2 overflow-x-auto rounded-lg border border-slate-800 bg-black/25">
+          <table className="min-w-full text-[11px]">
+            <thead className="text-slate-500">
+              <tr className="border-b border-slate-800 [&>th]:px-2.5 [&>th]:py-1.5 [&>th]:text-left [&>th]:font-medium">
+                <th>Instrument</th>
+                <th>Side</th>
+                <th>Entry → Mark</th>
+                <th>Stop</th>
+                <th className="text-right">Unrealised</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono text-slate-300">
+              {open.map(([k, pos]) => (
+                <tr key={k} className="border-b border-slate-800/60 [&>td]:px-2.5 [&>td]:py-1.5">
+                  <td className="font-sans font-medium text-slate-100">{k}</td>
+                  <td className={pos.dir === 'LONG' ? 'text-[var(--up)]' : 'text-[var(--down)]'}>
+                    {pos.dir ?? '—'}
+                  </td>
+                  <td className="tabular-nums">
+                    {pos.entry?.toFixed(2) ?? '—'} → {pos.mark != null ? pos.mark.toFixed(2) : '—'}
+                  </td>
+                  <td className="tabular-nums text-slate-500">{pos.stop?.toFixed(2) ?? '—'}</td>
+                  <td className={cn('text-right tabular-nums font-semibold', pnlClass(pos.unrealized_rupees))}>
+                    {pos.unrealized_rupees != null
+                      ? `${rupees(pos.unrealized_rupees)}${pos.unrealized_pct != null ? ` (${pos.unrealized_pct > 0 ? '+' : ''}${pos.unrealized_pct.toFixed(2)}%)` : ''}`
+                      : 'no live mark'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : null}
     </section>
   )

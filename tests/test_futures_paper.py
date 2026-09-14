@@ -91,6 +91,33 @@ def test_status_reads_journal(tmp_path, monkeypatch):
     assert st["all_time"]["net_rupees"] == 500
 
 
+def test_status_marks_open_position_to_market(tmp_path, monkeypatch):
+    monkeypatch.setattr(paper, "JOURNAL_PATH", tmp_path / "j.jsonl")
+    monkeypatch.setattr(paper, "STATE_PATH", tmp_path / "s.json")
+    monkeypatch.setenv("ENABLE_FUTURES_PAPER", "true")
+    state = {"NIFTY": {"position": {"dir": "LONG", "entry": 24000.0, "entry_time": "t0"}}}
+    paper._save_state(state)
+    monkeypatch.setattr(paper, "_fetch", lambda client, key, interval, days=2: _bars([24120.0]))
+    st = paper.futures_paper_status()
+    pos = st["open_positions"]["NIFTY"]
+    cfg = config_for("NIFTY")
+    assert pos["mark"] == 24120.0
+    assert pos["unrealized_rupees"] == round(120.0 * cfg.lot_size, 2)
+    assert st["today"]["open_unrealized_rupees"] == pos["unrealized_rupees"]
+
+
+def test_status_position_without_a_live_mark_shows_no_pnl(tmp_path, monkeypatch):
+    monkeypatch.setattr(paper, "JOURNAL_PATH", tmp_path / "j.jsonl")
+    monkeypatch.setattr(paper, "STATE_PATH", tmp_path / "s.json")
+    monkeypatch.setenv("ENABLE_FUTURES_PAPER", "true")
+    state = {"NIFTY": {"position": {"dir": "LONG", "entry": 24000.0, "entry_time": "t0"}}}
+    paper._save_state(state)
+    monkeypatch.setattr(paper, "_fetch", lambda client, key, interval, days=2: pd.DataFrame())
+    st = paper.futures_paper_status()
+    pos = st["open_positions"]["NIFTY"]
+    assert pos["mark"] is None and pos["unrealized_rupees"] is None
+
+
 def test_engine_trend_read_needs_agreement():
     up = _bars(list(np.linspace(24000, 24600, 40)), freq="15min")
     prev = _bars([23800] * 25, freq="15min")

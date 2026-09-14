@@ -168,7 +168,7 @@ function App() {
   const nav: NavGroup[] = [
     {
       items: [
-        { id: 'trade', label: 'Dashboard', icon: <IconGrid />, badge: openCount || null },
+        { id: 'trade', label: 'Index Options', icon: <IconGrid />, badge: openCount || null },
         { id: 'strategies', label: 'Strategies', icon: <IconLayers /> },
         { id: 'crypto', label: 'Crypto', icon: <IconCoin /> },
         { id: 'futures', label: 'Futures', icon: <IconChart /> },
