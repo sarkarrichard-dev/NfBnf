@@ -31,7 +31,7 @@ export type StrategyDef = {
   name: string
   kind: 'crypto' | 'index'
   /** which lane / status block reports it */
-  statusKey: 'ny_n_break' | 'ichimoku' | 'ak_roxx_pro' | 'index_options' | 'futures'
+  statusKey: 'ny_n_break' | 'ichimoku' | 'ak_roxx_pro' | 'cpr_trend' | 'index_options' | 'futures'
   engine: string
   instrument: string
   timeframe: string
@@ -142,6 +142,25 @@ export const STRATEGIES: StrategyDef[] = [
       { key: 'require_alpha2_agree', label: 'Require Alpha 2 to agree', group: 'signal', type: 'bool', default: false },
       ...TRAIL,
     ],
+  },
+  {
+    id: 'cpr_trend',
+    name: 'CPR Trend',
+    kind: 'crypto',
+    statusKey: 'cpr_trend',
+    engine: '5m · CPR + EMA + Supertrend (Indian-index signal)',
+    instrument: 'BTC / ETH / SOL / PAXG / XRP / BNB perp',
+    timeframe: '5m setup · 15m trend',
+    side: 'buying',
+    teaser: 'The same directional trend signal already live on NIFTY/BANKNIFTY/SENSEX, MCX and 20 NSE stock futures — reused as-is on crypto to see if it holds up here too.',
+    blurb:
+      'Richard, 2026-09-14: "can we use the same strategies that\'s working in the Indian market for the crypto." Runs the exact same CPR + EMA + Supertrend engine as the Indian indices, MCX commodities and stock futures — no crypto-specific tuning. Trend read on the 15m frame (CPR bias, EMA, Supertrend must all agree); entry on the 5m frame is a reclaim of the 5m EMA in the trend direction. Exit uses crypto\'s own P&L-based trailing stop, not the Indian point-based stop, so it is judged on the same percent-of-margin basis as every other crypto strategy. Runs alongside the existing crypto strategies, not instead of them — tracked separately per (strategy, instrument) so it earns its place on the evidence, not on a handful of early trades.',
+    reads:
+      'On the 15m frame, only trade when CPR bias, EMA and Supertrend all agree on direction. On the 5m frame, enter on a fresh reclaim of the EMA in that direction (skipped if price is already too extended past it). Trail the stop {stop_pnl_pct}% on margin.',
+    backtest: { window: 'paper since 2026-09-14', net: 'paper lane', trades: 0, note: 'brand new — being watched, not yet judged' },
+    paperDefault: true,
+    builder: true,
+    params: [...TRAIL],
   },
   {
     id: 'index_options',
