@@ -139,27 +139,38 @@ export function CommoditiesPanel() {
       {opens.length ? (
         <div>
           <p className={fx.cardLabel}>Open positions</p>
-          <ul className="mt-1 space-y-1">
-            {opens.map(([k, p]) => (
-              <li
-                key={k}
-                className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 rounded-lg bg-white/[0.02] px-3 py-1.5 text-xs"
-              >
-                <span className="font-semibold text-slate-100">
-                  {k} <span className="text-slate-400">{(p?.dir || '').toUpperCase()}</span>
-                </span>
-                <span className="font-mono text-[11px] text-slate-400">
-                  @ {p?.entry?.toFixed(1)} · SL {p?.stop?.toFixed(1)}
-                  {p?.mark != null ? <> · LTP {p.mark.toFixed(1)}</> : null}
-                </span>
-                <span className={cn('ml-auto font-mono text-[11px] font-semibold', pnlClass(p?.unrealized_rupees))}>
-                  {p?.unrealized_rupees != null
-                    ? `${rupees(p.unrealized_rupees)}${p.unrealized_pct != null ? ` (${p.unrealized_pct > 0 ? '+' : ''}${p.unrealized_pct.toFixed(2)}%)` : ''}`
-                    : 'no live mark'}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <div className="mt-1 overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
+            <table className="min-w-full text-[11px]">
+              <thead className="text-slate-500">
+                <tr className="border-b border-[var(--hair-soft)] [&>th]:px-2.5 [&>th]:py-1.5 [&>th]:text-left [&>th]:font-medium">
+                  <th>Contract</th>
+                  <th>Side</th>
+                  <th>Entry → Mark</th>
+                  <th>Stop</th>
+                  <th className="text-right">Unrealised</th>
+                </tr>
+              </thead>
+              <tbody className="font-mono text-slate-300">
+                {opens.map(([k, p]) => (
+                  <tr key={k} className="border-b border-[var(--hair-soft)] [&>td]:px-2.5 [&>td]:py-1.5">
+                    <td className="font-sans font-medium text-slate-100">{k}</td>
+                    <td className={p?.dir === 'LONG' ? 'text-[var(--up)]' : 'text-[var(--down)]'}>
+                      {(p?.dir || '—').toUpperCase()}
+                    </td>
+                    <td className="tabular-nums">
+                      {p?.entry?.toFixed(1) ?? '—'} → {p?.mark != null ? p.mark.toFixed(1) : '—'}
+                    </td>
+                    <td className="tabular-nums text-slate-500">{p?.stop?.toFixed(1) ?? '—'}</td>
+                    <td className={cn('text-right tabular-nums font-semibold', pnlClass(p?.unrealized_rupees))}>
+                      {p?.unrealized_rupees != null
+                        ? `${rupees(p.unrealized_rupees)}${p.unrealized_pct != null ? ` (${p.unrealized_pct > 0 ? '+' : ''}${p.unrealized_pct.toFixed(2)}%)` : ''}`
+                        : 'no live mark'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : null}
 
