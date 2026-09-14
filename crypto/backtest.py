@@ -20,7 +20,7 @@ from typing import Any
 import pandas as pd
 
 from crypto.charges import round_trip_cost_usd
-from crypto.config import PERP_SYMBOLS, crypto_settings
+from crypto.config import CRYPTO_ALLOWLIST, crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.products import Contract
 from crypto.session import in_ny_window, ny_session_date
@@ -29,6 +29,7 @@ from crypto.strategies import (
     ak_roxx_pro,
     bb_reversal,
     ema_jaguar,
+    funding_squeeze as fsq,
     ichimoku as ichi,
     ny_n_break as nb,
     tma_phoenix,
@@ -67,8 +68,18 @@ _SIMPLE = {
         "5m",
         lambda s, **kw: tma_phoenix.TmaPhoenixConfig(trail=_trail(s), **kw),
     ),
+    "funding_squeeze": (
+        fsq,
+        "1h",
+        lambda s, **kw: fsq.FundingSqueezeConfig(trail=_trail(s), **kw),
+    ),
 }
-_WIN_N = {"ichimoku": 220, "ak_roxx_pro": 60, "tma_phoenix": 340}  # ak_roxx: 34 EMA + prior hour
+_WIN_N = {
+    "ichimoku": 220,
+    "ak_roxx_pro": 60,
+    "tma_phoenix": 340,
+    "funding_squeeze": 24 * 14 + 5,  # its own 14-day funding rolling window + a few bars slack
+}  # ak_roxx: 34 EMA + prior hour
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 
 
@@ -229,6 +240,22 @@ def backtest_ny_n_break(sym: str, days: float, s) -> list[Trade]:
     return trades
 
 
+def _with_funding_rate(sym: str, price_df: pd.DataFrame, days: float) -> pd.DataFrame:
+    """Attach Delta's historical funding rate to a price frame as-of each bar
+    (funding only settles a few times a day; forward-fill between prints)."""
+    funding = market_data.funding_rate_history(sym, "1h", days=days)
+    if funding.empty:
+        return price_df.assign(funding_rate=float("nan"))
+    return pd.merge_asof(
+        price_df.sort_values("datetime"),
+        funding[["datetime", "close"]]
+        .rename(columns={"close": "funding_rate"})
+        .sort_values("datetime"),
+        on="datetime",
+        direction="backward",
+    )
+
+
 def backtest_simple(
     name: str,
     sym: str,
@@ -239,12 +266,17 @@ def backtest_simple(
     frame: pd.DataFrame | None = None,
 ) -> list[Trade]:
     """Generic replay for a strategy with the plain step(sym, candles, *, state, cfg)
-    shape (ichimoku / bb_reversal / ema_jaguar / vp_edge / ak_roxx_pro).
+    shape (ichimoku / bb_reversal / ema_jaguar / vp_edge / ak_roxx_pro / funding_squeeze).
     ``frame`` overrides the fetched candles (walk-forward optimiser, one fold)."""
     module, tf, make_cfg = _SIMPLE[name]
     tf = tf(s) if callable(tf) else tf
     contract = _contract(sym)
-    fr = frame if frame is not None else market_data.candles(sym, tf, days=days)
+    if frame is not None:
+        fr = frame
+    else:
+        fr = market_data.candles(sym, tf, days=days)
+        if name == "funding_squeeze":
+            fr = _with_funding_rate(sym, fr, days)
     win_n = _WIN_N.get(name, 160)
     if len(fr) < win_n + 10:
         return []
@@ -269,7 +301,9 @@ def run(
     days: float = 120, assets: list[str] | None = None, strategies: list[str] | None = None
 ) -> Result:
     s = crypto_settings()
-    assets = assets or list(PERP_SYMBOLS)
+    assets = assets or list(
+        s.symbols
+    )  # the actually-configured live roster, not the 4-symbol default
     strategies = strategies or ["ny_n_break", "ichimoku"]
     res = Result()
     for sym in assets:
@@ -284,7 +318,7 @@ def run(
 def _main() -> None:
     ap = argparse.ArgumentParser(description="Replay crypto strategies over Delta history")
     ap.add_argument("--days", type=float, default=120)
-    ap.add_argument("--asset", action="append", choices=list(PERP_SYMBOLS))
+    ap.add_argument("--asset", action="append", choices=list(CRYPTO_ALLOWLIST))
     ap.add_argument("--strategy", action="append", choices=ALL_STRATEGIES)
     args = ap.parse_args()
     res = run(args.days, args.asset, args.strategy)

@@ -227,3 +227,57 @@ timeframe the channel-break exit is actually built for.
 Lane default set to **1h** (`AkRoxxConfig.timeframe`, env `CRYPTO_AK_ROXX_TF`).
 The optimiser sweeps `upper_len` / `lower_len` / the CPR gate — that might close
 the gap, or not. Worth the forward paper week. **Do not arm crypto live.**
+
+---
+
+# funding_squeeze — 2026-09-15 (Claude-proposed, not from a video)
+
+Every crypto strategy above is trend-following (follow the move once it's
+already happening). All are flat or losing. This one is the opposite kind of
+bet: perps pay a **funding rate** every settlement to keep the perp price tied
+to spot; when a coin's funding is unusually extreme *relative to its own
+recent history*, one side is unusually crowded and leveraged, and a stall is
+often enough to force that crowd to unwind. Fades the crowded side (short when
+funding is far above its own rolling average and the bar just turned red, long
+when far below and the bar just turned green) once a rolling z-score of
+funding crosses `z_threshold`. Module `crypto/strategies/funding_squeeze.py`.
+
+**Data note:** Delta's published API docs have no funding-rate-history
+endpoint. `crypto/delta/market_data.funding_rate_history()` uses an
+undocumented `FUNDING:<symbol>` pseudo-symbol on the same public
+`/v2/history/candles` route (found by probing the live API 2026-09-15) — it
+returned ~200 days of real hourly history for BTCUSD when checked. Verify it
+still works before trusting a result built on it; Delta could change or
+remove it without notice since it isn't a supported endpoint.
+
+## Backtest — real Delta history + real charges, 150 days, all 6 live symbols
+
+| symbol | trades | net USD | win rate |
+|---|---:|---:|---:|
+| BNBUSD | 23 | **−$24** | 30% |
+| BTCUSD | 17 | **−$58** | 29% |
+| ETHUSD | 20 | **−$57** | 20% |
+| SOLUSD | 5 | **−$38** | 20% |
+| XRPUSD | 5 | **+$39** | 40% |
+| PAXGUSD | 0 | — | never crosses the threshold (gold-backed perp, funding barely moves) |
+| **total** | **70** | **−$138** | 27% |
+
+`avg win $27.08` vs `avg loss −$12.80` — a genuinely good ~2:1 payoff, unlike
+every trend-following lane above, but the 27% hit rate isn't enough to clear
+it (EV ≈ −$2/trade). A `z_threshold` sweep (2.0 / 2.5 / 3.0) stayed
+net-negative at every setting with no consistent direction (2.5 was the least
+bad, 2.0 and 3.0 both worse) — the pattern strategy-findings.md already warns
+about: a lone better-looking setting with neighbours that flip sign is noise,
+not a real optimum.
+
+## Status
+
+**Not wired into `crypto/lanes.py`.** Net-negative on the only measurement run
+so far, same structural verdict as everything else on this platform — the
+payoff shape is more interesting than any existing crypto lane's, so it isn't
+being written off outright the way `ema_pivot`/`fvg_scalp` were, but it has
+not earned a paper slot either. Kept as research tooling
+(`crypto/strategies/funding_squeeze.py`, `crypto.delta.market_data.
+funding_rate_history`, and the `funding_squeeze` entry in `crypto/backtest.py`)
+in case a different confirmation filter (the current one is just "the last
+candle turned the opposite colour") is worth trying later.
