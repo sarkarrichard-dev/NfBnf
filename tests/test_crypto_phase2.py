@@ -281,6 +281,7 @@ def test_lane_noop_when_disabled(monkeypatch):
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_AK_ROXX_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_CPR_TREND_ENABLED", "false")
     assert lanes.scan_crypto_paper() == []
     assert lanes.enabled() is False
 

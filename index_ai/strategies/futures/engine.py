@@ -23,7 +23,7 @@ FLAT, LONG, SHORT = 0, 1, -1
 
 @dataclass(frozen=True)
 class TrendRead:
-    direction: int          # FLAT / LONG / SHORT
+    direction: int  # FLAT / LONG / SHORT
     price: float
     cpr_bias: int
     ema_bias: int
@@ -89,7 +89,9 @@ def trend_read(bars15: pd.DataFrame, prev_day: pd.DataFrame, cfg: FuturesConfig)
         direction = FLAT
 
     reason = f"CPR {cpr_bias:+d} / EMA {ema_bias:+d} / ST {st_bias:+d}"
-    return TrendRead(direction, price, cpr_bias, ema_bias, st_bias, float(row["supertrend"]), reason)
+    return TrendRead(
+        direction, price, cpr_bias, ema_bias, st_bias, float(row["supertrend"]), reason
+    )
 
 
 def entry_trigger(bars5: pd.DataFrame, direction: int, cfg: FuturesConfig) -> tuple[bool, str]:
@@ -101,7 +103,12 @@ def entry_trigger(bars5: pd.DataFrame, direction: int, cfg: FuturesConfig) -> tu
     prev_c, cur_c = float(bars5["close"].iloc[-2]), float(bars5["close"].iloc[-1])
     prev_e, cur_e = float(ema.iloc[-2]), float(ema.iloc[-1])
 
-    extension = abs(cur_c - cur_e) / max(cur_e, 1.0) * 100.0
+    # floor guards only against division-by-zero — 1.0 used to double as that
+    # floor, which silently disabled this guard for any sub-$1 EMA (crypto
+    # alts like XRPUSD/DOGEUSD); index/commodity EMAs are always far above
+    # either floor so this changes nothing for them (trading-safety-reviewer,
+    # 2026-09-14).
+    extension = abs(cur_c - cur_e) / max(abs(cur_e), 1e-9) * 100.0
     if extension > cfg.max_extension_pct:
         return False, f"5m close {extension:.2f}% off the EMA — too extended"
 
