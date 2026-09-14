@@ -26,6 +26,7 @@ from crypto.delta.client import DeltaClient
 from crypto.ml import gate as ml_gate
 from crypto.session import crypto_day, in_crypto_session, in_ny_window, ny_session_date
 from crypto.sizing import size_position
+from crypto.strategies import cpr_trend
 from crypto.strategies import ichimoku as ichi
 from crypto.strategies import ny_n_break as nb
 from crypto.strategies.trailing import TrailConfig, bracket_stop_price
@@ -65,6 +66,8 @@ def _enabled_strategies(s) -> list[str]:
         out.append("ema_jaguar")
     if s.vp_edge_enabled:
         out.append("vp_edge")
+    if s.cpr_trend_enabled:
+        out.append("cpr_trend")
     return out
 
 
@@ -95,6 +98,10 @@ def _nb_cfg(s) -> nb.NBreakConfig:
 
 def _ichi_cfg(s) -> ichi.IchimokuConfig:
     return ichi.IchimokuConfig(trail=_trail_cfg(s))
+
+
+def _cpr_trend_cfg(s) -> cpr_trend.CprTrendConfig:
+    return cpr_trend.CprTrendConfig(trail=_trail_cfg(s))
 
 
 def _tuned(name: str) -> dict:
@@ -284,6 +291,13 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                     ch = _closed(market_data.candles(sym, s.ichimoku_tf, days=days, client=client))
                     new_state, ev = ichi.step(sym, ch, state=slot.get("strategy"), cfg=_ichi_cfg(s))
                     day, frame = crypto_day(now_utc), ch
+                elif strat == "cpr_trend":
+                    c5 = _closed(market_data.candles(sym, "5m", days=2, client=client))
+                    c15 = _closed(market_data.candles(sym, "15m", days=4, client=client))
+                    new_state, ev = cpr_trend.step(
+                        sym, c5, c15, state=slot.get("strategy"), cfg=_cpr_trend_cfg(s)
+                    )
+                    day, frame = crypto_day(now_utc), c5
                 else:
                     mod, tf, days_n, cfg = _SIMPLE[strat](s)
                     fr = _closed(market_data.candles(sym, tf, days=days_n, client=client))
@@ -555,7 +569,7 @@ def _apply_entry(ev, new_state, slot, s, contract, strat, sym, day, now_utc,
 def _known_strategies() -> set[str]:
     """Every strategy the current code can run — anything else in the state file
     is a leftover from a removed strategy (e.g. candle_renko)."""
-    return {"ny_n_break", "ichimoku"} | set(_SIMPLE)
+    return {"ny_n_break", "ichimoku", "cpr_trend"} | set(_SIMPLE)
 
 
 def _prune_removed_strategies(st, enabled, client, fx, now_utc, events) -> None:
@@ -702,7 +716,7 @@ if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
     off = replace(
         crypto_settings(), ny_nbreak_enabled=False, ichimoku_enabled=False,
         ak_roxx_enabled=False, bb_reversal_enabled=False, ema_jaguar_enabled=False,
-        vp_edge_enabled=False, trading_mode="PAPER", live_armed=False,
+        vp_edge_enabled=False, cpr_trend_enabled=False, trading_mode="PAPER", live_armed=False,
     )
     crypto_settings = lambda: off  # noqa: E731 — stub for the self-check
     assert scan_crypto_paper() == []

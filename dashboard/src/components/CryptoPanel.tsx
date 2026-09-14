@@ -31,6 +31,7 @@ type Status = {
     ny_n_break: boolean
     ichimoku: boolean
     ak_roxx_pro: boolean
+    cpr_trend: boolean
   }
   sizing: { lots: number; deploy_cap_usd: number; leverage: number; max_concurrent: number }
   trailing: {
@@ -267,6 +268,11 @@ export function CryptoPanel() {
             label="AK Roxx Pro"
             on={!!s?.lanes.ak_roxx_pro}
             onClick={() => cfg.mutate({ ak_roxx_enabled: !s?.lanes.ak_roxx_pro })}
+          />
+          <Chip
+            label="CPR Trend"
+            on={!!s?.lanes.cpr_trend}
+            onClick={() => cfg.mutate({ cpr_trend_enabled: !s?.lanes.cpr_trend })}
           />
           <span className="text-[11px] text-slate-600">all off = paused</span>
         </div>

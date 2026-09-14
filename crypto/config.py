@@ -93,6 +93,13 @@ class CryptoSettings:
     bb_reversal_enabled: bool
     ema_jaguar_enabled: bool
     vp_edge_enabled: bool
+    # the same CPR + EMA + Supertrend signal already live on the Indian indices,
+    # MCX commodities and stock futures (index_ai.strategies.futures.engine),
+    # reused here as a new candidate to see if it holds up on crypto too
+    # (Richard, 2026-09-14). Defaults on, same as the section's other actively-
+    # testing strategies — the video strategies above default off because they
+    # were already measured net-negative; this one hasn't been measured yet.
+    cpr_trend_enabled: bool
     # Lane-level trading window, IST, 24h "HH:MM". NEW ENTRIES fire only inside
     # this window (default 16:00–06:00 — the evening + overnight, US/crypto-active
     # hours); the daytime belongs to the Indian lanes. Open positions are managed
@@ -156,6 +163,7 @@ def crypto_settings() -> CryptoSettings:
         bb_reversal_enabled=_b("CRYPTO_BB_REVERSAL_ENABLED", False),
         ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
         vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
+        cpr_trend_enabled=_b("CRYPTO_CPR_TREND_ENABLED", True),
         session_start=os.getenv("CRYPTO_SESSION_START", "16:00").strip(),
         session_end=os.getenv("CRYPTO_SESSION_END", "06:00").strip(),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
@@ -189,6 +197,7 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_BB_REVERSAL_ENABLED",
     "CRYPTO_EMA_JAGUAR_ENABLED",
     "CRYPTO_VP_EDGE_ENABLED",
+    "CRYPTO_CPR_TREND_ENABLED",
     "CRYPTO_NBREAK_ALLROUND",
     "CRYPTO_NBREAK_MAX_TRADES",
     "CRYPTO_SESSION_START",

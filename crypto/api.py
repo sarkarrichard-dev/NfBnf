@@ -51,6 +51,7 @@ def crypto_status() -> dict:
             "ny_n_break": s.ny_nbreak_enabled,
             "ichimoku": s.ichimoku_enabled,
             "ak_roxx_pro": s.ak_roxx_enabled,
+            "cpr_trend": s.cpr_trend_enabled,
         },
         "sizing": {
             "lots": s.lots,
@@ -392,6 +393,7 @@ def set_config(
     ny_n_break_enabled: bool | None = Body(None, embed=True),
     ichimoku_enabled: bool | None = Body(None, embed=True),
     ak_roxx_enabled: bool | None = Body(None, embed=True),
+    cpr_trend_enabled: bool | None = Body(None, embed=True),
     nbreak_allround: bool | None = Body(None, embed=True),
     session_start: str | None = Body(None, embed=True),
     session_end: str | None = Body(None, embed=True),
@@ -428,6 +430,8 @@ def set_config(
         values["CRYPTO_ICHIMOKU_ENABLED"] = "true" if ichimoku_enabled else "false"
     if ak_roxx_enabled is not None:
         values["CRYPTO_AK_ROXX_ENABLED"] = "true" if ak_roxx_enabled else "false"
+    if cpr_trend_enabled is not None:
+        values["CRYPTO_CPR_TREND_ENABLED"] = "true" if cpr_trend_enabled else "false"
     if nbreak_allround is not None:
         values["CRYPTO_NBREAK_ALLROUND"] = "true" if nbreak_allround else "false"
     for name, raw in (("CRYPTO_SESSION_START", session_start), ("CRYPTO_SESSION_END", session_end)):
