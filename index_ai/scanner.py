@@ -708,6 +708,22 @@ async def _run_loop() -> None:
                 await _run_eod_if_due()
             except Exception as exc:  # never fatal
                 _log("cycle_error", stage="eod_report_closed", error=_friendly_error(exc))
+            try:  # once per calendar day — never for a routine weekend, only a real holiday
+                from index_ai.market_clock import now_ist
+                from index_ai.market_holidays import is_nse_holiday
+                from index_ai.notify import alert
+
+                today = now_ist().date().isoformat()
+                if is_nse_holiday(today):
+                    alert(
+                        f"\U0001f4c5 <b>MARKET HOLIDAY</b> — {today}\n"
+                        "NSE/BSE and the index-futures paper lane are paused today. "
+                        "MCX commodities keep their own calendar and may still trade this evening.",
+                        key=f"holiday:{today}",
+                        window_s=20 * 3600.0,
+                    )
+            except Exception:
+                pass
             from index_ai.daily_ops import eod_due
             from index_ai.market_clock import seconds_to_next_session_open
 

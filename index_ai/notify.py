@@ -316,6 +316,7 @@ _STRAT_TAG = {
     "ny_n_break": "6PM",
     "ichimoku": "Ichimoku",
     "ak_roxx_pro": "AKRoxx",
+    "cpr_trend": "CPRTrend",
 }
 
 
