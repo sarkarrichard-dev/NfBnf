@@ -51,8 +51,14 @@ def _last_confirmed(series: pd.Series) -> float | None:
     return float(s.iloc[-1]) if len(s) else None
 
 
-def _arm(pivots: pd.Series, on_side: pd.Series, ts_series: pd.Series, r: int,
-         cur_lvl: float | None, cur_ts: str | None) -> tuple[float | None, str | None]:
+def _arm(
+    pivots: pd.Series,
+    on_side: pd.Series,
+    ts_series: pd.Series,
+    r: int,
+    cur_lvl: float | None,
+    cur_ts: str | None,
+) -> tuple[float | None, str | None]:
     """Arm from the most recent confirmed swing whose pivot bar was on-side.
     Returns (level, pivot_bar_timestamp) unchanged if nothing new qualifies —
     so a level already traded (level cleared, ts kept) is not re-armed until a
@@ -90,8 +96,12 @@ def step(
     # new session → reset arm levels + counter
     if st["session_date"] != session_date:
         st.update(
-            long_lvl=None, long_lvl_ts=None, short_lvl=None, short_lvl_ts=None,
-            trades_today=0, session_date=session_date,
+            long_lvl=None,
+            long_lvl_ts=None,
+            short_lvl=None,
+            short_lvl_ts=None,
+            trades_today=0,
+            session_date=session_date,
         )
 
     close5 = c5["close"].astype(float)
@@ -108,12 +118,20 @@ def step(
     below = _side_series(c5, ema_v, vwap_v, upper=False)
     tss = c5["datetime"].astype(str).reset_index(drop=True)
     st["long_lvl"], st["long_lvl_ts"] = _arm(
-        ph.reset_index(drop=True), above.reset_index(drop=True), tss,
-        cfg.swing_right, st["long_lvl"], st["long_lvl_ts"],
+        ph.reset_index(drop=True),
+        above.reset_index(drop=True),
+        tss,
+        cfg.swing_right,
+        st["long_lvl"],
+        st["long_lvl_ts"],
     )
     st["short_lvl"], st["short_lvl_ts"] = _arm(
-        pl.reset_index(drop=True), below.reset_index(drop=True), tss,
-        cfg.swing_right, st["short_lvl"], st["short_lvl_ts"],
+        pl.reset_index(drop=True),
+        below.reset_index(drop=True),
+        tss,
+        cfg.swing_right,
+        st["short_lvl"],
+        st["short_lvl_ts"],
     )
 
     pos = st["position"]
@@ -124,11 +142,25 @@ def step(
         reason = None
         if not in_session:
             reason = "session end"
-        elif (trail_reason := update_and_check(pos, price, cfg.trail)):
+        elif trail_reason := update_and_check(pos, price, cfg.trail):
             reason = trail_reason
         else:
-            sh15 = _last_confirmed(pivot_high(c15["close"].astype(float), cfg.exit_swing_left, cfg.exit_swing_right)) if len(c15) else None
-            sl15 = _last_confirmed(pivot_low(c15["close"].astype(float), cfg.exit_swing_left, cfg.exit_swing_right)) if len(c15) else None
+            sh15 = (
+                _last_confirmed(
+                    pivot_high(
+                        c15["close"].astype(float), cfg.exit_swing_left, cfg.exit_swing_right
+                    )
+                )
+                if len(c15)
+                else None
+            )
+            sl15 = (
+                _last_confirmed(
+                    pivot_low(c15["close"].astype(float), cfg.exit_swing_left, cfg.exit_swing_right)
+                )
+                if len(c15)
+                else None
+            )
             c15close = c15["close"].astype(float) if len(c15) else pd.Series(dtype=float)
             if side == "long" and crossed_under(c15close, sl15):
                 reason = "15m inverted-N"
@@ -136,7 +168,15 @@ def step(
                 reason = "15m N"
         if reason:
             st["position"] = None
-            ev.update(event="exit", side=side, price=price, reason=reason, ts=ts)
+            ev.update(
+                event="exit",
+                side=side,
+                price=price,
+                reason=reason,
+                ts=ts,
+                peak_pnl_pct=pos.get("peak_pnl_pct"),
+                trail_stop_pnl_pct=pos.get("trail_stop_pnl_pct"),
+            )
         else:
             ev.update(event="hold", side=side, price=price)
         return st, ev
@@ -151,21 +191,31 @@ def step(
 
     if st["long_lvl"] is not None and crossed_over(close5, st["long_lvl"]):
         lvl = st["long_lvl"]
-        st.update(position={"side": "long", "entry_price": price, "entry_time": ts},
-                  long_lvl=None, trades_today=st["trades_today"] + 1)
+        st.update(
+            position={"side": "long", "entry_price": price, "entry_time": ts},
+            long_lvl=None,
+            trades_today=st["trades_today"] + 1,
+        )
         ev.update(event="enter", side="long", price=price, reason=f"N-break over {lvl:,.1f}", ts=ts)
     elif st["short_lvl"] is not None and crossed_under(close5, st["short_lvl"]):
         lvl = st["short_lvl"]
-        st.update(position={"side": "short", "entry_price": price, "entry_time": ts},
-                  short_lvl=None, trades_today=st["trades_today"] + 1)
-        ev.update(event="enter", side="short", price=price, reason=f"inverted-N under {lvl:,.1f}", ts=ts)
+        st.update(
+            position={"side": "short", "entry_price": price, "entry_time": ts},
+            short_lvl=None,
+            trades_today=st["trades_today"] + 1,
+        )
+        ev.update(
+            event="enter", side="short", price=price, reason=f"inverted-N under {lvl:,.1f}", ts=ts
+        )
     else:
         armed = st["long_lvl"] is not None or st["short_lvl"] is not None
         ev.update(event="wait", reason="waiting for the N-break" if armed else "no setup yet")
     return st, ev
 
 
-def _side_series(c5: pd.DataFrame, ema_v: pd.Series, vwap_v: pd.Series, *, upper: bool = True) -> pd.Series:
+def _side_series(
+    c5: pd.DataFrame, ema_v: pd.Series, vwap_v: pd.Series, *, upper: bool = True
+) -> pd.Series:
     close = c5["close"].astype(float)
     if upper:
         return (close > ema_v) & (close > vwap_v)
@@ -175,13 +225,22 @@ def _side_series(c5: pd.DataFrame, ema_v: pd.Series, vwap_v: pd.Series, *, upper
 if __name__ == "__main__":  # self-check — synthetic N-break
     n = 60
     # build: rise, pull back forming a swing high ~ index 40, then re-break it
-    closes = list(range(100, 140)) + [138, 136, 135, 137, 139, 141, 143, 145, 147, 149] + list(range(150, 160))
+    closes = (
+        list(range(100, 140))
+        + [138, 136, 135, 137, 139, 141, 143, 145, 147, 149]
+        + list(range(150, 160))
+    )
     closes = closes[:n]
     df5 = pd.DataFrame(
         {
-            "datetime": pd.date_range("2026-09-07 18:00", periods=n, freq="5min", tz="Asia/Kolkata"),
-            "open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-            "close": closes, "volume": [10.0] * n,
+            "datetime": pd.date_range(
+                "2026-09-07 18:00", periods=n, freq="5min", tz="Asia/Kolkata"
+            ),
+            "open": closes,
+            "high": [c + 1 for c in closes],
+            "low": [c - 1 for c in closes],
+            "close": closes,
+            "volume": [10.0] * n,
         }
     )
     df15 = df5.iloc[::3].reset_index(drop=True)
@@ -189,8 +248,15 @@ if __name__ == "__main__":  # self-check — synthetic N-break
     state = None
     fired = None
     for i in range(30, n):
-        state, ev = step("BTCUSD", df5.iloc[: i + 1], df15, state=state, cfg=cfg,
-                         in_session=True, session_date="2026-09-07")
+        state, ev = step(
+            "BTCUSD",
+            df5.iloc[: i + 1],
+            df15,
+            state=state,
+            cfg=cfg,
+            in_session=True,
+            session_date="2026-09-07",
+        )
         if ev["event"] == "enter":
             fired = ev
             break

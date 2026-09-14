@@ -758,8 +758,12 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
         else 0.0,
         "entry_reason": pos.get("entry_reason"),
         "exit_reason": ev.get("reason"),
-        "peak_pnl_pct": pos.get("peak_pnl_pct"),
-        "trail_stop_pnl_pct": pos.get("trail_stop_pnl_pct"),
+        # from the strategy's own internal position (trailing.update_and_check
+        # writes these there, not onto the lane's bookkeeping ``pos`` above) —
+        # the strategy hands them over on the exit event since its own copy of
+        # ``position`` is already cleared to None by the time we get here.
+        "peak_pnl_pct": ev.get("peak_pnl_pct"),
+        "trail_stop_pnl_pct": ev.get("trail_stop_pnl_pct"),
         "features": pos.get("features") or {},
     }
 

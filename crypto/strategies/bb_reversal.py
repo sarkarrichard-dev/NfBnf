@@ -17,7 +17,13 @@ from typing import Any
 
 import pandas as pd
 
-from crypto.strategies.indicators import bollinger, crossed_over, crossed_under, pivot_high, pivot_low
+from crypto.strategies.indicators import (
+    bollinger,
+    crossed_over,
+    crossed_under,
+    pivot_high,
+    pivot_low,
+)
 from crypto.strategies.trailing import TrailConfig, update_and_check
 
 
@@ -27,13 +33,18 @@ class BBReversalConfig:
     bb_dev: float = 2.0
     swing_left: int = 3
     swing_right: int = 2
-    min_bandwidth_pct: float = 0.15   # skip a dead-flat market (band width / mid, %)
+    min_bandwidth_pct: float = 0.15  # skip a dead-flat market (band width / mid, %)
     trail: TrailConfig = field(default_factory=TrailConfig)
 
 
 def _blank_state() -> dict[str, Any]:
-    return {"position": None, "long_lvl": None, "long_lvl_i": None,
-            "short_lvl": None, "short_lvl_i": None}
+    return {
+        "position": None,
+        "long_lvl": None,
+        "long_lvl_i": None,
+        "short_lvl": None,
+        "short_lvl_i": None,
+    }
 
 
 def step(
@@ -86,7 +97,15 @@ def step(
         reason = update_and_check(pos, price, cfg.trail)
         if reason:
             st["position"] = None
-            ev.update(event="exit", side=side, price=price, reason=reason, ts=ts)
+            ev.update(
+                event="exit",
+                side=side,
+                price=price,
+                reason=reason,
+                ts=ts,
+                peak_pnl_pct=pos.get("peak_pnl_pct"),
+                trail_stop_pnl_pct=pos.get("trail_stop_pnl_pct"),
+            )
         else:
             ev.update(event="hold", side=side, price=price)
         return st, ev
@@ -94,16 +113,30 @@ def step(
     if st["long_lvl"] is not None and crossed_over(close, st["long_lvl"]):
         lvl = st["long_lvl"]
         st.update(position={"side": "long", "entry_price": price, "entry_time": ts}, long_lvl=None)
-        ev.update(event="enter", side="long", price=price,
-                  reason=f"W break over {lvl:,.1f} (lower band {lo_band:,.1f})", ts=ts)
+        ev.update(
+            event="enter",
+            side="long",
+            price=price,
+            reason=f"W break over {lvl:,.1f} (lower band {lo_band:,.1f})",
+            ts=ts,
+        )
     elif st["short_lvl"] is not None and crossed_under(close, st["short_lvl"]):
         lvl = st["short_lvl"]
-        st.update(position={"side": "short", "entry_price": price, "entry_time": ts}, short_lvl=None)
-        ev.update(event="enter", side="short", price=price,
-                  reason=f"M break under {lvl:,.1f} (upper band {up_band:,.1f})", ts=ts)
+        st.update(
+            position={"side": "short", "entry_price": price, "entry_time": ts}, short_lvl=None
+        )
+        ev.update(
+            event="enter",
+            side="short",
+            price=price,
+            reason=f"M break under {lvl:,.1f} (upper band {up_band:,.1f})",
+            ts=ts,
+        )
     else:
         armed = st["long_lvl"] is not None or st["short_lvl"] is not None
-        ev.update(event="wait", reason="waiting for the W/M break" if armed else "no band-edge setup")
+        ev.update(
+            event="wait", reason="waiting for the W/M break" if armed else "no band-edge setup"
+        )
     return st, ev
 
 
@@ -112,16 +145,34 @@ if __name__ == "__main__":  # self-check — price pierces the lower band, bounc
 
     rng = np.random.default_rng(2)
     closes = (
-        list(100 + rng.normal(0, 0.8, 20))         # choppy → real band width
-        + [98, 95, 91, 87, 90, 93, 91, 88, 92, 96, 100, 104]  # pierce band, bounce, dip, rally-through
+        list(100 + rng.normal(0, 0.8, 20))  # choppy → real band width
+        + [
+            98,
+            95,
+            91,
+            87,
+            90,
+            93,
+            91,
+            88,
+            92,
+            96,
+            100,
+            104,
+        ]  # pierce band, bounce, dip, rally-through
         + [104.0] * 6
     )
     n = len(closes)
-    df = pd.DataFrame({
-        "datetime": pd.date_range("2026-09-01", periods=n, freq="5min", tz="UTC"),
-        "open": closes, "high": [c + 0.5 for c in closes], "low": [c - 0.5 for c in closes],
-        "close": closes, "volume": [5.0] * n,
-    })
+    df = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-09-01", periods=n, freq="5min", tz="UTC"),
+            "open": closes,
+            "high": [c + 0.5 for c in closes],
+            "low": [c - 0.5 for c in closes],
+            "close": closes,
+            "volume": [5.0] * n,
+        }
+    )
     cfg = BBReversalConfig(bb_len=14, bb_dev=2.0, swing_left=2, swing_right=1)
     state, fired = None, None
     for i in range(16, n):

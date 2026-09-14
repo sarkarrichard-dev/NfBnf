@@ -49,8 +49,11 @@ def step(
         return st, ev
 
     frame = compute_ichimoku(
-        candles, conversion=cfg.conversion, base=cfg.base,
-        span_b=cfg.span_b, displacement=cfg.displacement,
+        candles,
+        conversion=cfg.conversion,
+        base=cfg.base,
+        span_b=cfg.span_b,
+        displacement=cfg.displacement,
     )
     row, prev = frame.iloc[-1], frame.iloc[-2]
     if pd.isna(row["cloud_top"]) or pd.isna(row["senkou_b"]):
@@ -81,38 +84,63 @@ def step(
         reason = update_and_check(pos, price, cfg.trail)
         if not reason:
             should_exit, why = cloud_reentry_exit(
-                direction, candles, conversion=cfg.conversion, base=cfg.base,
-                span_b=cfg.span_b, displacement=cfg.displacement,
+                direction,
+                candles,
+                conversion=cfg.conversion,
+                base=cfg.base,
+                span_b=cfg.span_b,
+                displacement=cfg.displacement,
             )
             if should_exit:
                 reason = why or "cloud re-entry"
         if reason:
             st["position"] = None
-            ev.update(event="exit", side=side, price=price, reason=reason, ts=ts)
+            ev.update(
+                event="exit",
+                side=side,
+                price=price,
+                reason=reason,
+                ts=ts,
+                peak_pnl_pct=pos.get("peak_pnl_pct"),
+                trail_stop_pnl_pct=pos.get("trail_stop_pnl_pct"),
+            )
         else:
             ev.update(event="hold", side=side, price=price)
         return st, ev
 
     if cross_up and above_cloud and bull_cloud:
         st["position"] = {"side": "long", "entry_price": price, "entry_time": ts}
-        ev.update(event="enter", side="long", price=price, reason="TK cross up above a bull Kumo", ts=ts)
+        ev.update(
+            event="enter", side="long", price=price, reason="TK cross up above a bull Kumo", ts=ts
+        )
     elif cross_dn and below_cloud and not bull_cloud:
         st["position"] = {"side": "short", "entry_price": price, "entry_time": ts}
-        ev.update(event="enter", side="short", price=price, reason="TK cross down below a bear Kumo", ts=ts)
+        ev.update(
+            event="enter",
+            side="short",
+            price=price,
+            reason="TK cross down below a bear Kumo",
+            ts=ts,
+        )
     else:
         ev.update(event="wait", reason="no Ichimoku entry")
     return st, ev
 
 
-if __name__ == "__main__":  # self-check — a dip then a rally: TK crosses up above the (lagged) cloud
+if (
+    __name__ == "__main__"
+):  # self-check — a dip then a rally: TK crosses up above the (lagged) cloud
     n = 160
     closes = [120 - 0.15 * i for i in range(90)] + [106.5 + 1.2 * i for i in range(70)]
     closes = closes[:n]
     df = pd.DataFrame(
         {
             "datetime": pd.date_range("2026-08-01", periods=n, freq="1h", tz="UTC"),
-            "open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-            "close": closes, "volume": [5.0] * n,
+            "open": closes,
+            "high": [c + 1 for c in closes],
+            "low": [c - 1 for c in closes],
+            "close": closes,
+            "volume": [5.0] * n,
         }
     )
     cfg = IchimokuConfig()
