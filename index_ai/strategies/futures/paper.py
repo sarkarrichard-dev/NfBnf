@@ -254,6 +254,9 @@ def _close(
         "net_rupees": round(gross - cost, 2),
         "lane": "futures",
         "brain": pos.get("brain"),
+        "peak_price": round(pos.get("peak", pos["entry"]), 2),
+        "trail_armed": pos.get("armed", False),
+        "trail_stop_at_exit": round(pos["stop"], 2) if pos.get("stop") is not None else None,
     }
     _journal(trade)
     state.setdefault(cfg.key, {})["position"] = None

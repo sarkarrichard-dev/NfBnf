@@ -46,6 +46,7 @@ def enabled() -> bool:
 
 # ---- persistence ----------------------------------------------------------
 
+
 def _load_state() -> dict[str, Any]:
     try:
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
@@ -72,6 +73,7 @@ def _recent(limit: int = 200) -> list[dict[str, Any]]:
 
 # ---- data ---------------------------------------------------------------
 
+
 def _to_ist(frame: pd.DataFrame) -> pd.DataFrame:
     """Dhan sends naive-UTC epochs. Shift a whole-day MCX frame onto IST
     wall-clock (unlike index candle_cache, keep the full 09:00-23:30 span)."""
@@ -84,7 +86,9 @@ def _to_ist(frame: pd.DataFrame) -> pd.DataFrame:
     return work.sort_values("datetime").reset_index(drop=True)
 
 
-def _fetch(client: DhanClient, spec: CommoditySpec, security_id: int, interval: str) -> pd.DataFrame:
+def _fetch(
+    client: DhanClient, spec: CommoditySpec, security_id: int, interval: str
+) -> pd.DataFrame:
     ck = (spec.key, interval)
     hit = _frame_cache.get(ck)
     if hit and _time.monotonic() - hit[0] < _FRAME_TTL_S:
@@ -127,7 +131,9 @@ _ATR_TTL_S = 24 * 3600.0  # volatility drifts slowly; no need to re-measure ever
 _atr_cache: dict[str, tuple[float, float]] = {}  # key -> (measured_at_monotonic, atr_pct)
 
 
-def _measure_daily_atr_pct(spec: CommoditySpec, security_id: int, client: DhanClient) -> float | None:
+def _measure_daily_atr_pct(
+    spec: CommoditySpec, security_id: int, client: DhanClient
+) -> float | None:
     """Median daily true range as % of that day's close, over ~90 calendar
     days of real MCX daily candles. None on any failure — callers fall back
     to a stale cached value, or the spec's own static guess; never raises."""
@@ -144,10 +150,18 @@ def _measure_daily_atr_pct(spec: CommoditySpec, security_id: int, client: DhanCl
     if df is None or df.empty or len(df) < 10:
         return None
     prev_close = df["close"].shift()
-    tr = pd.concat(
-        [df["high"] - df["low"], (df["high"] - prev_close).abs(), (df["low"] - prev_close).abs()],
-        axis=1,
-    ).max(axis=1).dropna()
+    tr = (
+        pd.concat(
+            [
+                df["high"] - df["low"],
+                (df["high"] - prev_close).abs(),
+                (df["low"] - prev_close).abs(),
+            ],
+            axis=1,
+        )
+        .max(axis=1)
+        .dropna()
+    )
     if tr.empty:
         return None
     pct = float((tr / df["close"]).median() * 100.0)
@@ -189,8 +203,14 @@ def _sessions(df: pd.DataFrame) -> dict[Any, pd.DataFrame]:
 
 # ---- position management ------------------------------------------------
 
+
 def _close(
-    pos: dict[str, Any], px: float, reason: str, spec: CommoditySpec, lots: int, state: dict[str, Any]
+    pos: dict[str, Any],
+    px: float,
+    reason: str,
+    spec: CommoditySpec,
+    lots: int,
+    state: dict[str, Any],
 ) -> dict[str, Any]:
     d = 1 if pos["dir"] == "LONG" else -1
     points = (px - pos["entry"]) * d
@@ -215,6 +235,9 @@ def _close(
         "day": pos.get("day"),
         "lane": "commodities",
         "trend_reason": pos.get("trend_reason"),
+        "peak_price": round(pos.get("peak", pos["entry"]), 2),
+        "trail_armed": pos.get("armed", False),
+        "trail_stop_at_exit": round(pos["stop"], 2) if pos.get("stop") is not None else None,
     }
     _journal(trade)
     try:
@@ -227,7 +250,9 @@ def _close(
     return trade
 
 
-def _manage(pos: dict[str, Any], price: float, spec: CommoditySpec, tr_direction: int) -> str | None:
+def _manage(
+    pos: dict[str, Any], price: float, spec: CommoditySpec, tr_direction: int
+) -> str | None:
     d = 1 if pos["dir"] == "LONG" else -1
     fav = (price - pos["entry"]) * d
     pos["peak"] = max(pos["peak"], price) if d == 1 else min(pos["peak"], price)
@@ -251,12 +276,19 @@ def _todays_trades_for(key: str, day: str) -> int:
 
 # ---- one instrument ----------------------------------------------------
 
+
 def tick(
-    client: DhanClient, spec: CommoditySpec, security_id: int, s: CommoditySettings,
-    state: dict[str, Any], open_total: int,
+    client: DhanClient,
+    spec: CommoditySpec,
+    security_id: int,
+    s: CommoditySettings,
+    state: dict[str, Any],
+    open_total: int,
 ) -> dict[str, Any]:
     key = spec.key
-    spec = atr_scaled_spec(spec, security_id, client)  # this instrument's own measured risk, not a flat guess
+    spec = atr_scaled_spec(
+        spec, security_id, client
+    )  # this instrument's own measured risk, not a flat guess
     ev: dict[str, Any] = {"instrument": key, "event": "none"}
     slot = state.setdefault(key, {"position": None})
     pos = slot.get("position")
@@ -335,6 +367,7 @@ def tick(
 
 # ---- the scan ---------------------------------------------------------
 
+
 def scan_commodities_paper(client: DhanClient | None = None) -> list[dict[str, Any]]:
     s = commodity_settings()
     if not s.enabled:
@@ -343,14 +376,13 @@ def scan_commodities_paper(client: DhanClient | None = None) -> list[dict[str, A
         return []
     meta = load_universe_meta()
     if not meta:
-        return [{"event": "error", "where": "universe",
-                 "error": "run scripts.fetch_commodity_universe"}]
+        return [
+            {"event": "error", "where": "universe", "error": "run scripts.fetch_commodity_universe"}
+        ]
     client = client or DhanClient(settings().dhan)  # DhanClient is stateless — nothing to close
     try:
         state = _load_state()
-        open_total = sum(
-            1 for v in state.values() if isinstance(v, dict) and v.get("position")
-        )
+        open_total = sum(1 for v in state.values() if isinstance(v, dict) and v.get("position"))
         events: list[dict[str, Any]] = []
         for key in s.symbols:
             spec = BY_KEY.get(key)
@@ -391,7 +423,9 @@ def _contract_status(key: str, meta: dict[str, Any], client: DhanClient) -> dict
     spec = BY_KEY.get(key)
     if not spec:
         return {"label": key}
-    effective = atr_scaled_spec(spec, row.get("security_id"), client) if row.get("security_id") else spec
+    effective = (
+        atr_scaled_spec(spec, row.get("security_id"), client) if row.get("security_id") else spec
+    )
     return {
         "label": spec.label,
         "expiry": row.get("expiry"),
@@ -429,7 +463,9 @@ def commodities_status() -> dict[str, Any]:
             pnl = points * spec.multiplier * s.lots
             pos["mark"] = round(mark, 2)
             pos["unrealized_rupees"] = round(pnl, 2)
-            pos["unrealized_pct"] = round(points / float(pos["entry"]) * 100.0, 3) if pos.get("entry") else None
+            pos["unrealized_pct"] = (
+                round(points / float(pos["entry"]) * 100.0, 3) if pos.get("entry") else None
+            )
             open_unrealized += pnl
         else:  # no live mark — show the position but not a fake ₹0 P&L
             pos["mark"] = None
@@ -441,9 +477,7 @@ def commodities_status() -> dict[str, Any]:
         "enabled": s.enabled,
         "symbols": list(s.symbols),
         "lots": s.lots,
-        "contracts": {
-            k: _contract_status(k, meta, client) for k in s.symbols
-        },
+        "contracts": {k: _contract_status(k, meta, client) for k in s.symbols},
         "open_positions": open_positions,
         "today": {
             "closed": len(todays),

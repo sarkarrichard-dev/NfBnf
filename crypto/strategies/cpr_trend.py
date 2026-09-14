@@ -118,7 +118,15 @@ def step(
                 reason = "trend flip"
         if reason:
             st["position"] = None
-            ev.update(event="exit", side=side, price=price, reason=reason, ts=ts)
+            ev.update(
+                event="exit",
+                side=side,
+                price=price,
+                reason=reason,
+                ts=ts,
+                peak_pnl_pct=pos.get("peak_pnl_pct"),
+                trail_stop_pnl_pct=pos.get("trail_stop_pnl_pct"),
+            )
         else:
             ev.update(event="hold", side=side, price=price)
         return st, ev
@@ -139,16 +147,23 @@ def step(
 
 def _synthetic(start: str, n: int, freq: str, base: float, step_per_bar: float) -> pd.DataFrame:
     closes = [base + i * step_per_bar for i in range(n)]
-    return pd.DataFrame({
-        "datetime": pd.date_range(start, periods=n, freq=freq, tz="UTC"),
-        "open": closes, "high": [c + 0.2 for c in closes], "low": [c - 0.2 for c in closes],
-        "close": closes, "volume": [10.0] * n,
-    })
+    return pd.DataFrame(
+        {
+            "datetime": pd.date_range(start, periods=n, freq=freq, tz="UTC"),
+            "open": closes,
+            "high": [c + 0.2 for c in closes],
+            "low": [c - 0.2 for c in closes],
+            "close": closes,
+            "volume": [10.0] * n,
+        }
+    )
 
 
 if __name__ == "__main__":  # self-check — wiring correctness, not signal precision
-    prev15 = _synthetic("2026-09-10", 96, "15min", 100.0, 0.0)      # flat prior day
-    today15_up = _synthetic("2026-09-11", 96, "15min", 110.0, 0.05)  # clearly above prev day's range
+    prev15 = _synthetic("2026-09-10", 96, "15min", 100.0, 0.0)  # flat prior day
+    today15_up = _synthetic(
+        "2026-09-11", 96, "15min", 110.0, 0.05
+    )  # clearly above prev day's range
     c15_up = pd.concat([prev15, today15_up], ignore_index=True)
     cfg = CprTrendConfig()
     fcfg = cfg.as_futures_config("BTCUSD")
@@ -168,8 +183,13 @@ if __name__ == "__main__":  # self-check — wiring correctness, not signal prec
     # an open position must exit once the 15m read turns clearly bearish
     open_state = {"position": {"side": "long", "entry_price": float(c5["close"].iloc[-1])}}
     today15_down = _synthetic("2026-09-11", 96, "15min", 90.0, -0.05)
-    _, ev2 = step("BTCUSD", c5, pd.concat([prev15, today15_down], ignore_index=True),
-                  state=open_state, cfg=cfg)
+    _, ev2 = step(
+        "BTCUSD",
+        c5,
+        pd.concat([prev15, today15_down], ignore_index=True),
+        state=open_state,
+        cfg=cfg,
+    )
     assert ev2["event"] == "exit", ev2
 
     # empty candles never raise

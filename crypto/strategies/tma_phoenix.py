@@ -47,17 +47,17 @@ class TmaPhoenixConfig:
     ma2: int = 50
     ma3: int = 100
     ma4: int = 200
-    require_ma3: bool = True          # the 100 SMMA must sit inside the 21>50>200 stack
-    slope_lookback: int = 5           # the 200 SMMA must have moved in-trend over this span
+    require_ma3: bool = True  # the 100 SMMA must sit inside the 21>50>200 stack
+    slope_lookback: int = 5  # the 200 SMMA must have moved in-trend over this span
     atr_len: int = 14
-    big_candle_atr: float = 2.5       # skip the entry if the signal bar's range > this × ATR
-    near_ma_atr: float = 0.0          # signal bar within this × ATR of the 50/200 SMMA (0 = off)
+    big_candle_atr: float = 2.5  # skip the entry if the signal bar's range > this × ATR
+    near_ma_atr: float = 0.0  # signal bar within this × ATR of the 50/200 SMMA (0 = off)
     use_engulfing: bool = True
     use_three_line_strike: bool = True
-    strict: bool = True               # engulfing needs the larger body; 3LS needs monotonic closes
+    strict: bool = True  # engulfing needs the larger body; 3LS needs monotonic closes
     stop_atr: float = 1.5
-    target_atr: float = 1.5           # 1.5 / 1.5 → 1:1 R:R, matching the indicator's defaults
-    be_atr: float = 0.5               # move stop to break-even once this much ATR is in favour
+    target_atr: float = 1.5  # 1.5 / 1.5 → 1:1 R:R, matching the indicator's defaults
+    be_atr: float = 0.5  # move stop to break-even once this much ATR is in favour
     trail: TrailConfig = field(default_factory=TrailConfig)
 
 
@@ -162,7 +162,15 @@ def step(
         reason = _bracket_reason(pos, price) or update_and_check(pos, price, cfg.trail)
         if reason:
             st["position"] = None
-            ev.update(event="exit", side=side, price=price, reason=reason, ts=ts)
+            ev.update(
+                event="exit",
+                side=side,
+                price=price,
+                reason=reason,
+                ts=ts,
+                peak_pnl_pct=pos.get("peak_pnl_pct"),
+                trail_stop_pnl_pct=pos.get("trail_stop_pnl_pct"),
+            )
         else:
             ev.update(event="hold", side=side, price=price)
         return st, ev
@@ -226,19 +234,32 @@ if __name__ == "__main__":  # self-check — ribbon rises, a bullish engulfing p
 
     n = 400
     idx = pd.date_range("2026-09-06 00:00", periods=n, freq="5min", tz="UTC")
-    px = np.concatenate([
-        100.0 + np.linspace(0, 2, 150),
-        np.linspace(102.0, 140.0, n - 150),   # clean rally so the 200 SMMA turns up
-    ])
+    px = np.concatenate(
+        [
+            100.0 + np.linspace(0, 2, 150),
+            np.linspace(102.0, 140.0, n - 150),  # clean rally so the 200 SMMA turns up
+        ]
+    )
     o = px.copy()
     c = px.copy()
     hi = px + 0.3
     lo = px - 0.3
     # bar 360: a small down bar; bar 361: a bullish engulfing of it
-    o[360], c[360], hi[360], lo[360] = px[360] + 0.25, px[360] - 0.25, px[360] + 0.35, px[360] - 0.35
-    o[361], c[361], hi[361], lo[361] = px[360] - 0.30, px[360] + 0.45, px[360] + 0.55, px[360] - 0.40
-    df = pd.DataFrame({"datetime": idx, "open": o, "high": hi, "low": lo, "close": c,
-                       "volume": [10.0] * n})
+    o[360], c[360], hi[360], lo[360] = (
+        px[360] + 0.25,
+        px[360] - 0.25,
+        px[360] + 0.35,
+        px[360] - 0.35,
+    )
+    o[361], c[361], hi[361], lo[361] = (
+        px[360] - 0.30,
+        px[360] + 0.45,
+        px[360] + 0.55,
+        px[360] - 0.40,
+    )
+    df = pd.DataFrame(
+        {"datetime": idx, "open": o, "high": hi, "low": lo, "close": c, "volume": [10.0] * n}
+    )
     cfg = TmaPhoenixConfig(slope_lookback=3, require_ma3=False)
     st, fired = None, None
     for i in range(260, n):

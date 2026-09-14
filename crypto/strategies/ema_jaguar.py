@@ -63,19 +63,37 @@ def step(
                 reason = f"EMA{cfg.fast}/{cfg.slow} cross up"
         if reason:
             st["position"] = None
-            ev.update(event="exit", side=side, price=price, reason=reason, ts=ts)
+            ev.update(
+                event="exit",
+                side=side,
+                price=price,
+                reason=reason,
+                ts=ts,
+                peak_pnl_pct=pos.get("peak_pnl_pct"),
+                trail_stop_pnl_pct=pos.get("trail_stop_pnl_pct"),
+            )
         else:
             ev.update(event="hold", side=side, price=price)
         return st, ev
 
     if xdir > 0:
         st["position"] = {"side": "long", "entry_price": price, "entry_time": ts}
-        ev.update(event="enter", side="long", price=price,
-                  reason=f"EMA{cfg.fast} crossed above EMA{cfg.slow}", ts=ts)
+        ev.update(
+            event="enter",
+            side="long",
+            price=price,
+            reason=f"EMA{cfg.fast} crossed above EMA{cfg.slow}",
+            ts=ts,
+        )
     elif xdir < 0:
         st["position"] = {"side": "short", "entry_price": price, "entry_time": ts}
-        ev.update(event="enter", side="short", price=price,
-                  reason=f"EMA{cfg.fast} crossed below EMA{cfg.slow}", ts=ts)
+        ev.update(
+            event="enter",
+            side="short",
+            price=price,
+            reason=f"EMA{cfg.fast} crossed below EMA{cfg.slow}",
+            ts=ts,
+        )
     else:
         ev.update(event="wait", reason="no EMA cross")
     return st, ev
@@ -83,16 +101,21 @@ def step(
 
 if __name__ == "__main__":  # self-check — up, down, up: crosses both ways
     closes = (
-        [100 + 0.5 * i for i in range(40)]           # rise
-        + [120 - 0.7 * i for i in range(40)]          # fall → cross down (enter short)
-        + [92 + 0.6 * i for i in range(40)]           # rise → cross up (exit short, enter long)
+        [100 + 0.5 * i for i in range(40)]  # rise
+        + [120 - 0.7 * i for i in range(40)]  # fall → cross down (enter short)
+        + [92 + 0.6 * i for i in range(40)]  # rise → cross up (exit short, enter long)
     )
     n = len(closes)
-    df = pd.DataFrame({
-        "datetime": pd.date_range("2026-09-01", periods=n, freq="5min", tz="UTC"),
-        "open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-        "close": closes, "volume": [5.0] * n,
-    })
+    df = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-09-01", periods=n, freq="5min", tz="UTC"),
+            "open": closes,
+            "high": [c + 1 for c in closes],
+            "low": [c - 1 for c in closes],
+            "close": closes,
+            "volume": [5.0] * n,
+        }
+    )
     cfg = EmaJaguarConfig(fast=5, slow=13)
     state, saw = None, {"enter": 0, "exit": 0}
     for i in range(16, n):
