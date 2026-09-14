@@ -9,6 +9,7 @@ import {
 import { fx } from '../lib/theme'
 import type { LogRow, PeriodKey, PositionsFilter, TradeRow } from '../types/analytics'
 import { PositionRow } from './PositionRow'
+import { EmptyState } from './ui/EmptyState'
 
 type Props = {
   logRows: LogRow[]
@@ -133,14 +134,14 @@ export function PositionsPanel({
           <tbody>
             {!allOpen.length ? (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-center text-slate-500">
-                  No open positions in this period.
+                <td colSpan={8} className="p-3">
+                  <EmptyState>No open positions in this period.</EmptyState>
                 </td>
               </tr>
             ) : !visible.length ? (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-center text-slate-500">
-                  No legs match this filter.
+                <td colSpan={8} className="p-3">
+                  <EmptyState>No legs match this filter.</EmptyState>
                 </td>
               </tr>
             ) : (

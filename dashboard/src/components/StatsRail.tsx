@@ -8,7 +8,7 @@ import { Sparkline } from './Sparkline'
 import { EquityCurve } from './charts/EquityCurve'
 import type { AnalyticsResponse, DateRange, PeriodKey, TradeRow } from '../types/analytics'
 
-const PERIOD_LABEL: Record<PeriodKey, string> = {
+export const PERIOD_LABEL: Record<PeriodKey, string> = {
   today: 'today',
   week: 'this week',
   month: 'this month',
@@ -130,11 +130,7 @@ export function StatsOverview({
           </p>
         </div>
         <div className="min-w-0">
-          {equity.length > 1 ? (
-            <EquityCurve values={equity} height={96} className="w-full" />
-          ) : (
-            <p className="text-right font-mono text-[11px] text-slate-600">building the curve…</p>
-          )}
+          <EquityCurve values={equity} height={96} className="w-full" />
         </div>
       </div>
 

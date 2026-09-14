@@ -1,12 +1,15 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { useCommoditiesJournal } from '../hooks/useCommoditiesJournal'
 import { cn } from '../lib/cn'
+import { computePeriodStats, cumulativePnl, tradesForPeriod } from '../lib/pnl'
 import { fx } from '../lib/theme'
 import type { DateRange, PeriodKey } from '../types/analytics'
+import { EquityCurve } from './charts/EquityCurve'
 import { PeriodBar } from './PeriodBar'
+import { PERIOD_LABEL } from './StatsRail'
 import { TradeLogTable } from './TradeLogTable'
 
 type OpenPos = {
@@ -82,6 +85,12 @@ export function CommoditiesPanel() {
   const [period, setPeriod] = useState<PeriodKey>('month')
   const [range, setRange] = useState<DateRange>({ from: '', to: '' })
   const journal = useCommoditiesJournal(true)
+  const periodTrades = useMemo(
+    () => tradesForPeriod(journal.trades, period, range),
+    [journal.trades, period, range],
+  )
+  const periodStats = useMemo(() => computePeriodStats(periodTrades), [periodTrades])
+  const equity = useMemo(() => cumulativePnl(periodTrades), [periodTrades])
 
   return (
     <div className={cn(fx.panel, 'space-y-5 p-4')}>
@@ -102,19 +111,33 @@ export function CommoditiesPanel() {
         </span>
       </header>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <Stat label="Today closed" value={String(s?.today.closed ?? 0)} />
-        <Stat
-          label="Today net"
-          value={rupee(s?.today.net_rupees)}
-          cls={pnlClass(s?.today.net_rupees)}
-        />
-        <Stat label="Open" value={String(opens.length)} />
+      <PeriodBar period={period} onPeriodChange={setPeriod} range={range} onRangeChange={setRange} />
+
+      {/* cockpit headline: one number you can't miss, then the curve and detail */}
+      <div className="grid items-center gap-4 rounded-lg border border-[var(--hair-soft)] bg-white/[0.015] p-3.5 lg:grid-cols-[minmax(0,1fr),1.5fr]">
+        <div>
+          <p className={fx.cardLabel}>Realised P&amp;L · {PERIOD_LABEL[period]}</p>
+          <p className={cn('mt-1 font-mono text-[2rem] font-extrabold leading-none tabular-nums', pnlClass(periodStats.pnl_rupees))}>
+            {rupee(periodStats.pnl_rupees)}
+          </p>
+          <p className="mt-1.5 font-mono text-[11px] text-slate-500">
+            {periodStats.closed} closed ·{' '}
+            {periodStats.win_rate == null ? '—' : `${(periodStats.win_rate * 100).toFixed(0)}%`} win
+          </p>
+        </div>
+        <div className="min-w-0">
+          <EquityCurve values={equity} height={96} className="w-full" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Stat label="Open now" value={String(opens.length)} />
         <Stat
           label="Open MTM"
           value={rupee(s?.today.open_unrealized_rupees)}
           cls={pnlClass(s?.today.open_unrealized_rupees)}
         />
+        <Stat label="Today closed" value={String(s?.today.closed ?? 0)} />
         <Stat
           label="All-time net"
           value={rupee(s?.all_time.net_rupees)}
@@ -177,10 +200,7 @@ export function CommoditiesPanel() {
       ) : null}
 
       <div className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className={fx.cardLabel}>Trade history</p>
-          <PeriodBar period={period} onPeriodChange={setPeriod} range={range} onRangeChange={setRange} />
-        </div>
+        <p className={fx.cardLabel}>Trade history</p>
         {/* same shared table + entry/exit times as every other section (Index,
             Crypto, Futures) and the combined Trade History tab */}
         <TradeLogTable

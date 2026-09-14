@@ -6,6 +6,7 @@ import { money, pnlClass } from '../lib/pnl'
 import { fx } from '../lib/theme'
 import { usePollMs } from '../hooks/usePageVisible'
 import { Button } from './ui/Button'
+import { EmptyState } from './ui/EmptyState'
 
 type Trade = {
   id?: string
@@ -185,7 +186,7 @@ export function DayReviewPanel() {
         </p>
 
         {!trades.length ? (
-          <p className="text-sm text-slate-500">No trades yet today.</p>
+          <EmptyState>No trades yet today.</EmptyState>
         ) : (
           <div className="space-y-2">
             {trades.map((t) => (

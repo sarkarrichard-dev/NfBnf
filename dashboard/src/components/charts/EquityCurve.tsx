@@ -14,11 +14,15 @@ export function EquityCurve({
   const gid = useId().replace(/:/g, '')
   if (values.length < 2) {
     return (
-      <div
-        className={className}
-        style={{ height }}
-        aria-hidden
-      />
+      <div className={className} style={{ height }}>
+        <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-[var(--hair)] bg-white/[0.01]">
+          <p className="px-3 text-center font-mono text-[10.5px] text-slate-600">
+            {values.length === 1
+              ? 'one closed trade so far — the curve draws in from the next one'
+              : 'no closed trades in this period yet'}
+          </p>
+        </div>
+      </div>
     )
   }
 

@@ -19,7 +19,9 @@ import type { DateRange, PeriodKey } from '../types/analytics'
 import { Button } from './ui/Button'
 import { CollapsibleSection } from './CollapsibleSection'
 import { PeriodBar } from './PeriodBar'
+import { PERIOD_LABEL } from './StatsRail'
 import { Sparkline } from './Sparkline'
+import { EquityCurve } from './charts/EquityCurve'
 import { CryptoSetupPanel } from './CryptoSetupPanel'
 import { CryptoExecutionPanel } from './CryptoExecutionPanel'
 import { CryptoDayReviewPanel } from './CryptoDayReviewPanel'
@@ -213,34 +215,39 @@ export function CryptoPanel() {
 
       <CryptoExecutionPanel />
 
-      {/* stats rail — same shape as the index tab */}
-      <section className={cn(fx.panel, 'px-3 py-2.5')}>
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <PeriodBar
-            period={period}
-            onPeriodChange={setPeriod}
-            range={range}
-            onRangeChange={setRange}
-          />
-          {equity.length > 1 ? (
-            <div className="flex items-center gap-2" title="Cumulative realised P&L, this period">
-              <span className="text-[11px] text-slate-500">Equity</span>
-              <Sparkline points={equity} width={120} height={26} />
-              <span className={cn('text-xs font-semibold tabular-nums', pnlCls(equity[equity.length - 1]))}>
-                {usd(equity[equity.length - 1])}
-              </span>
-            </div>
-          ) : null}
+      {/* stats rail — same cockpit pattern as the index tab: one hero number
+          you can't miss, then the supporting detail underneath */}
+      <section className={cn(fx.panel, 'space-y-3 p-4')}>
+        <PeriodBar
+          period={period}
+          onPeriodChange={setPeriod}
+          range={range}
+          onRangeChange={setRange}
+        />
+
+        <div className="grid items-center gap-4 rounded-lg border border-[var(--hair-soft)] bg-white/[0.015] p-3.5 lg:grid-cols-[minmax(0,1fr),1.5fr]">
+          <div>
+            <p className={fx.cardLabel}>Realised P&amp;L · {PERIOD_LABEL[period]}</p>
+            <p className={cn('mt-1 font-mono text-[2rem] font-extrabold leading-none tabular-nums', pnlCls(st.net_usd))}>
+              {usd(st.net_usd)}
+            </p>
+            <p className="mt-1.5 font-mono text-[11px] text-slate-500">
+              {inr(st.net_inr)} · {st.trades} trades ·{' '}
+              {st.win_rate == null ? '—' : `${(st.win_rate * 100).toFixed(1)}%`} win
+            </p>
+          </div>
+          <div className="min-w-0">
+            <EquityCurve values={equity} height={96} className="w-full" />
+          </div>
         </div>
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <StatTile label="Trades" value={String(st.trades)} />
           <StatTile label="Wins / Losses" value={`${st.wins} / ${st.losses}`} />
           <StatTile
             label="Win rate"
             value={st.win_rate == null ? '—' : `${(st.win_rate * 100).toFixed(1)}%`}
           />
-          <StatTile label="Realized ($)" value={usd(st.net_usd)} valueCls={pnlCls(st.net_usd)} />
-          <StatTile label="Realized (₹)" value={inr(st.net_inr)} valueCls={pnlCls(st.net_inr)} />
           <StatTile
             label="Open MTM"
             value={usd(openMtmUsd)}

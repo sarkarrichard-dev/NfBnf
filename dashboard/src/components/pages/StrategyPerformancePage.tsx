@@ -8,6 +8,7 @@ import {
   type PerfTotals,
 } from '../../hooks/useStrategyPerformance'
 import { useStrategyLearning, type LearnRow } from '../../hooks/useStrategyLearning'
+import { EmptyState } from '../ui/EmptyState'
 
 const STATE_STYLE: Record<string, string> = {
   watching: 'bg-white/[0.05] text-slate-400',
@@ -36,9 +37,7 @@ function LearningPanel() {
       </div>
 
       {rows.length === 0 ? (
-        <p className="text-[12.5px] text-slate-500">
-          No closed trades yet. The ladder starts at 15 — collecting.
-        </p>
+        <EmptyState>No closed trades yet. The ladder starts at 15 — collecting.</EmptyState>
       ) : (
         <>
           <ul className="space-y-2">
@@ -179,7 +178,7 @@ function VenueTable({
       </div>
 
       {rows.length === 0 ? (
-        <p className="px-4 py-6 text-sm text-slate-500">No closed trades yet.</p>
+        <EmptyState>No closed trades yet.</EmptyState>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-left text-[12.5px]">

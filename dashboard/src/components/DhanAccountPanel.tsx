@@ -4,6 +4,7 @@ import { usePollMs } from '../hooks/usePageVisible'
 import { money, pnlClass } from '../lib/pnl'
 import { cn } from '../lib/cn'
 import { Button } from './ui/Button'
+import { EmptyState } from './ui/EmptyState'
 
 type DhanPosition = {
   leg_label?: string
@@ -189,8 +190,8 @@ function MiniTable({
           <tbody>
             {!rows.length ? (
               <tr>
-                <td colSpan={headers.length} className="px-2 py-4 text-center text-slate-500">
-                  {empty}
+                <td colSpan={headers.length} className="p-2">
+                  <EmptyState>{empty}</EmptyState>
                 </td>
               </tr>
             ) : (

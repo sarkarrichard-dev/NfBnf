@@ -212,13 +212,7 @@ export function ReportsPage({
 
       <div className="grid gap-6 lg:grid-cols-[1.5fr,1fr]">
         <Panel title="Equity curve" hint="cumulative realised P&L · last 31 days">
-          {equity.length > 1 ? (
-            <EquityCurve values={equity} height={150} className="w-full" />
-          ) : (
-            <p className="py-8 text-center text-xs text-slate-500">
-              Not enough closed days yet.
-            </p>
-          )}
+          <EquityCurve values={equity} height={150} className="w-full" />
         </Panel>
         <Panel title="P&L calendar" hint="by IST day">
           <PnlCalendar days={daily} />
