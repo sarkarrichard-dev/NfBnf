@@ -1,8 +1,9 @@
 #!/usr/bin/env python
-"""PostToolUse hook: tidy Python edits, flag stale dashboard builds.
+"""PostToolUse hook: tidy Python edits, flag stale/broken dashboard builds.
 
-- *.py under index_ai/ or tests/  -> `ruff check --fix` + `ruff format` on that file
-- dashboard/src/**               -> remind that dist/ is now stale
+- *.py under index_ai/, crypto/, commodities/, tests/, scripts/
+                                  -> `ruff check --fix` + `ruff format` on that file
+- dashboard/src/**               -> `tsc --noEmit` and remind that dist/ is stale
 
 Reads the hook payload on stdin, does its work, and stays silent unless there's
 something the user should see. Never blocks the edit.
@@ -33,8 +34,9 @@ def main() -> int:
         return 0
 
     rel = path.as_posix()
+    py_dirs = ("/index_ai/", "/crypto/", "/commodities/", "/tests/")
 
-    if path.suffix == ".py" and ("/index_ai/" in f"/{rel}" or "/tests/" in f"/{rel}" or rel.startswith("scripts/")):
+    if path.suffix == ".py" and (any(d in f"/{rel}" for d in py_dirs) or rel.startswith("scripts/")):
         try:
             subprocess.run([RUFF, "check", "--fix", "--quiet", str(path)], timeout=30,
                            capture_output=True)
@@ -54,8 +56,19 @@ def main() -> int:
         return 0
 
     if "dashboard/src/" in f"/{rel}":
-        print("dashboard/src changed — run `npm --prefix dashboard run build` "
-              "before serving, or the UI shows a stale bundle.", file=sys.stderr)
+        msgs = ["dashboard/src changed — run `npm --prefix dashboard run build` "
+                "before serving, or the UI shows a stale bundle."]
+        try:
+            r = subprocess.run(
+                ["npx", "tsc", "-b", "--noEmit"], cwd="dashboard",
+                timeout=60, capture_output=True, text=True, shell=(sys.platform == "win32"),
+            )
+            if r.returncode != 0:
+                out = (r.stdout or r.stderr or "").strip()
+                msgs.append(f"tsc found type errors:\n{out[:2000]}")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        print("\n".join(msgs), file=sys.stderr)
         return 2
 
     return 0
