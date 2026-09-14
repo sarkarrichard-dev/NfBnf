@@ -45,6 +45,22 @@ export function TradeLogTable({ logRows, trades, period, range, mtmUpdatedAt, hi
 
   const groups = useMemo(() => groupByIndex(rows), [rows])
 
+  // Options-only columns and the strategy column each earn their place only
+  // when at least one row in view actually has that data — an options trade
+  // never has a strategy tag, a crypto/futures trade never has a strike, so
+  // showing every column to every venue was mostly dashes.
+  const cols = useMemo(
+    () => ({
+      strike: rows.some((r) => r.strike != null || r.option_type),
+      capital: rows.some((r) => r.capital_deployed != null),
+      strategy: rows.some((r) => r.strategy),
+    }),
+    [rows],
+  )
+  const unit = cols.strike ? 'leg' : 'trade'
+  // base 11: Open, Close, Mode, Instrument, Side, Qty, Entry, Mark, MTM, PnL, Status/Reason
+  const colCount = 11 + (cols.strike ? 2 : 0) + (cols.capital ? 1 : 0) + (cols.strategy ? 1 : 0)
+
   if (!rows.length) {
     const tradeCount = trades.length
     return (
@@ -52,7 +68,7 @@ export function TradeLogTable({ logRows, trades, period, range, mtmUpdatedAt, hi
         <h2 className="mb-2 text-base font-semibold text-cyan-50/95">Trade log</h2>
         <p className="text-sm text-cyan-200/45">
           {tradeCount > 0
-            ? 'Loading leg details…'
+            ? 'Loading trade details…'
             : 'No trades in this period.'}
         </p>
       </section>
@@ -65,13 +81,13 @@ export function TradeLogTable({ logRows, trades, period, range, mtmUpdatedAt, hi
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-base font-semibold text-cyan-50/95">Trade log</h2>
           <p className="text-xs text-cyan-200/45">
-            One row per option leg
+            One row per {unit}
             {mtmUpdatedAt ? ` · MTM ${mtmUpdatedAt}` : ''}
           </p>
         </div>
       ) : (
         <p className="mb-3 text-xs text-cyan-200/45">
-          Closed and open legs in this period
+          Closed and open {unit}s in this period
           {mtmUpdatedAt ? ` · MTM ${mtmUpdatedAt}` : ''}
         </p>
       )}
@@ -82,17 +98,26 @@ export function TradeLogTable({ logRows, trades, period, range, mtmUpdatedAt, hi
               <th className="px-2 py-2 text-left font-medium">Open</th>
               <th className="px-2 py-2 text-left font-medium">Close</th>
               <th className="px-2 py-2 text-left font-medium">Mode</th>
-              <th className="px-2 py-2 text-left font-medium">Index</th>
+              <th className="px-2 py-2 text-left font-medium">Instrument</th>
+              {cols.strategy ? (
+                <th className="px-2 py-2 text-left font-medium">Strategy</th>
+              ) : null}
               <th className="px-2 py-2 text-left font-medium">Side</th>
-              <th className="px-2 py-2 text-left font-medium">Strike</th>
-              <th className="px-2 py-2 text-left font-medium">Type</th>
+              {cols.strike ? (
+                <>
+                  <th className="px-2 py-2 text-left font-medium">Strike</th>
+                  <th className="px-2 py-2 text-left font-medium">Type</th>
+                </>
+              ) : null}
               <th className="px-2 py-2 text-right font-medium">Qty</th>
-              <th className="px-2 py-2 text-right font-medium">Capital</th>
+              {cols.capital ? (
+                <th className="px-2 py-2 text-right font-medium">Capital</th>
+              ) : null}
               <th className="px-2 py-2 text-right font-medium">Entry</th>
               <th className="px-2 py-2 text-right font-medium">Mark</th>
               <th className="px-2 py-2 text-right font-medium">MTM</th>
               <th className="px-2 py-2 text-right font-medium">PnL</th>
-              <th className="px-2 py-2 text-left font-medium">Status</th>
+              <th className="px-2 py-2 text-left font-medium">{cols.strike ? 'Status' : 'Reason'}</th>
             </tr>
           </thead>
           <tbody>
@@ -114,6 +139,9 @@ export function TradeLogTable({ logRows, trades, period, range, mtmUpdatedAt, hi
                   openMtm={openMtm}
                   realized={realized}
                   total={total}
+                  cols={cols}
+                  colCount={colCount}
+                  unit={unit}
                 />
               )
             })}
@@ -124,28 +152,39 @@ export function TradeLogTable({ logRows, trades, period, range, mtmUpdatedAt, hi
   )
 }
 
+type ColFlags = { strike: boolean; capital: boolean; strategy: boolean }
+
 function GroupBlock({
   instrument,
   rows,
   openMtm,
   realized,
   total,
+  cols,
+  colCount,
+  unit,
 }: {
   instrument: string
   rows: LogRow[]
   openMtm: number
   realized: number
   total: number
+  cols: ColFlags
+  colCount: number
+  unit: string
 }) {
-  const openLegs = rows.filter((r) => r.is_open).length
+  const openCount = rows.filter((r) => r.is_open).length
   return (
     <>
       <tr className="bg-slate-950/70 text-xs text-slate-400">
-        <td colSpan={14} className="px-3 py-2">
+        <td colSpan={colCount} className="px-3 py-2">
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             <strong className="text-slate-200">{instrument}</strong>
-            <span>{rows.length} legs</span>
-            <span>{openLegs} open</span>
+            <span>
+              {rows.length} {unit}
+              {rows.length === 1 ? '' : 's'}
+            </span>
+            <span>{openCount} open</span>
             <span>Realized {money(realized)}</span>
             <span>MTM {money(openMtm)}</span>
             <span className={pnlClass(total)}>Total {money(total)}</span>
@@ -153,13 +192,13 @@ function GroupBlock({
         </td>
       </tr>
       {rows.map((row) => (
-        <LegRow key={logRowKey(row)} row={row} />
+        <LegRow key={logRowKey(row)} row={row} cols={cols} />
       ))}
     </>
   )
 }
 
-function LegRow({ row }: { row: LogRow }) {
+function LegRow({ row, cols }: { row: LogRow; cols: ColFlags }) {
   const isRejected = row.status === 'LIVE_REJECTED'
   const sideCls =
     row.side === 'Sell'
@@ -207,26 +246,35 @@ function LegRow({ row }: { row: LogRow }) {
         </span>
       </td>
       <td className="px-2 py-2">{row.instrument || '—'}</td>
+      {cols.strategy ? (
+        <td className="px-2 py-2 text-xs text-slate-300">{row.strategy || '—'}</td>
+      ) : null}
       <td className="px-2 py-2">
         <span className={cn('rounded border px-1.5 py-0.5 text-[11px]', sideCls)}>
           {row.side || '—'}
         </span>
       </td>
-      <td className="px-2 py-2 tabular-nums">{row.strike ?? '—'}</td>
-      <td className="px-2 py-2">{row.option_type || '—'}</td>
+      {cols.strike ? (
+        <>
+          <td className="px-2 py-2 tabular-nums">{row.strike ?? '—'}</td>
+          <td className="px-2 py-2">{row.option_type || '—'}</td>
+        </>
+      ) : null}
       <td className="px-2 py-2 text-right tabular-nums">{row.quantity ?? '—'}</td>
-      <td className="px-2 py-2 text-right tabular-nums text-slate-300">
-        {row.capital_deployed != null ? (
-          <span title={row.capital_kind === 'margin' ? 'combined margin at risk (sell + hedge)' : 'premium paid'}>
-            ₹{Math.round(Number(row.capital_deployed)).toLocaleString('en-IN')}
-            <span className="ml-1 text-[9px] uppercase text-slate-500">
-              {row.capital_kind === 'margin' ? 'marg' : 'prem'}
+      {cols.capital ? (
+        <td className="px-2 py-2 text-right tabular-nums text-slate-300">
+          {row.capital_deployed != null ? (
+            <span title={row.capital_kind === 'margin' ? 'combined margin at risk (sell + hedge)' : 'premium paid'}>
+              ₹{Math.round(Number(row.capital_deployed)).toLocaleString('en-IN')}
+              <span className="ml-1 text-[9px] uppercase text-slate-500">
+                {row.capital_kind === 'margin' ? 'marg' : 'prem'}
+              </span>
             </span>
-          </span>
-        ) : (
-          '—'
-        )}
-      </td>
+          ) : (
+            '—'
+          )}
+        </td>
+      ) : null}
       <td className="px-2 py-2 text-right tabular-nums">{px(row.avg_entry)}</td>
       <td className="px-2 py-2 text-right tabular-nums">{mark}</td>
       <td className={cn('px-2 py-2 text-right tabular-nums font-semibold', pnlClass(mtm))}>

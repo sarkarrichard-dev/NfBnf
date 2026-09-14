@@ -18,6 +18,10 @@ export type LogRow = {
   open_time_ist?: string
   close_time_ist?: string | null
   instrument?: string
+  /** Which strategy took the trade — shown as its own column when at least
+   *  one row in view has it (crypto/futures/commodities); options rows leave
+   *  this unset and keep the strike/type columns instead. */
+  strategy?: string
   side?: string
   strike?: string | number | null
   option_type?: string
