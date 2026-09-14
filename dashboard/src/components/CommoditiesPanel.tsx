@@ -6,8 +6,10 @@ import { useCommoditiesJournal } from '../hooks/useCommoditiesJournal'
 import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
 import type { DateRange, PeriodKey } from '../types/analytics'
+import { pnlClass, rupees } from './LanesPanel'
 import { PeriodBar } from './PeriodBar'
 import { TradeLogTable } from './TradeLogTable'
+import { StatTile } from './ui/StatTile'
 
 type OpenPos = {
   dir?: string
@@ -41,7 +43,6 @@ type Status = {
       label?: string
       expiry?: string | null
       trading_symbol?: string | null
-      multiplier?: number | null
       initial_stop_pct?: number
       trail_pct?: number
       risk_source?: 'measured' | 'default'
@@ -52,20 +53,6 @@ type Status = {
   all_time: { closed: number; net_rupees: number }
   recent_trades: Trade[]
   generated_at_ist?: string
-}
-
-const rupee = (v?: number | null) =>
-  v == null ? '—' : `${v < 0 ? '-' : ''}₹${Math.abs(Math.round(v)).toLocaleString('en-IN')}`
-const pnlClass = (v?: number | null) =>
-  v == null || v === 0 ? 'text-slate-300' : v > 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'
-
-function Stat({ label, value, cls }: { label: string; value: string; cls?: string }) {
-  return (
-    <div className={fx.card}>
-      <p className={fx.cardLabel}>{label}</p>
-      <p className={cn(fx.cardValue, cls || 'text-slate-100')}>{value}</p>
-    </div>
-  )
 }
 
 export function CommoditiesPanel() {
@@ -103,22 +90,22 @@ export function CommoditiesPanel() {
       </header>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <Stat label="Today closed" value={String(s?.today.closed ?? 0)} />
-        <Stat
+        <StatTile label="Today closed" value={String(s?.today.closed ?? 0)} />
+        <StatTile
           label="Today net"
-          value={rupee(s?.today.net_rupees)}
-          cls={pnlClass(s?.today.net_rupees)}
+          value={rupees(s?.today.net_rupees)}
+          valueClass={pnlClass(s?.today.net_rupees)}
         />
-        <Stat label="Open" value={String(opens.length)} />
-        <Stat
+        <StatTile label="Open" value={String(opens.length)} />
+        <StatTile
           label="Open MTM"
-          value={rupee(s?.today.open_unrealized_rupees)}
-          cls={pnlClass(s?.today.open_unrealized_rupees)}
+          value={rupees(s?.today.open_unrealized_rupees)}
+          valueClass={pnlClass(s?.today.open_unrealized_rupees)}
         />
-        <Stat
+        <StatTile
           label="All-time net"
-          value={rupee(s?.all_time.net_rupees)}
-          cls={pnlClass(s?.all_time.net_rupees)}
+          value={rupees(s?.all_time.net_rupees)}
+          valueClass={pnlClass(s?.all_time.net_rupees)}
         />
       </div>
 
@@ -167,7 +154,7 @@ export function CommoditiesPanel() {
                 </span>
                 <span className={cn('ml-auto font-mono text-[11px] font-semibold', pnlClass(p?.unrealized_rupees))}>
                   {p?.unrealized_rupees != null
-                    ? `${rupee(p.unrealized_rupees)}${p.unrealized_pct != null ? ` (${p.unrealized_pct > 0 ? '+' : ''}${p.unrealized_pct.toFixed(2)}%)` : ''}`
+                    ? `${rupees(p.unrealized_rupees)}${p.unrealized_pct != null ? ` (${p.unrealized_pct > 0 ? '+' : ''}${p.unrealized_pct.toFixed(2)}%)` : ''}`
                     : 'no live mark'}
                 </span>
               </li>

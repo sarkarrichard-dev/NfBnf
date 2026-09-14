@@ -243,7 +243,7 @@ export function periodBlock(
 
 export function pnlClass(v?: number | null): string {
   if (v == null) return 'text-slate-500'
-  if (v > 0) return 'text-emerald-400'
-  if (v < 0) return 'text-red-400'
+  if (v > 0) return 'text-[var(--up)]'
+  if (v < 0) return 'text-[var(--down)]'
   return 'text-slate-400'
 }

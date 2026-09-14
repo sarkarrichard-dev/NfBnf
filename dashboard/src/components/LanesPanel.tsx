@@ -1,18 +1,20 @@
+import { pnlClass } from '../lib/pnl'
+
 export type LaneStatus = {
   enabled?: boolean
   instruments?: string[]
-  lanes?: string[]
   open_positions?: Record<string, Record<string, unknown>>
   today?: { closed?: number; net_rupees?: number; wins?: number }
   all_time?: { closed?: number; net_rupees?: number }
-  recent_trades?: Record<string, unknown>[]
 }
 
+/** Whole-rupee amount, no decimals, no leading "+" — the plain "how much
+ *  money" format used everywhere a P&L figure doesn't need money()'s sign
+ *  emphasis. One implementation; four screens used to redefine this by hand. */
 export const rupees = (v?: number | null) =>
   v == null ? '—' : `${v < 0 ? '-' : ''}₹${Math.abs(Math.round(v)).toLocaleString('en-IN')}`
 
-export const pnlClass = (v?: number | null) =>
-  v == null || v === 0 ? 'text-slate-300' : v > 0 ? 'text-emerald-300' : 'text-rose-300'
+export { pnlClass }
 
 export function LaneCard({ title, data }: { title: string; data?: LaneStatus }) {
   const today = data?.today ?? {}
@@ -25,7 +27,7 @@ export function LaneCard({ title, data }: { title: string; data?: LaneStatus }) 
         <h4 className="text-sm font-semibold text-slate-200">{title}</h4>
         <span
           className={`rounded-full px-2 py-0.5 text-[10px] ${
-            data?.enabled ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-700/50 text-slate-400'
+            data?.enabled ? 'bg-[var(--up)]/15 text-[var(--up)]' : 'bg-slate-700/50 text-slate-400'
           }`}
         >
           {data?.enabled ? 'live' : 'off'}

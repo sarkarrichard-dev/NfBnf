@@ -158,8 +158,8 @@ export const ExecutionPanel = memo(function ExecutionPanel({
             >
               {isLive ? 'LIVE' : 'PAPER'}
             </span>
-            <span className="z-0 flex-1 text-center text-slate-500">Paper</span>
-            <span className="z-0 flex-1 text-center text-slate-500">Live</span>
+            <span className="z-0 flex-1 text-center text-slate-400">Paper</span>
+            <span className="z-0 flex-1 text-center text-slate-400">Live</span>
           </button>
           {isLive ? (
             <p
@@ -269,8 +269,8 @@ export const ExecutionPanel = memo(function ExecutionPanel({
               className={cn(
                 'rounded border px-2 py-1',
                 g.ok
-                  ? 'border-emerald-500/25 text-emerald-300/90'
-                  : 'border-red-500/25 text-red-300/90',
+                  ? 'border-[var(--up)]/25 text-[var(--up)]/90'
+                  : 'border-[var(--down)]/25 text-[var(--down)]/90',
               )}
             >
               {g.title}: {g.detail}

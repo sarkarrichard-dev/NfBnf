@@ -2,10 +2,8 @@ import { cn } from '../../lib/cn'
 import { fx } from '../../lib/theme'
 import { STRATEGIES, byId, renderReads, sideLabel, type StrategyDef, type ParamGroup } from '../../lib/strategies'
 import { useStrategyStatus, type LiveStatus } from '../../hooks/useStrategyStatus'
+import { rupees } from '../LanesPanel'
 import { Button } from '../ui/Button'
-
-const rupee = (v?: number | null) =>
-  v == null ? '—' : `${v < 0 ? '-' : ''}₹${Math.abs(Math.round(v)).toLocaleString('en-IN')}`
 
 function StatusChip({ s }: { s?: LiveStatus }) {
   const on = !!s?.enabled
@@ -77,7 +75,7 @@ function Detail({
           </div>
           <div className={fx.card}>
             <p className={fx.cardLabel}>Today (paper)</p>
-            <p className={cn(fx.cardValue, 'text-xs')}>{rupee(live?.today?.net_rupees)}</p>
+            <p className={cn(fx.cardValue, 'text-xs')}>{rupees(live?.today?.net_rupees)}</p>
           </div>
         </div>
       ) : null}

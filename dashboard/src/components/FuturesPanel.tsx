@@ -9,6 +9,7 @@ import type { DateRange, PeriodKey } from '../types/analytics'
 import { LaneCard, pnlClass, rupees, type LaneStatus } from './LanesPanel'
 import { PeriodBar } from './PeriodBar'
 import { TradeLogTable } from './TradeLogTable'
+import { StatTile } from './ui/StatTile'
 
 type Agg = {
   trades?: number
@@ -22,7 +23,6 @@ type Agg = {
   long?: number
   short?: number
   span?: string
-  net_by_year?: Record<string, number>
 }
 
 type StockBacktest = {
@@ -41,15 +41,6 @@ type BacktestResponse = {
   generated_at_ist?: string
 }
 
-function Stat({ label, value, cls }: { label: string; value: string; cls?: string }) {
-  return (
-    <div className={fx.card}>
-      <p className={fx.cardLabel}>{label}</p>
-      <p className={cn(fx.cardValue, cls || 'text-slate-100')}>{value}</p>
-    </div>
-  )
-}
-
 function VerdictBanner({ bt }: { bt: StockBacktest }) {
   const v = bt.verdict ?? {}
   const net = bt.portfolio?.net_rupees ?? 0
@@ -59,12 +50,13 @@ function VerdictBanner({ bt }: { bt: StockBacktest }) {
       className={cn(
         'rounded-xl border p-4',
         edge
-          ? 'border-emerald-500/30 bg-emerald-500/[0.06]'
-          : 'border-rose-500/30 bg-rose-500/[0.06]',
+          ? 'border-[var(--up)]/30 bg-[var(--up)]/[0.06]'
+          : 'border-[var(--down)]/30 bg-[var(--down)]/[0.06]',
       )}
     >
-      <p className={cn('text-sm font-bold', edge ? 'text-emerald-300' : 'text-rose-300')}>
-        {edge ? 'Edge survives friction — proceed' : 'No edge / too fragile'} · net {rupees(net)}
+      <p className={cn('text-sm font-bold', edge ? 'text-[var(--up)]' : 'text-[var(--down)]')}>
+        {edge ? 'Still profitable after real broker charges — proceed' : 'No edge / too fragile'} ·
+        net {rupees(net)}
       </p>
       <p className="mt-1 text-xs text-slate-400">{v.reason || '—'}</p>
       {bt.params ? (
@@ -109,7 +101,7 @@ function PerStockTable({ rows }: { rows: [string, Agg][] }) {
                 {rupees(a.net_rupees)}
               </td>
               <td className={cn('text-right', pnlClass(a.expectancy))}>{rupees(a.expectancy)}</td>
-              <td className="text-right text-rose-300/80">{rupees(a.max_drawdown)}</td>
+              <td className="text-right text-[var(--down)]/80">{rupees(a.max_drawdown)}</td>
             </tr>
           ))}
         </tbody>
@@ -179,12 +171,12 @@ export function FuturesPanel() {
           <>
             <VerdictBanner bt={bt} />
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-              <Stat label="Portfolio net" value={rupees(p.net_rupees)} cls={pnlClass(p.net_rupees)} />
-              <Stat label="Trades" value={String(p.trades ?? 0)} />
-              <Stat label="Win rate" value={`${p.win_rate_pct ?? 0}%`} />
-              <Stat label="Gross" value={rupees(p.gross_rupees)} cls={pnlClass(p.gross_rupees)} />
-              <Stat label="Friction" value={rupees(p.friction_rupees)} />
-              <Stat
+              <StatTile label="Portfolio net" value={rupees(p.net_rupees)} valueClass={pnlClass(p.net_rupees)} />
+              <StatTile label="Trades" value={String(p.trades ?? 0)} />
+              <StatTile label="Win rate" value={`${p.win_rate_pct ?? 0}%`} />
+              <StatTile label="Gross" value={rupees(p.gross_rupees)} valueClass={pnlClass(p.gross_rupees)} />
+              <StatTile label="Broker charges" value={rupees(p.friction_rupees)} />
+              <StatTile
                 label="Halves 1 / 2"
                 value={`${rupees(bt.halves?.first)} / ${rupees(bt.halves?.second)}`}
               />
@@ -211,7 +203,7 @@ export function FuturesPanel() {
         ) : (
           <p className="text-[11px] text-slate-500">
             Index replay (recorded, ~2yr): NIFTY −₹62,827 · BANKNIFTY −₹186,275 · SENSEX −₹81,932 —
-            friction ≈ 10× the gross edge.
+            broker charges run about 10× the gross profit before costs.
           </p>
         )}
       </section>

@@ -11,8 +11,8 @@ import { useStrategyLearning, type LearnRow } from '../../hooks/useStrategyLearn
 
 const STATE_STYLE: Record<string, string> = {
   watching: 'bg-white/[0.05] text-slate-400',
-  observing: 'bg-amber-500/15 text-amber-400',
-  ready: 'bg-emerald-500/15 text-emerald-400',
+  observing: 'bg-[var(--warn)]/15 text-[var(--warn)]',
+  ready: 'bg-[var(--up)]/15 text-[var(--up)]',
 }
 
 function LearningPanel() {
@@ -57,7 +57,7 @@ function LearningPanel() {
                     {r.state}
                   </span>
                   {r.frozen ? (
-                    <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400">
+                    <span className="rounded bg-[var(--up)]/10 px-1.5 py-0.5 font-mono text-[10px] text-[var(--up)]">
                       frozen · working
                     </span>
                   ) : null}
@@ -239,7 +239,7 @@ function VenueTable({
                     <Cell className="text-right text-slate-500">
                       {fmt(r.charges, currency)}
                       {r.priced_pct != null && r.priced_pct < 0.95 ? (
-                        <span className="ml-1 text-amber-500" title="some rows had no premium to cost">
+                        <span className="ml-1 text-[var(--warn)]" title="some rows had no premium to cost">
                           ~
                         </span>
                       ) : null}
@@ -285,7 +285,7 @@ export function StrategyPerformancePage() {
   return (
     <div className="space-y-4">
       {q.isError ? (
-        <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+        <p className="rounded-lg border border-[var(--down)]/40 bg-[var(--down)]/10 px-3 py-2 text-sm text-[var(--down)]">
           {q.error instanceof Error ? q.error.message : 'Failed to load'}
         </p>
       ) : null}
@@ -295,7 +295,7 @@ export function StrategyPerformancePage() {
       {best && (best.winners.length > 0 || best.losers.length > 0) ? (
         <div className="grid gap-3 sm:grid-cols-2">
           <div className={cn(fx.panel, 'p-3')}>
-            <p className="mb-2 font-mono text-[10.5px] uppercase tracking-[0.09em] text-emerald-400">
+            <p className="mb-2 font-mono text-[10.5px] uppercase tracking-[0.09em] text-[var(--up)]">
               Making money
             </p>
             {best.winners.length === 0 ? (
@@ -305,7 +305,7 @@ export function StrategyPerformancePage() {
                 {best.winners.map(({ g, currency }) => (
                   <li key={g.strategy} className="flex justify-between gap-2">
                     <span className="text-slate-200">{g.strategy}</span>
-                    <span className="font-mono font-semibold text-emerald-400">
+                    <span className="font-mono font-semibold text-[var(--up)]">
                       {fmt(g.rollup.net, currency, true)}
                     </span>
                   </li>
@@ -314,7 +314,7 @@ export function StrategyPerformancePage() {
             )}
           </div>
           <div className={cn(fx.panel, 'p-3')}>
-            <p className="mb-2 font-mono text-[10.5px] uppercase tracking-[0.09em] text-red-400">
+            <p className="mb-2 font-mono text-[10.5px] uppercase tracking-[0.09em] text-[var(--down)]">
               Losing money
             </p>
             {best.losers.length === 0 ? (
@@ -324,7 +324,7 @@ export function StrategyPerformancePage() {
                 {best.losers.map(({ g, currency }) => (
                   <li key={g.strategy} className="flex justify-between gap-2">
                     <span className="text-slate-200">{g.strategy}</span>
-                    <span className="font-mono font-semibold text-red-400">
+                    <span className="font-mono font-semibold text-[var(--down)]">
                       {fmt(g.rollup.net, currency, true)}
                     </span>
                   </li>

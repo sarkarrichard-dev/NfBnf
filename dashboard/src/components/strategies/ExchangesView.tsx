@@ -37,20 +37,20 @@ export function ExchangesView() {
   return (
     <div className="space-y-5">
       <section className={cn(fx.panel, 'p-4 space-y-3')}>
-        <h3 className="text-sm font-bold text-slate-100">Egress IP to whitelist</h3>
+        <h3 className="text-sm font-bold text-slate-100">This computer's IP address — add it to the broker</h3>
         <p className="text-xs text-slate-500">
-          SEBI's static-IP mandate: both brokers reject live orders from a non-whitelisted address.
-          Add the IP below to the API key's allow-list in the broker portal. This machine, one IP for both.
+          SEBI requires a fixed IP address for live orders: both brokers reject them from any address
+          not on their allow-list. Add the IP below in the broker's site. This machine uses one IP for both.
         </p>
         <div className="grid gap-2 sm:grid-cols-2">
-          <IpStrip label="Dhan (order API)" ip={dhanIp} note="Dhan portal → API → Order IP whitelist" />
+          <IpStrip label="Dhan (order API)" ip={dhanIp} note="Dhan portal → API → Order IP allow-list" />
           <IpStrip
             label="Delta Exchange (IPv4)"
             ip={deltaIp}
             note={
               deltaSees && !crypto.data?.egress?.whitelist_ok
-                ? `Delta last saw ${deltaSees} — whitelist that`
-                : 'Delta portal → API keys → IP whitelist'
+                ? `Delta last saw ${deltaSees} — add that address`
+                : 'Delta portal → API keys → IP allow-list'
             }
           />
         </div>

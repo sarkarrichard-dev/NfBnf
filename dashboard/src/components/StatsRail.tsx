@@ -4,8 +4,8 @@ import { computePeriodStats, money, pctRate, periodBlock, pnlClass, tradesForPer
 import { fx } from '../lib/theme'
 import { getSeries, pushPoint } from '../hooks/useSeries'
 import { PeriodBar } from './PeriodBar'
-import { Sparkline } from './Sparkline'
 import { EquityCurve } from './charts/EquityCurve'
+import { StatTile } from './ui/StatTile'
 import type { AnalyticsResponse, DateRange, PeriodKey, TradeRow } from '../types/analytics'
 
 const PERIOD_LABEL: Record<PeriodKey, string> = {
@@ -149,20 +149,15 @@ export function StatsOverview({
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-          {stats.map((stat) => {
-            const points = getSeries(`stat:${period}:${stat.key}`)
-            return (
-              <article key={stat.label} className={fx.card}>
-                <p className={fx.cardLabel}>{stat.label}</p>
-                <p className={cn(fx.cardValue, stat.valueClass || 'text-slate-100')}>
-                  {stat.value}
-                </p>
-                {points.length > 1 ? (
-                  <Sparkline points={points} className="mt-1 w-full" height={14} />
-                ) : null}
-              </article>
-            )
-          })}
+          {stats.map((stat) => (
+            <StatTile
+              key={stat.label}
+              label={stat.label}
+              value={stat.value}
+              valueClass={stat.valueClass}
+              points={getSeries(`stat:${period}:${stat.key}`)}
+            />
+          ))}
         </div>
       )}
     </section>
