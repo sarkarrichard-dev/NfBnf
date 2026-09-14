@@ -20,6 +20,19 @@ def _test_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("MAX_CPR_ENTRY_EXTENSION_PCT", "0")
     monkeypatch.setenv("LOSS_GUARD_ENABLED", "true")
 
+    # A handful of tests exercise real production code paths (close_open_trade,
+    # crypto.lanes.scan_crypto_paper) that call index_ai.notify internally, and
+    # none of them mock notify — only tests/test_notify.py does, deliberately,
+    # by re-setting these same two vars itself (monkeypatch composes: a test's
+    # own setenv after this fixture's delenv still wins). Without this, any
+    # such test sends a REAL Telegram message through the user's real bot
+    # whenever the real .env has TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID set — this
+    # is the actual explanation for the recurring "BANKNIFTY PE 54600 · +₹142"
+    # and "BTCUSD · 6PM · session end" messages traced back to
+    # tests/test_exit_credit.py and tests/test_crypto_phase2.py (2026-09-14).
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
     db = tmp_path / "trade_memory.sqlite"
     monkeypatch.setattr("index_ai.config.DB_PATH", db)
     monkeypatch.setattr("index_ai.learning.DB_PATH", db)
