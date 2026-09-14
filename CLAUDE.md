@@ -17,6 +17,12 @@ SENSEX — all three, never just one.
 - Run the server: `python -m uvicorn index_ai.server:app --port 8000`. Dashboard
   is served from `dashboard/dist/` — **rebuild it (`npm --prefix dashboard run
   build`) after any `dashboard/src` change** or you'll debug a stale bundle.
+- **Never `claude mcp add --scope project` a server that takes a credential** —
+  project scope writes straight into the committed `.mcp.json`. Use local scope
+  (the default, omit `--scope`) for anything with a token. `playwright` is the
+  one project-scoped (shared, no secret) MCP server; a GitHub server, if added,
+  must be named something other than `github` — a global `github` plugin
+  already occupies that name and silently shadows a same-named local one.
 
 ## Checks before committing
 
@@ -28,6 +34,10 @@ SENSEX — all three, never just one.
 - Dashboard: `npm --prefix dashboard run build` must succeed; `npx tsc --noEmit`
   for types.
 - Line-ending warnings on commit are a Windows/`.gitattributes` gap, harmless.
+- Tests must not leak real side effects: `tests/conftest.py`'s autouse fixture
+  clears `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` for every test — never re-set
+  them (only `tests/test_notify.py` does, deliberately) or a real `pytest` run
+  sends real Telegram messages through whatever bot token is in `.env`.
 
 ## Money path — extra care
 
@@ -88,6 +98,10 @@ change to how index options trade goes in the legacy modules. See
   signal** (`index_ai.strategies.futures.engine`), not the crypto strategies.
   Front contract rolls monthly: `python -m scripts.fetch_commodity_universe`.
   See `commodities/README.md`. `ENABLE_COMMODITIES_PAPER`, never wired to orders.
+- **`index_ai/market_holidays.py`** — the NSE/MCX holiday calendar so the
+  Indian, futures and commodities lanes go quiet on real holidays, not just
+  weekends. Hardcoded per year — refresh it every January against the new
+  NSE/MCX circular.
 
 ## Reference
 
