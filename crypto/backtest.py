@@ -24,7 +24,7 @@ from crypto.config import PERP_SYMBOLS, crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.products import Contract
 from crypto.session import in_ny_window, ny_session_date
-from crypto.sizing import size_position
+from crypto.sizing import lots_from_margin_budget, size_position
 from crypto.strategies import (
     ak_roxx_pro,
     bb_reversal,
@@ -41,18 +41,32 @@ from crypto.strategies.trailing import TrailConfig
 # strategy runs through backtest_simple; ny_n_break is the only bespoke one
 # (needs 5m + 15m + session flags).
 _SIMPLE = {
-    "ichimoku": (ichi, lambda s: s.ichimoku_tf,
-                 lambda s, **kw: ichi.IchimokuConfig(trail=_trail(s), **kw)),
-    "bb_reversal": (bb_reversal, "5m",
-                    lambda s, **kw: bb_reversal.BBReversalConfig(trail=_trail(s), **kw)),
-    "ema_jaguar": (ema_jaguar, "5m",
-                   lambda s, **kw: ema_jaguar.EmaJaguarConfig(trail=_trail(s), **kw)),
-    "vp_edge": (vp_edge, "15m",
-                lambda s, **kw: vp_edge.VpEdgeConfig(trail=_trail(s), **kw)),
-    "ak_roxx_pro": (ak_roxx_pro, lambda s: ak_roxx_pro.AkRoxxConfig().timeframe,
-                    lambda s, **kw: ak_roxx_pro.AkRoxxConfig(trail=_trail(s), **kw)),
-    "tma_phoenix": (tma_phoenix, "5m",
-                    lambda s, **kw: tma_phoenix.TmaPhoenixConfig(trail=_trail(s), **kw)),
+    "ichimoku": (
+        ichi,
+        lambda s: s.ichimoku_tf,
+        lambda s, **kw: ichi.IchimokuConfig(trail=_trail(s), **kw),
+    ),
+    "bb_reversal": (
+        bb_reversal,
+        "5m",
+        lambda s, **kw: bb_reversal.BBReversalConfig(trail=_trail(s), **kw),
+    ),
+    "ema_jaguar": (
+        ema_jaguar,
+        "5m",
+        lambda s, **kw: ema_jaguar.EmaJaguarConfig(trail=_trail(s), **kw),
+    ),
+    "vp_edge": (vp_edge, "15m", lambda s, **kw: vp_edge.VpEdgeConfig(trail=_trail(s), **kw)),
+    "ak_roxx_pro": (
+        ak_roxx_pro,
+        lambda s: ak_roxx_pro.AkRoxxConfig().timeframe,
+        lambda s, **kw: ak_roxx_pro.AkRoxxConfig(trail=_trail(s), **kw),
+    ),
+    "tma_phoenix": (
+        tma_phoenix,
+        "5m",
+        lambda s, **kw: tma_phoenix.TmaPhoenixConfig(trail=_trail(s), **kw),
+    ),
 }
 _WIN_N = {"ichimoku": 220, "ak_roxx_pro": 60, "tma_phoenix": 340}  # ak_roxx: 34 EMA + prior hour
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
@@ -60,10 +74,13 @@ ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 
 def _trail(s) -> TrailConfig:
     return TrailConfig(
-        leverage=s.leverage, stop_pnl_pct=s.stop_pnl_pct,
+        leverage=s.leverage,
+        stop_pnl_pct=s.stop_pnl_pct,
         ratchet_step_pnl_pct=s.ratchet_step_pnl_pct,
-        tp_trigger_pnl_pct=s.tp_trigger_pnl_pct, peak_trail_pnl_pct=s.peak_trail_pnl_pct,
+        tp_trigger_pnl_pct=s.tp_trigger_pnl_pct,
+        peak_trail_pnl_pct=s.peak_trail_pnl_pct,
     )
+
 
 # Delta perpetual contract values (units of coin per contract). Used only when
 # the live contract master is unreachable; the real values come from the API.
@@ -136,8 +153,15 @@ def _summarise(trades: list[Trade]) -> dict[str, Any]:
 
 
 def _record_exit(trades, strat, sym, pos, exit_px, exit_ts, reason, s, contract):
+    lots = lots_from_margin_budget(
+        contract, pos["entry"], margin_usd=s.margin_per_position_usd, leverage=s.leverage
+    )
     sr = size_position(
-        contract, pos["entry"], lots=s.lots, deploy_usd=s.deploy_usd, leverage=s.leverage,
+        contract,
+        pos["entry"],
+        lots=lots,
+        deploy_usd=s.deploy_usd,
+        leverage=s.leverage,
         wallet_usd=s.paper_bankroll_usd,
     )
     size = sr.size if sr.ok else 1
@@ -147,8 +171,18 @@ def _record_exit(trades, strat, sym, pos, exit_px, exit_ts, reason, s, contract)
     gross = (exit_px - pos["entry"]) * direction * coins
     cost = round_trip_cost_usd(notional, sym, exit_px, size, contract.contract_value)
     trades.append(
-        Trade(strat, sym, pos["side"], pos["entry_ts"], str(exit_ts), pos["entry"],
-              exit_px, size, round(gross - cost, 4), reason)
+        Trade(
+            strat,
+            sym,
+            pos["side"],
+            pos["entry_ts"],
+            str(exit_ts),
+            pos["entry"],
+            exit_px,
+            size,
+            round(gross - cost, 4),
+            reason,
+        )
     )
 
 
@@ -166,12 +200,21 @@ def backtest_ny_n_break(sym: str, days: float, s) -> list[Trade]:
     for i in range(_WINDOW, len(c5)):
         win5 = c5.iloc[i - _WINDOW : i + 1].reset_index(drop=True)
         now = pd.Timestamp(win5["datetime"].iloc[-1]).to_pydatetime()
-        win15 = c15_all[c15_all["datetime"] <= win5["datetime"].iloc[-1]].tail(200).reset_index(drop=True)
+        win15 = (
+            c15_all[c15_all["datetime"] <= win5["datetime"].iloc[-1]]
+            .tail(200)
+            .reset_index(drop=True)
+        )
         allround = getattr(s, "nbreak_allround", False)
         state, ev = nb.step(
-            sym, win5, win15, state=state, cfg=nb.NBreakConfig(trail=_trail(s)),
+            sym,
+            win5,
+            win15,
+            state=state,
+            cfg=nb.NBreakConfig(trail=_trail(s)),
             in_session=True if allround else in_ny_window(ny_start, ny_end, now),
-            session_date=now.date().isoformat() if allround
+            session_date=now.date().isoformat()
+            if allround
             else ny_session_date(ny_start, ny_end, now),
         )
         px = float(win5["close"].iloc[-1])
@@ -179,13 +222,22 @@ def backtest_ny_n_break(sym: str, days: float, s) -> list[Trade]:
         if ev["event"] == "enter":
             open_pos = {"side": ev["side"], "entry": px, "entry_ts": str(ts)}
         elif ev["event"] == "exit" and open_pos:
-            _record_exit(trades, "ny_n_break", sym, open_pos, px, ts, ev.get("reason", ""), s, contract)
+            _record_exit(
+                trades, "ny_n_break", sym, open_pos, px, ts, ev.get("reason", ""), s, contract
+            )
             open_pos = None
     return trades
 
 
-def backtest_simple(name: str, sym: str, days: float, s, *, cfg_overrides: dict | None = None,
-                    frame: pd.DataFrame | None = None) -> list[Trade]:
+def backtest_simple(
+    name: str,
+    sym: str,
+    days: float,
+    s,
+    *,
+    cfg_overrides: dict | None = None,
+    frame: pd.DataFrame | None = None,
+) -> list[Trade]:
     """Generic replay for a strategy with the plain step(sym, candles, *, state, cfg)
     shape (ichimoku / bb_reversal / ema_jaguar / vp_edge / ak_roxx_pro).
     ``frame`` overrides the fetched candles (walk-forward optimiser, one fold)."""
@@ -213,8 +265,9 @@ def backtest_simple(name: str, sym: str, days: float, s, *, cfg_overrides: dict 
     return trades
 
 
-def run(days: float = 120, assets: list[str] | None = None,
-        strategies: list[str] | None = None) -> Result:
+def run(
+    days: float = 120, assets: list[str] | None = None, strategies: list[str] | None = None
+) -> Result:
     s = crypto_settings()
     assets = assets or list(PERP_SYMBOLS)
     strategies = strategies or ["ny_n_break", "ichimoku"]
@@ -246,7 +299,9 @@ def _main() -> None:
     )
     print(f"  avg win ${summary['avg_win_usd']:,.2f}  ·  avg loss ${summary['avg_loss_usd']:,.2f}")
     for k, v in summary["by"].items():
-        print(f"    {k:<24} {v['trades']:>4} trades  net ${v['net_usd']:>10,.2f}  win {v['win_rate']:.0%}")
+        print(
+            f"    {k:<24} {v['trades']:>4} trades  net ${v['net_usd']:>10,.2f}  win {v['win_rate']:.0%}"
+        )
     print("\n  Note: half-spread is the bps fallback until the measurement path has data;")
     print("  absolute figures are approximate, relative comparisons are sound.")
 

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from crypto.delta.products import Contract
 
 _WALLET_SAFETY = 0.90  # keep 10% of the bankroll free
-_FEE_BUFFER = 1.02     # margin headroom over the raw notional/leverage figure
+_FEE_BUFFER = 1.02  # margin headroom over the raw notional/leverage figure
 
 # Plausible mark-price band per asset — rejects a corrupted feed or a units
 # mix-up before it silently sizes the position 10x off. Wide on purpose. Only
@@ -62,8 +62,12 @@ def lot_economics(
     mark = float(mark_price)
     lev = min(max(1.0, float(leverage)), max(1.0, contract.max_leverage))
     if mark <= 0 or contract.contract_value <= 0:
-        return {"coin_per_lot": contract.contract_value or None, "notional_per_lot_usd": None,
-                "margin_per_lot_usd": None, "margin_per_lot_inr": None}
+        return {
+            "coin_per_lot": contract.contract_value or None,
+            "notional_per_lot_usd": None,
+            "margin_per_lot_usd": None,
+            "margin_per_lot_inr": None,
+        }
     notional = contract.contract_value * mark
     margin = _margin_per_contract(contract, mark, lev)
     return {
@@ -72,6 +76,26 @@ def lot_economics(
         "margin_per_lot_usd": round(margin, 2),
         "margin_per_lot_inr": round(margin * fx_usdinr, 0) if fx_usdinr else None,
     }
+
+
+def lots_from_margin_budget(
+    contract: Contract, mark_price: float, *, margin_usd: float, leverage: float
+) -> int:
+    """How many contracts a dollar margin budget affords for this symbol at
+    this mark price — floored down, never below the contract's own min_size.
+    Pure, no I/O; the caller still runs the result through ``size_position``
+    for the wallet-safety guard, so an unaffordable budget still gets caught
+    there rather than silently sizing to whatever fits."""
+    lev = min(max(1.0, float(leverage)), max(1.0, contract.max_leverage))
+    min_contracts = max(1, int(math.ceil(contract.min_size)))
+    mark = float(mark_price)
+    budget = max(0.0, float(margin_usd))
+    if mark <= 0 or contract.contract_value <= 0 or budget <= 0:
+        return min_contracts
+    margin1 = _margin_per_contract(contract, mark, lev)
+    if margin1 <= 0:
+        return min_contracts
+    return max(min_contracts, int(budget // margin1))
 
 
 def size_position(
@@ -90,7 +114,9 @@ def size_position(
         return _fail("no usable mark price / contract value", lev=lev)
     lo, hi = _band(contract.symbol)
     if not (lo <= mark <= hi):
-        return _fail(f"mark {mark:,.2f} outside the sane band for {contract.symbol}", mark=mark, lev=lev)
+        return _fail(
+            f"mark {mark:,.2f} outside the sane band for {contract.symbol}", mark=mark, lev=lev
+        )
 
     per_contract_notional = contract.contract_value * mark
     margin1 = _margin_per_contract(contract, mark, lev)
@@ -105,12 +131,16 @@ def size_position(
     if cap and need > cap:
         return _fail(
             f"{size} lot(s) need ${need:,.2f} margin, over the ${cap:,.0f} cap",
-            m1=margin1, mark=mark, lev=lev,
+            m1=margin1,
+            mark=mark,
+            lev=lev,
         )
     if need > safe_wallet:
         return _fail(
             f"{size} lot(s) need ${need:,.2f}, safe bankroll is ${safe_wallet:,.2f}",
-            m1=margin1, mark=mark, lev=lev,
+            m1=margin1,
+            mark=mark,
+            lev=lev,
         )
     reason = f"{size} lot(s) × ${margin1:,.2f} margin @ {lev:g}x"
 
@@ -142,7 +172,9 @@ if __name__ == "__main__":  # self-check
     # wallet guard still applies in lot mode
     assert not size_position(btc, 60_000, lots=5, leverage=3, wallet_usd=50).ok
     # new symbol, no built-in band: any mark > 0 accepted (PAXG ~ $3k)
-    paxg = Contract("PAXGUSD", 84, contract_value=0.001, tick_size=0.1, min_size=1, max_leverage=100)
+    paxg = Contract(
+        "PAXGUSD", 84, contract_value=0.001, tick_size=0.1, min_size=1, max_leverage=100
+    )
     assert size_position(paxg, 3_000, lots=1, leverage=3, wallet_usd=2000).ok
     assert not size_position(paxg, 0, lots=1, leverage=3, wallet_usd=2000).ok
     # lot_economics
@@ -150,4 +182,14 @@ if __name__ == "__main__":  # self-check
     assert le["coin_per_lot"] == 0.001 and le["notional_per_lot_usd"] == 60.0
     assert le["margin_per_lot_usd"] and le["margin_per_lot_inr"]
     assert lot_economics(btc, 0, leverage=3)["margin_per_lot_usd"] is None
+
+    # lots_from_margin_budget — $100 of margin at 3x on a ~$20.4/lot BTC contract
+    # (60_000 * 0.001 / 3 * 1.02) covers 4 lots, not 5
+    per_lot = 60_000 * 0.001 / 3 * _FEE_BUFFER
+    n = lots_from_margin_budget(btc, 60_000, margin_usd=100, leverage=3)
+    assert n == int(100 // per_lot) == 4, (n, per_lot)
+    # a budget smaller than one lot still returns the contract's min_size, never 0
+    assert lots_from_margin_budget(btc, 60_000, margin_usd=1, leverage=3) == 1
+    # a cheaper-per-lot symbol with the same $ budget affords more contracts
+    assert lots_from_margin_budget(paxg, 3_000, margin_usd=100, leverage=3) > n
     print("crypto.sizing self-check ok")

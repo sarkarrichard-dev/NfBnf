@@ -34,7 +34,12 @@ type Status = {
     ak_roxx_pro: boolean
     cpr_trend: boolean
   }
-  sizing: { lots: number; deploy_cap_usd: number; leverage: number; max_concurrent: number }
+  sizing: {
+    margin_per_position_usd: number
+    deploy_cap_usd: number
+    leverage: number
+    max_concurrent: number
+  }
   trailing: {
     stop_pnl_pct: number
     ratchet_step_pnl_pct: number
@@ -69,10 +74,12 @@ type LotRow = {
   notional_per_lot_usd: number | null
   margin_per_lot_usd: number | null
   margin_per_lot_inr: number | null
+  lots: number | null
+  deployed_usd: number | null
   source?: string
   note?: string
 }
-type Lots = { lots: number; table: LotRow[] }
+type Lots = { margin_per_position_usd: number; table: LotRow[] }
 type PaperPos = {
   key: string
   asset: string
@@ -164,6 +171,27 @@ export function CryptoPanel() {
       }
       const t = res.trade
       toast.success(t ? `Closed — ${usd(t.pnl_usd)} (${inr(t.pnl_inr)})` : 'Closed')
+      void qc.invalidateQueries({ queryKey: ['crypto', 'positions'] })
+      void qc.invalidateQueries({ queryKey: ['crypto', 'journal'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const closeAllPos = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; attempted: number; closed: string[]; failed: Record<string, string> }>(
+        '/api/crypto/positions/close-all',
+        { method: 'POST' },
+      ),
+    onSuccess: (res) => {
+      if (res.attempted === 0) {
+        toast.success('Nothing open to close')
+      } else if (res.ok) {
+        toast.success(`Closed all ${res.closed.length} open position${res.closed.length === 1 ? '' : 's'}`)
+      } else {
+        const failedCount = Object.keys(res.failed).length
+        toast.error(`Closed ${res.closed.length}, ${failedCount} failed — see server log`)
+      }
       void qc.invalidateQueries({ queryKey: ['crypto', 'positions'] })
       void qc.invalidateQueries({ queryKey: ['crypto', 'journal'] })
     },
@@ -286,19 +314,36 @@ export function CryptoPanel() {
           </p>
         ) : null}
 
-        {/* minimum capital per instrument */}
+        {/* what the $ budget buys per instrument */}
         <div className="space-y-1.5">
           <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-            Minimum capital per instrument · {s?.sizing.lots ?? 1} lot
-            {(s?.sizing.lots ?? 1) === 1 ? '' : 's'} @ 100x
+            {usd0(lotsQ.data?.margin_per_position_usd ?? s?.sizing.margin_per_position_usd ?? 0)} per
+            position · auto-sized @ {s?.sizing.leverage ?? 20}x
           </span>
-          <LotTable rows={lotsQ.data?.table ?? []} lots={lotsQ.data?.lots ?? s?.sizing.lots ?? 1} />
+          <LotTable rows={lotsQ.data?.table ?? []} />
         </div>
       </div>
 
       {/* open positions */}
       <section className={cn(fx.panel, 'p-4')}>
-        <h3 className="mb-3 text-sm font-semibold text-cyan-50/95">Open (paper)</h3>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-cyan-50/95">Open (paper)</h3>
+          {positions.data?.paper?.length ? (
+            <button
+              type="button"
+              disabled={closeAllPos.isPending}
+              onClick={() => {
+                const n = positions.data?.paper?.length ?? 0
+                if (!window.confirm(`Close all ${n} open position${n === 1 ? '' : 's'} now, at current prices?`))
+                  return
+                closeAllPos.mutate()
+              }}
+              className="rounded-md border border-[var(--down)]/40 px-2 py-1 font-sans text-[11px] font-semibold text-[var(--down)] transition hover:bg-[var(--down)]/10 disabled:opacity-40"
+            >
+              {closeAllPos.isPending ? 'Closing all…' : 'Close all'}
+            </button>
+          ) : null}
+        </div>
         {positions.data?.paper?.length ? (
           <div className="overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
             <table className="min-w-full text-xs">
@@ -523,7 +568,7 @@ function LearningRow({ ml }: { ml: NonNullable<Status['ml']> }) {
   )
 }
 
-function LotTable({ rows, lots }: { rows: LotRow[]; lots: number }) {
+function LotTable({ rows }: { rows: LotRow[] }) {
   if (!rows.length) return null
   const usdInr = (() => {
     const r = rows.find(
@@ -538,39 +583,38 @@ function LotTable({ rows, lots }: { rows: LotRow[]; lots: number }) {
           <tr className="border-b border-slate-800 [&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
             <th>Symbol</th>
             <th>1 lot =</th>
-            <th>Notional / lot</th>
-            <th>
-              Min capital ({lots} lot{lots === 1 ? '' : 's'})
-            </th>
+            <th>Margin / lot</th>
+            <th>Lots this buys</th>
+            <th>Deployed</th>
           </tr>
         </thead>
         <tbody className="font-mono">
-          {rows.map((r) => {
-            const minUsd = ok(r.margin_per_lot_usd) ? r.margin_per_lot_usd * lots : null
-            return (
-              <tr
-                key={r.symbol}
-                className="border-b border-slate-800/60 text-slate-200 [&>td]:px-3 [&>td]:py-2"
-              >
-                <td>{r.symbol}</td>
-                <td className="tabular-nums text-slate-400">
-                  {ok(r.coin_per_lot) ? `${r.coin_per_lot} ${r.symbol.replace(/USD.?$/, '')}` : '—'}
-                </td>
-                <td className="tabular-nums text-slate-400">{usd0(r.notional_per_lot_usd)}</td>
-                <td className="tabular-nums">
-                  {ok(minUsd) ? (
-                    <>
-                      {usd0(minUsd)}{' '}
-                      <span className="text-slate-600">{inr0(usdInr ? minUsd * usdInr : null)}</span>
-                      {r.source === 'delta' ? <span className="text-slate-600"> · Delta</span> : null}
-                    </>
-                  ) : (
-                    <span className="text-[var(--warn)]/80">— · {r.note || 'no mark'}</span>
-                  )}
-                </td>
-              </tr>
-            )
-          })}
+          {rows.map((r) => (
+            <tr
+              key={r.symbol}
+              className="border-b border-slate-800/60 text-slate-200 [&>td]:px-3 [&>td]:py-2"
+            >
+              <td>{r.symbol}</td>
+              <td className="tabular-nums text-slate-400">
+                {ok(r.coin_per_lot) ? `${r.coin_per_lot} ${r.symbol.replace(/USD.?$/, '')}` : '—'}
+              </td>
+              <td className="tabular-nums text-slate-400">
+                {ok(r.margin_per_lot_usd) ? (
+                  <>
+                    {usd0(r.margin_per_lot_usd)}{' '}
+                    <span className="text-slate-600">
+                      {inr0(usdInr && r.margin_per_lot_usd ? r.margin_per_lot_usd * usdInr : null)}
+                    </span>
+                    {r.source === 'delta' ? <span className="text-slate-600"> · Delta</span> : null}
+                  </>
+                ) : (
+                  <span className="text-[var(--warn)]/80">— · {r.note || 'no mark'}</span>
+                )}
+              </td>
+              <td className="tabular-nums">{r.lots ?? '—'}</td>
+              <td className="tabular-nums">{ok(r.deployed_usd) ? usd0(r.deployed_usd) : '—'}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>

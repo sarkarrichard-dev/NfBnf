@@ -277,6 +277,40 @@ def test_lane_opens_and_journals_a_paper_trade(paper_env, monkeypatch):
     assert journal.load_state()["ny_n_break:BTCUSD"]["position"] is None
 
 
+def test_rejected_entry_does_not_burn_the_session_trade_budget(paper_env, monkeypatch):
+    """A signal that fires "enter" but gets rejected downstream (sizing, in
+    this test, via a $1 deploy cap) must not consume ny_n_break's per-session
+    trade count or the swing level it detected — otherwise a strategy that
+    keeps getting capacity-rejected silently uses up its whole session on
+    trades that never actually happened."""
+    monkeypatch.setenv("CRYPTO_DEPLOY_USD", "1")
+    df5 = paper_env["df5"]
+    df15 = df5.iloc[::3].reset_index(drop=True)
+    flat = df5.assign(close=130.0, open=130.0, high=131.0, low=129.0)
+
+    def fake_candles(symbol, resolution, *, days=3.0, client=None):
+        if symbol == "BTCUSD" and resolution == "5m":
+            return df5
+        if symbol == "BTCUSD" and resolution == "15m":
+            return df15
+        return flat
+
+    monkeypatch.setattr(lanes.market_data, "candles", fake_candles)
+    monkeypatch.setattr(lanes, "in_ny_window", lambda *a, **k: True)
+    monkeypatch.setattr(lanes, "ny_session_date", lambda *a, **k: "2026-09-07")
+
+    events = lanes.scan_crypto_paper()
+    ev = next(e for e in events if e.get("asset") == "BTCUSD" and e.get("strategy") == "ny_n_break")
+    assert ev["event"] == "wait" and "sizing" in ev.get("reason", "")
+
+    # rolled all the way back to "as if this tick never ran" — on the very
+    # first tick for a fresh symbol that means no strategy state was saved at
+    # all yet, which is fine: the next scan re-derives long_lvl/short_lvl from
+    # the candles fresh, so nothing about the setup is actually lost.
+    strat_state = journal.load_state().get("ny_n_break:BTCUSD", {}).get("strategy")
+    assert strat_state is None or strat_state.get("trades_today", 0) == 0
+
+
 def test_lane_noop_when_disabled(monkeypatch):
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
@@ -382,6 +416,80 @@ def test_close_position_manual_closes_at_the_current_mark(paper_env, monkeypatch
     # closing again (or a key with nothing open) fails cleanly, no crash
     again = lanes.close_position_manual("ny_n_break:BTCUSD")
     assert again["ok"] is False and "no open position" in again["error"]
+
+
+def _open_pos(strategy, asset, entry, day="2026-09-08"):
+    return {
+        "strategy": {"position": "whatever the strategy's own view was"},
+        "position": {
+            "strategy": strategy,
+            "asset": asset,
+            "side": "long",
+            "day": day,
+            "entry_price": entry,
+            "entry_time": "2026-09-08T10:00:00+00:00",
+            "opened_at": "2026-09-08T10:00:00+00:00",
+            "size": 10,
+            "contract_value": 0.001,
+            "leverage": 20,
+            "margin_total_usd": 30.0,
+            "notional_usd": 600.0,
+            "mode": "paper",
+        },
+    }
+
+
+def test_close_all_closes_every_open_position(paper_env, monkeypatch):
+    """The "Close all" button — closes every open key, one call to
+    close_position_manual per key, and reports which succeeded/failed."""
+    monkeypatch.setattr(lanes.market_data, "ticker", lambda sym, **k: {"mark_price": 63000.0})
+    journal.save_state(
+        {
+            "ny_n_break:BTCUSD": _open_pos("ny_n_break", "BTCUSD", 60000.0),
+            "ichimoku:BTCUSD": _open_pos("ichimoku", "BTCUSD", 61000.0),
+            "ak_roxx_pro:ETHUSD": {
+                "strategy": {"position": None},
+                "position": None,
+            },  # nothing open
+        }
+    )
+    result = lanes.close_all_positions_manual()
+    assert result["ok"] is True
+    assert result["attempted"] == 2  # only the two with an actual open position
+    assert set(result["closed"]) == {"ny_n_break:BTCUSD", "ichimoku:BTCUSD"}
+    assert result["failed"] == {}
+
+    st = journal.load_state()
+    assert st["ny_n_break:BTCUSD"]["position"] is None
+    assert st["ichimoku:BTCUSD"]["position"] is None
+    assert len(journal.recent()) == 2
+
+    # nothing open → a clean no-op, not an error
+    empty = lanes.close_all_positions_manual()
+    assert empty == {"ok": True, "attempted": 0, "closed": [], "failed": {}}
+
+
+def test_close_all_reports_a_failure_without_stopping_the_rest(paper_env, monkeypatch):
+    """One key with no live price must fail on its own without blocking the
+    other keys from closing."""
+
+    def flaky_ticker(sym, **k):
+        if sym == "ETHUSD":
+            raise RuntimeError("no feed")
+        return {"mark_price": 63000.0}
+
+    monkeypatch.setattr(lanes.market_data, "ticker", flaky_ticker)
+    journal.save_state(
+        {
+            "ny_n_break:BTCUSD": _open_pos("ny_n_break", "BTCUSD", 60000.0),
+            "ak_roxx_pro:ETHUSD": _open_pos("ak_roxx_pro", "ETHUSD", 2500.0),
+        }
+    )
+    result = lanes.close_all_positions_manual()
+    assert result["ok"] is False
+    assert result["closed"] == ["ny_n_break:BTCUSD"]
+    assert "ak_roxx_pro:ETHUSD" in result["failed"]
+    assert journal.load_state()["ak_roxx_pro:ETHUSD"]["position"] is not None  # untouched
 
 
 def test_close_position_manual_waits_for_a_scan_holding_the_lock(paper_env, monkeypatch):
