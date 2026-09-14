@@ -26,7 +26,7 @@ SENSEX — all three, never just one.
 
 ## Checks before committing
 
-- `python -m pytest -q` — 353 tests, ~30s. Keep it green.
+- `python -m pytest -q` — 513 tests, ~70s. Keep it green.
 - `ruff check index_ai/` — **~8 pre-existing cosmetic errors** (unused locals,
   ambiguous `l`). Don't chase zero; compare against `git stash` to see only what
   your change added. The `ruff --fix` PostToolUse hook clears the auto-fixable
