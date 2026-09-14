@@ -125,7 +125,20 @@ def format_ist_display(value: str | None) -> str | None:
 
 def is_trading_day(when: datetime | None = None) -> bool:
     dt = when or now_ist()
-    return dt.weekday() < 5
+    if dt.weekday() >= 5:
+        return False
+    from index_ai.market_holidays import is_nse_holiday
+
+    return not is_nse_holiday(dt.date().isoformat())
+
+
+def _closed_day_reason(dt: datetime) -> str:
+    """ "weekend" or "holiday" — which one is closing the market on this date,
+    for a message a non-technical reader can act on instead of a generic
+    'closed'. Weekday but not a trading day only happens on an NSE holiday."""
+    if dt.weekday() >= 5:
+        return "weekend"
+    return "holiday"
 
 
 def is_session_active(when: datetime | None = None) -> bool:
@@ -199,7 +212,7 @@ def trading_window_message(when: datetime | None = None) -> str:
     times = session_times()
     dt = when or now_ist()
     if not is_trading_day(dt):
-        return "Market closed (weekend)."
+        return f"Market closed ({_closed_day_reason(dt)})."
     t = dt.time()
     if t < times["pre_open_start"]:
         return f"Pre-open analysis starts {format_ist_time_of_day(times['pre_open_start'])} IST."
@@ -230,8 +243,8 @@ def market_status(when: datetime | None = None) -> dict[str, Any]:
     square_off = is_square_off_window(dt)
 
     if not is_trading_day(dt):
-        phase = "weekend"
-        message = "Market closed (weekend)."
+        phase = _closed_day_reason(dt)
+        message = f"Market closed ({phase})."
     elif dt.time() < times["market_open"]:
         phase = "pre_open"
         message = f"Pre-market — session opens {format_ist_time_of_day(times['market_open'])} IST."

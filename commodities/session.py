@@ -15,10 +15,10 @@ code change.
 
 from __future__ import annotations
 
-import os
 from datetime import date, datetime, time, timedelta
 
 from index_ai.market_clock import IST, now_ist
+from index_ai.market_holidays import is_mcx_full_holiday
 
 MCX_OPEN = time(9, 0)
 MCX_CLOSE_STD = time(23, 30)
@@ -44,14 +44,9 @@ def us_dst_active(when: datetime | None = None) -> bool:
     return start <= d < end
 
 
-def _extra_holidays() -> set[str]:
-    raw = os.getenv("MCX_EXTRA_HOLIDAYS", "")
-    return {x.strip() for x in raw.split(",") if x.strip()}
-
-
 def is_mcx_trading_day(when: datetime | None = None) -> bool:
     d = (when or now_ist()).astimezone(IST)
-    return d.weekday() < 5 and d.date().isoformat() not in _extra_holidays()
+    return d.weekday() < 5 and not is_mcx_full_holiday(d.date().isoformat())
 
 
 def mcx_close(dst_session: bool, when: datetime | None = None) -> time:

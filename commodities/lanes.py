@@ -23,7 +23,7 @@ import pandas as pd
 from commodities.charges import round_trip_cost_rupees, slippage_rupees
 from commodities.config import CommoditySettings, commodity_settings, signal_config
 from commodities.instruments import BY_KEY, CommoditySpec, candle_instrument, load_universe_meta
-from commodities.session import entries_open, mcx_day, past_squareoff
+from commodities.session import entries_open, is_mcx_trading_day, mcx_day, past_squareoff
 from index_ai import notify
 from index_ai.atomic_io import atomic_write_json
 from index_ai.config import MEMORY_DIR, settings
@@ -338,6 +338,8 @@ def tick(
 def scan_commodities_paper(client: DhanClient | None = None) -> list[dict[str, Any]]:
     s = commodity_settings()
     if not s.enabled:
+        return []
+    if not is_mcx_trading_day():  # weekend/holiday — skip the Dhan calls entirely, not just entries
         return []
     meta = load_universe_meta()
     if not meta:
