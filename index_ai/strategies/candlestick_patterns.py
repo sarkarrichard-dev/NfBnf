@@ -32,15 +32,23 @@ def detect_candlestick_setup(
     sr_lookback: int = 30,
     trend_lookback: int = 15,
     breakout_lookback: int = 20,
+    oi_support: float | None = None,
+    oi_resistance: float | None = None,
 ) -> dict[str, Any]:
     """
     Scan last bars for reversal / continuation patterns near S/R.
     Returns pattern name, direction (bull/bear/none), and context.
+
+    ``oi_support``/``oi_resistance`` (the option chain's real max-put/max-call
+    OI strikes — see ``index_ai.options_oi.oi_walls``) take priority over the
+    candle-range S/R when both are supplied; see ``swing_levels``.
     """
     if frame is None or len(frame) < 3:
         return {"ready": False, "pattern": "", "direction": "none"}
 
-    sr = swing_levels(frame, lookback=sr_lookback)
+    sr = swing_levels(
+        frame, lookback=sr_lookback, oi_support=oi_support, oi_resistance=oi_resistance
+    )
     if not sr.get("ready"):
         return {"ready": False, "pattern": "", "direction": "none"}
 
@@ -54,6 +62,7 @@ def detect_candlestick_setup(
     pattern = ""
     direction = "none"
     reason_parts: list[str] = []
+    lvl_tag = " (OI wall)" if sr.get("sr_source") == "oi" else ""
 
     # Bullish engulfing at support
     if (
@@ -66,7 +75,7 @@ def detect_candlestick_setup(
     ):
         pattern = "bullish_engulfing"
         direction = "bull"
-        reason_parts.append(f"Bullish engulfing at support {sr['support']:.0f}")
+        reason_parts.append(f"Bullish engulfing at support {sr['support']:.0f}{lvl_tag}")
 
     # Bearish engulfing at resistance
     elif (
@@ -79,13 +88,15 @@ def detect_candlestick_setup(
     ):
         pattern = "bearish_engulfing"
         direction = "bear"
-        reason_parts.append(f"Bearish engulfing at resistance {sr['resistance']:.0f}")
+        reason_parts.append(f"Bearish engulfing at resistance {sr['resistance']:.0f}{lvl_tag}")
 
     # Hammer at support
-    elif sr.get("near_support") and _lower_wick(curr) >= body * 2 and _upper_wick(curr) <= body * 0.5:
+    elif (
+        sr.get("near_support") and _lower_wick(curr) >= body * 2 and _upper_wick(curr) <= body * 0.5
+    ):
         pattern = "hammer"
         direction = "bull"
-        reason_parts.append(f"Hammer at support {sr['support']:.0f}")
+        reason_parts.append(f"Hammer at support {sr['support']:.0f}{lvl_tag}")
 
     # Shooting star at resistance
     elif (
@@ -95,7 +106,7 @@ def detect_candlestick_setup(
     ):
         pattern = "shooting_star"
         direction = "bear"
-        reason_parts.append(f"Shooting star at resistance {sr['resistance']:.0f}")
+        reason_parts.append(f"Shooting star at resistance {sr['resistance']:.0f}{lvl_tag}")
 
     # Breakout continuation (mid-day trend)
     elif br.get("break_res") and trend in {"UP", "RANGE"}:
@@ -117,12 +128,14 @@ def detect_candlestick_setup(
     elif trend == "UP" and sr.get("near_support") and _bullish_bar(curr):
         pattern = "trend_pullback_long"
         direction = "bull"
-        reason_parts.append(f"Intraday UP trend — bullish bar at support {sr['support']:.0f}")
+        reason_parts.append(
+            f"Intraday UP trend — bullish bar at support {sr['support']:.0f}{lvl_tag}"
+        )
     elif trend == "DOWN" and sr.get("near_resistance") and not _bullish_bar(curr):
         pattern = "trend_pullback_short"
         direction = "bear"
         reason_parts.append(
-            f"Intraday DOWN trend — bearish bar at resistance {sr['resistance']:.0f}"
+            f"Intraday DOWN trend — bearish bar at resistance {sr['resistance']:.0f}{lvl_tag}"
         )
 
     return {
@@ -134,6 +147,7 @@ def detect_candlestick_setup(
         "resistance": sr.get("resistance"),
         "near_support": sr.get("near_support"),
         "near_resistance": sr.get("near_resistance"),
+        "sr_source": sr.get("sr_source", "candle"),
         "breakout": br,
         "reason": " ".join(reason_parts),
     }
