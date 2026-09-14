@@ -55,6 +55,8 @@ export function ReportsPage({
   const [period, setPeriod] = useState<PeriodKey>('all')
   const [range, setRange] = useState<DateRange>({ from: '', to: '' })
   const [source, setSource] = useTradeSource()
+  const [hoverBin, setHoverBin] = useState<number | null>(null)
+  const [hoverInst, setHoverInst] = useState<number | null>(null)
   const crypto = useCryptoJournal(source === 'all' || source === 'crypto')
   const futures = useFuturesJournal(source === 'all' || source === 'futures')
   const commodities = useCommoditiesJournal(source === 'all' || source === 'commodities')
@@ -117,7 +119,9 @@ export function ReportsPage({
   const equity = useMemo(() => {
     if (!daily.length) return []
     let running = 0
-    return [...daily].reverse().map((d) => (running += Number(d.pnl_rupees) || 0))
+    return [...daily]
+      .reverse()
+      .map((d) => ({ date: d.period, value: (running += Number(d.pnl_rupees) || 0) }))
   }, [daily])
 
   const dist = useMemo(() => {
@@ -197,7 +201,7 @@ export function ReportsPage({
       <div className="grid gap-6 lg:grid-cols-[1.5fr,1fr]">
         <Panel title="Equity curve" hint="cumulative realised P&L · last 31 days">
           {equity.length > 1 ? (
-            <EquityCurve values={equity} height={150} className="w-full" />
+            <EquityCurve points={equity} height={150} className="w-full" />
           ) : (
             <p className="py-8 text-center text-xs text-slate-500">
               Not enough closed days yet.
@@ -212,24 +216,54 @@ export function ReportsPage({
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel title="P&L distribution" hint="closed trades by outcome">
           {dist.length ? (
-            <div className="flex h-32 items-end gap-1">
-              {dist.map((d, i) => (
-                <div key={i} className="flex flex-1 flex-col items-center gap-1" title={`~${money(d.mid)} · ${d.c}`}>
+            <div className="relative">
+              {/* y-axis count gridlines */}
+              <div className="pointer-events-none absolute inset-x-8 inset-y-0">
+                {[0, 0.5, 1].map((f) => (
                   <div
-                    className="w-full rounded-t"
-                    style={{
-                      height: `${(d.c / distMax) * 100}%`,
-                      minHeight: d.c ? 3 : 0,
-                      background: d.mid >= 0 ? 'var(--up)' : 'var(--down)',
-                      opacity: 0.85,
-                    }}
+                    key={f}
+                    className="absolute inset-x-0 border-t border-[var(--hair-soft)]"
+                    style={{ top: `${(1 - f) * 100}%` }}
                   />
-                  <span className="font-mono text-[8px] text-slate-600">
-                    {d.mid >= 0 ? '+' : ''}
-                    {Math.round(d.mid / 1000)}k
-                  </span>
+                ))}
+              </div>
+              <div className="mr-1 flex h-32 items-end gap-1 pl-7">
+                <div className="absolute left-0 top-0 flex h-32 flex-col justify-between font-mono text-[8px] text-slate-600">
+                  <span>{distMax}</span>
+                  <span>{Math.round(distMax / 2)}</span>
+                  <span>0</span>
                 </div>
-              ))}
+                {dist.map((d, i) => (
+                  <div
+                    key={i}
+                    className="relative flex flex-1 flex-col items-center gap-1"
+                    onMouseEnter={() => setHoverBin(i)}
+                    onMouseLeave={() => setHoverBin(null)}
+                  >
+                    {hoverBin === i ? (
+                      <div className="pointer-events-none absolute -top-7 z-10 whitespace-nowrap rounded-md border border-[var(--hair)] bg-[var(--panel)] px-2 py-1 text-[10px] shadow-lg">
+                        <span className="text-slate-400">~{money(d.mid)}</span>{' '}
+                        <span className="font-semibold text-slate-100">{d.c} trades</span>
+                      </div>
+                    ) : null}
+                    <div
+                      className={cn(
+                        'w-full rounded-t transition-opacity',
+                        hoverBin === i || hoverBin === null ? 'opacity-85' : 'opacity-40',
+                      )}
+                      style={{
+                        height: `${(d.c / distMax) * 100}%`,
+                        minHeight: d.c ? 3 : 0,
+                        background: d.mid >= 0 ? 'var(--up)' : 'var(--down)',
+                      }}
+                    />
+                    <span className="font-mono text-[8px] text-slate-600">
+                      {d.mid >= 0 ? '+' : ''}
+                      {Math.round(d.mid / 1000)}k
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <p className="py-8 text-center text-xs text-slate-500">No closed trades in range.</p>
@@ -239,21 +273,48 @@ export function ReportsPage({
         <Panel title="P&L by instrument">
           {byInstrument.rows.length ? (
             <div className="space-y-2">
-              {byInstrument.rows.map(([k, v]) => (
-                <div key={k} className="flex items-center gap-3 text-xs">
+              <div className="flex items-center gap-3 pl-[5.5rem] pr-24 font-mono text-[8px] text-slate-600">
+                <span>-{money(byInstrument.peak).replace('+', '')}</span>
+                <span className="ml-auto">0</span>
+                <span className="ml-auto">+{money(byInstrument.peak).replace('+', '')}</span>
+              </div>
+              {byInstrument.rows.map(([k, v], i) => (
+                <div
+                  key={k}
+                  className="relative flex items-center gap-3 text-xs"
+                  onMouseEnter={() => setHoverInst(i)}
+                  onMouseLeave={() => setHoverInst(null)}
+                >
                   <span className="w-20 shrink-0 font-medium text-slate-300">{k}</span>
-                  <div className="relative h-4 flex-1 rounded bg-white/[0.03]">
+                  <div
+                    className={cn(
+                      'relative h-4 flex-1 rounded bg-white/[0.03] transition-colors',
+                      hoverInst === i && 'bg-white/[0.06]',
+                    )}
+                  >
                     <div
                       className="absolute inset-y-0 rounded"
                       style={{
-                        width: `${(Math.abs(v) / byInstrument.peak) * 100}%`,
+                        width: `${(Math.abs(v) / byInstrument.peak) * 50}%`,
                         left: v >= 0 ? '50%' : undefined,
                         right: v < 0 ? '50%' : undefined,
                         background: v >= 0 ? 'var(--up)' : 'var(--down)',
-                        opacity: 0.8,
+                        opacity: hoverInst === i || hoverInst === null ? 0.8 : 0.4,
                       }}
                     />
                     <div className="absolute inset-y-0 left-1/2 w-px bg-[var(--hair)]" />
+                    {hoverInst === i ? (
+                      <div
+                        className="pointer-events-none absolute -top-8 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-[var(--hair)] bg-[var(--panel)] px-2 py-1 text-[10px] font-semibold shadow-lg"
+                        style={{
+                          left: `${50 + (v >= 0 ? 1 : -1) * (Math.abs(v) / byInstrument.peak) * 50}%`,
+                        }}
+                      >
+                        <span className={pnlClass(v)}>
+                          {k}: {money(v)}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                   <span className={cn('w-24 shrink-0 text-right font-mono tabular-nums', pnlClass(v))}>
                     {money(v)}

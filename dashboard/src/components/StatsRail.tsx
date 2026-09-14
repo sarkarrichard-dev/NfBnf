@@ -4,7 +4,7 @@ import { computePeriodStats, money, pctRate, periodBlock, pnlClass, tradesForPer
 import { fx } from '../lib/theme'
 import { getSeries, pushPoint } from '../hooks/useSeries'
 import { PeriodBar } from './PeriodBar'
-import { EquityCurve } from './charts/EquityCurve'
+import { EquityCurve, type EquityPoint } from './charts/EquityCurve'
 import { StatTile } from './ui/StatTile'
 import type { AnalyticsResponse, DateRange, PeriodKey, TradeRow } from '../types/analytics'
 
@@ -31,13 +31,13 @@ type Props = {
 }
 
 /** Cumulative realized-PnL curve from the backend daily buckets (oldest → newest). */
-function equityCurve(analytics: AnalyticsResponse | null | undefined): number[] {
+function equityCurve(analytics: AnalyticsResponse | null | undefined): EquityPoint[] {
   const daily = analytics?.daily_series
   if (!daily?.length) return []
   let running = 0
   return [...daily]
     .reverse()
-    .map((d) => (running += Number(d.pnl_rupees) || 0))
+    .map((d) => ({ date: d.period, value: (running += Number(d.pnl_rupees) || 0) }))
 }
 
 export function StatsOverview({
@@ -131,7 +131,7 @@ export function StatsOverview({
         </div>
         <div className="min-w-0">
           {equity.length > 1 ? (
-            <EquityCurve values={equity} height={96} className="w-full" />
+            <EquityCurve points={equity} height={96} className="w-full" />
           ) : (
             <p className="text-right font-mono text-[11px] text-slate-600">building the curve…</p>
           )}

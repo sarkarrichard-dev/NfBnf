@@ -1,10 +1,13 @@
+import { useState } from 'react'
+import { cn } from '../../lib/cn'
 import { money } from '../../lib/pnl'
 
 type Day = { period: string; pnl_rupees: number }
 
 /** P&L calendar heat-grid — one cell per day, most recent bottom-right, colour
  *  by sign and intensity by size relative to the window's biggest day. Weeks
- *  run as rows (Mon–Sun), the Cryptomaty layout. */
+ *  run as rows (Mon–Sun), the Cryptomaty layout. Hover shows a tooltip with
+ *  the date and exact amount instead of relying on the slow native title. */
 export function PnlCalendar({
   days,
   weeks = 9,
@@ -12,6 +15,7 @@ export function PnlCalendar({
   days: Day[]
   weeks?: number
 }) {
+  const [hover, setHover] = useState<{ date: string; pnl?: number } | null>(null)
   const byDate = new Map(days.map((d) => [d.period, Number(d.pnl_rupees) || 0]))
   const peak =
     Math.max(1, ...days.map((d) => Math.abs(Number(d.pnl_rupees) || 0))) || 1
@@ -55,8 +59,30 @@ export function PnlCalendar({
     }
   }
 
+  const fmtDate = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    })
+
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
+      {hover ? (
+        <div className="pointer-events-none sticky left-0 top-0 z-10 mb-1.5 inline-flex items-baseline gap-1.5 whitespace-nowrap rounded-md border border-[var(--hair)] bg-[var(--panel)] px-2 py-1 text-[10px] shadow-lg">
+          <span className="text-slate-500">{fmtDate(hover.date)}</span>
+          <span
+            className={cn(
+              'font-semibold',
+              hover.pnl == null ? 'text-slate-500' : hover.pnl >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]',
+            )}
+          >
+            {hover.pnl == null ? 'no trades' : money(hover.pnl)}
+          </span>
+        </div>
+      ) : (
+        <div className="mb-1.5 h-[22px]" aria-hidden />
+      )}
       <div className="inline-grid gap-1" style={{ gridTemplateColumns: 'auto repeat(7, 1fr)' }}>
         <div />
         {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
@@ -70,12 +96,12 @@ export function PnlCalendar({
             {row.cells.map((c) => (
               <div
                 key={c.date}
-                title={
-                  c.future
-                    ? undefined
-                    : `${c.date} · ${c.pnl == null ? 'no trades' : money(c.pnl)}`
-                }
-                className="aspect-square min-w-3 rounded-[3px] border border-black/20"
+                onMouseEnter={() => !c.future && setHover({ date: c.date, pnl: c.pnl })}
+                onMouseLeave={() => setHover(null)}
+                className={cn(
+                  'aspect-square min-w-3 rounded-[3px] border transition-[border-color]',
+                  hover?.date === c.date ? 'border-slate-300' : 'border-black/20',
+                )}
                 style={c.future ? { background: 'transparent', borderColor: 'transparent' } : cellStyle(c.pnl)}
               />
             ))}
