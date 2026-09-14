@@ -22,6 +22,16 @@ import type {
   TradeRow,
 } from '../../types/analytics'
 
+/** Short axis-label form of a rupee amount — enough precision that adjacent
+ *  histogram bins stay distinguishable (money() is too wide, plain k-rounding
+ *  collapses everything under ~500 to "0k"). */
+function compactRupees(v: number): string {
+  const sign = v >= 0 ? '+' : '-'
+  const abs = Math.abs(v)
+  if (abs >= 1000) return `${sign}${(abs / 1000).toFixed(1)}k`
+  return `${sign}${Math.round(abs)}`
+}
+
 function Panel({
   title,
   hint,
@@ -227,7 +237,7 @@ export function ReportsPage({
                   />
                 ))}
               </div>
-              <div className="mr-1 flex h-32 items-end gap-1 pl-7">
+              <div className="mr-1 flex h-32 gap-1 pl-7">
                 <div className="absolute left-0 top-0 flex h-32 flex-col justify-between font-mono text-[8px] text-slate-600">
                   <span>{distMax}</span>
                   <span>{Math.round(distMax / 2)}</span>
@@ -236,7 +246,7 @@ export function ReportsPage({
                 {dist.map((d, i) => (
                   <div
                     key={i}
-                    className="relative flex flex-1 flex-col items-center gap-1"
+                    className="relative flex flex-1 flex-col items-center justify-end gap-1"
                     onMouseEnter={() => setHoverBin(i)}
                     onMouseLeave={() => setHoverBin(null)}
                   >
@@ -257,9 +267,8 @@ export function ReportsPage({
                         background: d.mid >= 0 ? 'var(--up)' : 'var(--down)',
                       }}
                     />
-                    <span className="font-mono text-[8px] text-slate-600">
-                      {d.mid >= 0 ? '+' : ''}
-                      {Math.round(d.mid / 1000)}k
+                    <span className="whitespace-nowrap font-mono text-[8px] text-slate-600">
+                      {compactRupees(d.mid)}
                     </span>
                   </div>
                 ))}
