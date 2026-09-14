@@ -61,6 +61,7 @@ export function cryptoToLogRows(rows: CryptoJournalRow[]): LogRow[] {
     open_time_ist: istDisplay(openedIso(r)),
     close_time_ist: istDisplay(r.closed_at || r.exit_time) ?? null,
     instrument: coin(r.asset),
+    strategy: r.strategy,
     side: (r.side || '').toLowerCase() === 'short' ? 'Sell' : 'Buy',
     quantity: r.size,
     avg_entry: r.entry_price ?? null,
