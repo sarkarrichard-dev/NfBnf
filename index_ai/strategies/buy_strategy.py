@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from index_ai.options_oi import OptionOiContext, oi_walls
 from index_ai.strategies.bar_volume import volume_confirms
 from index_ai.strategies.candlestick_patterns import detect_candlestick_setup
 from index_ai.strategies.cpr_regime import CprRegime
@@ -22,12 +23,16 @@ def evaluate_buy_signal(
     regime: CprRegime,
     *,
     params: StrategyParams | None = None,
+    oi: OptionOiContext | None = None,
 ) -> StrategySignal:
     """
-    Option buying from OHLC patterns + candle support/resistance.
+    Option buying from OHLC patterns + support/resistance.
 
-    CPR regime is attached for dashboard context but does NOT block mid-day
-    trending patterns that develop from candle structure.
+    S/R is the real option-chain OI walls (max-put/max-call OI strikes) when
+    ``oi`` gives a clean read — the same walls the sell lane already uses —
+    else the candle-range guess, same as before. CPR regime is attached for
+    dashboard context but does NOT block mid-day trending patterns that
+    develop from candle structure.
     """
     cfg = params or get_strategy_params()
     pattern_lb = min(int(cfg.breakout_lookback), 30)
@@ -42,11 +47,14 @@ def evaluate_buy_signal(
     ema_slow = float(row["ema_slow"])
     pivot, bc, tc = previous_day_cpr(previous_day)
 
+    walls = oi_walls(oi)
     setup = detect_candlestick_setup(
         df,
         sr_lookback=max(20, cfg.breakout_lookback),
         trend_lookback=15,
         breakout_lookback=cfg.breakout_lookback,
+        oi_support=walls[0] if walls else None,
+        oi_resistance=walls[1] if walls else None,
     )
     st = supertrend_snapshot(
         df,
@@ -75,6 +83,7 @@ def evaluate_buy_signal(
         supertrend_stop=float(st["stop"]) if st.get("ready") else 0.0,
         breakout_tag=str((setup.get("breakout") or {}).get("breakout_tag") or ""),
         volume_ratio=float(volume_stats.get("ratio") or 1.0),
+        sr_source=str(setup.get("sr_source") or "candle"),
     )
 
     if not setup.get("ready"):

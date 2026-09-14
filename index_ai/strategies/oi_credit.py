@@ -23,7 +23,7 @@ Pure. ``decide`` returns ``(action, reason, fallback_ok)``.
 
 from __future__ import annotations
 
-from index_ai.options_oi import OptionOiContext
+from index_ai.options_oi import OptionOiContext, oi_walls
 
 WALL_BUFFER_PCT = 0.15  # spot must be at least this far the safe side of the near wall
 ROOM_MIN_PCT = 0.25  # …and at least this much clear space either side of mid to lean
@@ -45,13 +45,17 @@ def decide(
     strings or None. When None, ``fallback_ok`` is True if the caller should try
     the CPR read (the OI profile just has no direction), False if this is a hard
     veto (spot pinned to max pain)."""
-    if oi is None or oi.max_put_oi_strike is None or oi.max_call_oi_strike is None:
+    walls = oi_walls(oi)
+    if walls is None:
+        if (
+            oi is not None
+            and oi.max_put_oi_strike is not None
+            and oi.max_call_oi_strike is not None
+        ):
+            put_w, call_w = float(oi.max_put_oi_strike), float(oi.max_call_oi_strike)
+            return None, f"OI walls crossed (put {put_w:.0f} ≥ call {call_w:.0f})", True
         return None, "no OI walls — chain missing or flat", True
-
-    support = float(oi.max_put_oi_strike)
-    resistance = float(oi.max_call_oi_strike)
-    if support >= resistance:
-        return None, f"OI walls crossed (put {support:.0f} ≥ call {resistance:.0f})", True
+    support, resistance = walls
 
     if max_pain and _pct_away(price, max_pain) < PIN_SKIP_PCT:
         return None, f"spot pinned near max pain {max_pain:.0f} — no directional credit", False

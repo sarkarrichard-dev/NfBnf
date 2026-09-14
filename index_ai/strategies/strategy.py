@@ -36,6 +36,7 @@ class StrategySignal:
     ema_spread_pct: float = 0.0
     volume_ratio: float = 1.0
     entry_quality: str = ""
+    sr_source: str = ""  # "oi" (real option-chain walls) or "candle" (range guess) — buy lane only
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -81,7 +82,9 @@ def _confirmed_direction(df: pd.DataFrame, *, bars: int, cpr_level: float, bulli
     if len(recent) < lookback:
         return False
     if bullish:
-        return bool(((recent["close"] > cpr_level) & (recent["ema_fast"] > recent["ema_slow"])).all())
+        return bool(
+            ((recent["close"] > cpr_level) & (recent["ema_fast"] > recent["ema_slow"])).all()
+        )
     return bool(((recent["close"] < cpr_level) & (recent["ema_fast"] < recent["ema_slow"])).all())
 
 
@@ -136,10 +139,7 @@ def cpr_ema_signal(
     if price > tc and ema_fast > ema_slow:
         if spread_pct < min_spread:
             return _no_trade_signal(
-                reason=(
-                    f"EMA spread {spread_pct:.3f}% is below quality gate "
-                    f"{min_spread:.3f}%."
-                ),
+                reason=(f"EMA spread {spread_pct:.3f}% is below quality gate {min_spread:.3f}%."),
                 price=price,
                 pivot=pivot,
                 bc=bc,
@@ -195,10 +195,7 @@ def cpr_ema_signal(
     if price < bc and ema_fast < ema_slow:
         if spread_pct < min_spread:
             return _no_trade_signal(
-                reason=(
-                    f"EMA spread {spread_pct:.3f}% is below quality gate "
-                    f"{min_spread:.3f}%."
-                ),
+                reason=(f"EMA spread {spread_pct:.3f}% is below quality gate {min_spread:.3f}%."),
                 price=price,
                 pivot=pivot,
                 bc=bc,

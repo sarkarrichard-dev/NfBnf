@@ -25,6 +25,19 @@ class OptionOiContext:
         return asdict(self)
 
 
+def oi_walls(oi: "OptionOiContext | None") -> tuple[float, float] | None:
+    """``(support, resistance)`` from the max-put/max-call OI strikes, or
+    ``None`` if the chain is missing, flat, or the walls are crossed —
+    shared by every lane that wants "the real S/R", not a candle-range guess
+    (the sell lane's `oi_credit.decide`, the buy lane's candlestick S/R)."""
+    if oi is None or oi.max_put_oi_strike is None or oi.max_call_oi_strike is None:
+        return None
+    support, resistance = float(oi.max_put_oi_strike), float(oi.max_call_oi_strike)
+    if support >= resistance:
+        return None
+    return support, resistance
+
+
 def _leg_oi(leg: dict[str, Any]) -> int:
     for key in ("oi", "open_interest", "OI"):
         val = leg.get(key)
