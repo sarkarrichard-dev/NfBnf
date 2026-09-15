@@ -20,7 +20,7 @@ from typing import Any
 import pandas as pd
 
 from crypto.charges import round_trip_cost_usd
-from crypto.config import PERP_SYMBOLS, crypto_settings
+from crypto.config import CRYPTO_ALLOWLIST, crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.products import Contract
 from crypto.session import in_ny_window, ny_session_date
@@ -31,6 +31,7 @@ from crypto.strategies import (
     ema_jaguar,
     ichimoku as ichi,
     ny_n_break as nb,
+    rsi_adx_trend,
     tma_phoenix,
     vp_edge,
 )
@@ -67,8 +68,18 @@ _SIMPLE = {
         "5m",
         lambda s, **kw: tma_phoenix.TmaPhoenixConfig(trail=_trail(s), **kw),
     ),
+    "rsi_adx_trend": (
+        rsi_adx_trend,
+        "1h",
+        lambda s, **kw: rsi_adx_trend.RsiAdxTrendConfig(trail=_trail(s), **kw),
+    ),
 }
-_WIN_N = {"ichimoku": 220, "ak_roxx_pro": 60, "tma_phoenix": 340}  # ak_roxx: 34 EMA + prior hour
+_WIN_N = {
+    "ichimoku": 220,
+    "ak_roxx_pro": 60,
+    "tma_phoenix": 340,
+    "rsi_adx_trend": 60,
+}  # ak_roxx: 34 EMA + prior hour
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 
 
@@ -269,7 +280,9 @@ def run(
     days: float = 120, assets: list[str] | None = None, strategies: list[str] | None = None
 ) -> Result:
     s = crypto_settings()
-    assets = assets or list(PERP_SYMBOLS)
+    assets = assets or list(
+        s.symbols
+    )  # the actually-configured live roster, not the 4-symbol default
     strategies = strategies or ["ny_n_break", "ichimoku"]
     res = Result()
     for sym in assets:
@@ -284,7 +297,7 @@ def run(
 def _main() -> None:
     ap = argparse.ArgumentParser(description="Replay crypto strategies over Delta history")
     ap.add_argument("--days", type=float, default=120)
-    ap.add_argument("--asset", action="append", choices=list(PERP_SYMBOLS))
+    ap.add_argument("--asset", action="append", choices=list(CRYPTO_ALLOWLIST))
     ap.add_argument("--strategy", action="append", choices=ALL_STRATEGIES)
     args = ap.parse_args()
     res = run(args.days, args.asset, args.strategy)

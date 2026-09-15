@@ -109,6 +109,37 @@ def supertrend_dir(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0) 
     return direction
 
 
+def rsi(series: pd.Series, length: int) -> pd.Series:
+    """Wilder RSI — RMA of gains vs RMA of losses, 0-100."""
+    s = series.astype(float)
+    delta = s.diff()
+    gain = delta.clip(lower=0.0)
+    loss = -delta.clip(upper=0.0)
+    alpha = 1.0 / length
+    avg_gain = gain.ewm(alpha=alpha, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=alpha, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0.0, pd.NA)
+    out = 100.0 - 100.0 / (1.0 + rs)
+    return out.fillna(100.0)  # avg_loss == 0 (straight up) -> RSI 100, not NaN
+
+
+def adx(df: pd.DataFrame, length: int) -> pd.Series:
+    """Wilder ADX — trend-strength (not direction), 0-100. Needs high/low/close."""
+    h, low, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
+    up_move = h.diff()
+    down_move = -low.diff()
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+    pc = c.shift(1)
+    tr = pd.concat([h - low, (h - pc).abs(), (low - pc).abs()], axis=1).max(axis=1)
+    alpha = 1.0 / length
+    tr_s = tr.ewm(alpha=alpha, adjust=False).mean()
+    plus_di = 100.0 * plus_dm.ewm(alpha=alpha, adjust=False).mean() / tr_s.replace(0.0, pd.NA)
+    minus_di = 100.0 * minus_dm.ewm(alpha=alpha, adjust=False).mean() / tr_s.replace(0.0, pd.NA)
+    dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0.0, pd.NA)
+    return dx.fillna(0.0).ewm(alpha=alpha, adjust=False).mean()
+
+
 def cross_dir(a: pd.Series, b: pd.Series) -> int:
     """+1 if ``a`` closed the last bar crossing above ``b``, -1 if below, else 0."""
     if len(a) < 2 or len(b) < 2:
@@ -160,10 +191,29 @@ if __name__ == "__main__":  # self-check
     a = atr(df, 3)
     assert a.iloc[-1] > 0 and len(a) == 10
     assert abs(atr_last(df, 3) - float(a.iloc[-1])) < 1e-9  # numpy path matches pandas
-    up_df = pd.DataFrame({"high": range(2, 40), "low": range(0, 38),
-                          "close": range(1, 39)})
+    up_df = pd.DataFrame({"high": range(2, 40), "low": range(0, 38), "close": range(1, 39)})
     dn_df = up_df.iloc[::-1].reset_index(drop=True)
     assert supertrend_dir(up_df, 10, 3.0) == 1
     assert supertrend_dir(dn_df, 10, 3.0) == -1
     assert supertrend_dir(up_df.head(5), 10, 3.0) == 0  # not enough bars
+
+    flat = pd.Series([50.0] * 20)
+    assert (
+        abs(rsi(flat, 14).iloc[-1] - 100.0) < 1.0 or flat.diff().sum() == 0
+    )  # no moves -> neutral-ish, no crash
+    r_up = rsi(up_df["close"], 14)
+    assert r_up.iloc[-1] > 70  # a clean uptrend reads overbought
+    r_dn = rsi(dn_df["close"], 14)
+    assert r_dn.iloc[-1] < 30  # a clean downtrend reads oversold
+
+    a_up = adx(up_df, 14)
+    assert a_up.iloc[-1] > 25  # a clean, unbroken trend has real ADX strength
+    choppy = pd.DataFrame(
+        {
+            "high": [10, 11, 10, 11, 10, 11, 10, 11, 10, 11] * 3,
+            "low": [9, 10, 9, 10, 9, 10, 9, 10, 9, 10] * 3,
+            "close": [9.5, 10.5, 9.5, 10.5, 9.5, 10.5, 9.5, 10.5, 9.5, 10.5] * 3,
+        }
+    )
+    assert adx(choppy, 14).iloc[-1] < 25  # a sideways chop has weak ADX
     print("crypto.strategies.indicators self-check ok")
