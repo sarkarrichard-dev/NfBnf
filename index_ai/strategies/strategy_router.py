@@ -153,12 +153,24 @@ def evaluate_dual_opportunities(
             s_cross = analyze_ema_cross(
                 s_frame, fast=params.ema_fast_period, slow=params.ema_slow_period
             )
-            t15 = summarize_trend15(sell_trend15, params) if sell_trend15 is not None else None
+            t15 = summarize_trend15(sell_trend15, params)
             sell = evaluate_sell_signal(
                 s_frame, previous_day, sell_regime, s_cross, params=params, trend15=t15, oi=oi
             )
         else:
-            sell = evaluate_sell_signal(frame, previous_day, regime, cross, params=params, oi=oi)
+            # even the 5m frame is too thin here (very start of the session, or
+            # thin data on a fresh instrument) — summarize_trend15(None, ...)
+            # correctly reports "not ready" rather than silently skipping the
+            # 15m gate the way omitting trend15 entirely used to (2026-09-15).
+            sell = evaluate_sell_signal(
+                frame,
+                previous_day,
+                regime,
+                cross,
+                params=params,
+                trend15=summarize_trend15(sell_trend15, params),
+                oi=oi,
+            )
 
     primary = _pick_primary(buy, sell)
     return DualRouteResult(
@@ -173,7 +185,18 @@ def route_intraday_signal(
     allow_option_selling: bool = True,
     allow_option_buying: bool = True,
 ) -> tuple[StrategySignal, CprRegime]:
-    """Backward-compatible entry: returns primary signal + CPR regime."""
+    """Backward-compatible entry: returns primary signal + CPR regime.
+
+    Never supplies ``sell_trend15`` to ``evaluate_dual_opportunities``, so the
+    15m-confirmation gate added 2026-09-15 always sees a not-ready read here
+    and blocks every sell signal reached through this wrapper (``index_ai/
+    backtest.py`` is the only caller). Not a live-money concern — the real
+    planner/executor path (``index_ai/planner.py``) calls
+    ``evaluate_dual_opportunities`` directly with a real 15m frame — but it
+    means a future `index_ai/backtest.py` run needs `sell_trend15` threaded
+    through here (or `SELL_REQUIRE_TREND15=false`) to get any sell trades at
+    all, not silently a permanently empty sell lane.
+    """
     dual = evaluate_dual_opportunities(
         today,
         previous_day,

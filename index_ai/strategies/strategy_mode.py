@@ -84,7 +84,8 @@ def pick_auto_credit(
 
     Uses CPR regime + 5m EMA cross/alignment + 5m bar volume vs recent average.
     ``trend15`` (from ``summarize_trend15``) is the 15m trend read — when given,
-    the trend-override path also requires it to agree.
+    every path requires it to be ready and not opposed (see ``_trend15_blocks``),
+    not just the trend-override path.
     Returns (action, reason, strategy_mode).
     """
     params = get_strategy_params()
@@ -149,6 +150,30 @@ def pick_auto_credit(
             return action, f"{reason}{vol_note}", mode
         return None, _volume_wait_reason(stats, min_ratio=params.credit_min_volume_ratio), "wait"
 
+    def _trend15_blocks(direction: int) -> str | None:
+        """Reason string if the 15m read is not a real confirmation for
+        ``direction`` (+1 a bull-put credit / -1 a bear-call credit), else
+        None. Covers two cases the pre-2026-09-15 code let straight through:
+        no 15m bars have closed yet (too early in the session for a real
+        read — ``ready`` is False), or enough bars exist and the 15m trend
+        actively disagrees. Only the trend-override path below checked this;
+        the CPR+EMA-agree and fresh-cross paths did not, so BANKNIFTY and
+        SENSEX both sold a bull-put spread 11 minutes after the 2026-09-15
+        open on yesterday's CPR bias + two brand-new 5m candles alone — losing
+        ~₹3,268 combined when the day went on to decline all session. Skipped
+        entirely when the caller never passed a ``trend15`` read at all, or
+        when the operator has turned ``SELL_REQUIRE_TREND15`` off."""
+        if trend15 is None or not params.sell_require_trend15:
+            return None
+        if not trend15.get("ready"):
+            return "AUTO: too early in the session for a confirmed 15m trend read — wait."
+        d15 = int(trend15.get("direction") or 0)
+        if direction > 0 and d15 < 0:
+            return "AUTO: 15m trend is bearish — wait for it to agree before selling puts."
+        if direction < 0 and d15 > 0:
+            return "AUTO: 15m trend is bullish — wait for it to agree before selling calls."
+        return None
+
     cross_action = credit_action_for_cross(cross)
     if cross_action:
         if bias in {"SIDEWAYS", "MIXED"}:
@@ -172,6 +197,9 @@ def pick_auto_credit(
                 "AUTO: Bullish EMA cross conflicts with bearish CPR trend — no credit.",
                 "conflict",
             )
+        block = _trend15_blocks(1 if cross_action == "SELL_BULL_PUT_SPREAD" else -1)
+        if block:
+            return None, block, "wait"
         label = "bullish" if cross_action == "SELL_BULL_PUT_SPREAD" else "bearish"
         return _gate_volume(
             cross_action,
@@ -180,6 +208,9 @@ def pick_auto_credit(
         )
 
     if bias == "TRENDING_BULL" and ema_bull:
+        block = _trend15_blocks(1)
+        if block:
+            return None, block, "wait"
         return _gate_volume(
             "SELL_BULL_PUT_SPREAD",
             (
@@ -189,6 +220,9 @@ def pick_auto_credit(
             "cpr_trend",
         )
     if bias == "TRENDING_BEAR" and ema_bear:
+        block = _trend15_blocks(-1)
+        if block:
+            return None, block, "wait"
         return _gate_volume(
             "SELL_BEAR_CALL_SPREAD",
             (
@@ -200,14 +234,19 @@ def pick_auto_credit(
 
     # Trend override — a strong, confirmed intraday trend overrides a conflicting
     # or flat daily CPR bias. Needs 5m EMA alignment + Supertrend + candle
-    # structure to agree, and — when a 15m read is supplied — the 15m trend not to
-    # oppose it. Trades the confirmed break, never a range.
+    # structure to agree, and — when a 15m read is supplied — _trend15_blocks to
+    # actually confirm it (ready + not opposing), not just fail to oppose. This
+    # branch is self-sufficient rather than counting on the caller
+    # (sell_strategy.py's own _trend15_block) to catch what a raw ``d15``
+    # comparison would miss when the 15m read isn't ready yet.
     st_dir, trend = _st_dir, _tape
-    d15 = int((trend15 or {}).get("direction") or 0)
-    strong_down = ema_bear and st_dir == -1 and trend == "DOWN" and d15 <= 0
-    strong_up = ema_bull and st_dir == 1 and trend == "UP" and d15 >= 0
+    strong_down = ema_bear and st_dir == -1 and trend == "DOWN"
+    strong_up = ema_bull and st_dir == 1 and trend == "UP"
     if params.sell_allow_trend_override:
         if strong_down and bias in ("TRENDING_BULL", "SIDEWAYS"):
+            block = _trend15_blocks(-1)
+            if block:
+                return None, block, "wait"
             return _gate_volume(
                 "SELL_BEAR_CALL_SPREAD",
                 (
@@ -217,6 +256,9 @@ def pick_auto_credit(
                 "cpr_trend_override",
             )
         if strong_up and bias in ("TRENDING_BEAR", "SIDEWAYS"):
+            block = _trend15_blocks(1)
+            if block:
+                return None, block, "wait"
             return _gate_volume(
                 "SELL_BULL_PUT_SPREAD",
                 (

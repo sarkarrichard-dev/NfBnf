@@ -189,7 +189,7 @@ def test_trend15_disagreement_blocks_the_trend_override(monkeypatch) -> None:
         ema_fast=8,
         ema_slow=20,
         frame=frame,
-        trend15={"direction": -1},
+        trend15={"ready": True, "direction": -1},
     )
     assert ok == "SELL_BEAR_CALL_SPREAD" and mode == "cpr_trend_override"
     blocked, _r2, _m2 = pick_auto_credit(
@@ -198,9 +198,96 @@ def test_trend15_disagreement_blocks_the_trend_override(monkeypatch) -> None:
         ema_fast=8,
         ema_slow=20,
         frame=frame,
-        trend15={"direction": 1},
+        trend15={"ready": True, "direction": 1},
     )
     assert blocked != "SELL_BEAR_CALL_SPREAD"
+
+    # not ready yet (2026-09-15 fix) — this branch used to only compare raw
+    # direction (0 passes both >= and <=), relying entirely on the caller's own
+    # separate check to catch an unready 15m read. Now it's safe on its own.
+    early, _r3, mode3 = pick_auto_credit(
+        _regime("TRENDING_BULL"),
+        {"aligned": "bear"},
+        ema_fast=8,
+        ema_slow=20,
+        frame=frame,
+        trend15={"ready": False, "direction": 0},
+    )
+    assert early is None and mode3 == "wait"
+
+
+def test_direct_cpr_ema_agreement_still_needs_a_confirmed_15m_read(monkeypatch) -> None:
+    # The 2026-09-15 loss: BANKNIFTY and SENSEX both sold a bull-put spread 11
+    # minutes after the open — yesterday's CPR bias read TRENDING_BULL and the
+    # first two 5m candles happened to agree, but no 15m bar had closed yet.
+    # This path (CPR bias and 5m EMA directly agree, no override needed) never
+    # checked the 15m read at all; only the trend-override path did. The day
+    # went on to decline all session — ~₹3,268 lost between the two trades.
+    for k in (
+        "SUPERTREND_PERIOD",
+        "SUPERTREND_MULTIPLIER",
+        "CREDIT_MIN_VOLUME_RATIO",
+        "CREDIT_VOLUME_LOOKBACK_BARS",
+        "SELL_REQUIRE_TREND15",
+    ):
+        monkeypatch.delenv(k, raising=False)
+    reload_strategy_params()
+    n = 30
+    closes = [100.0 + i for i in range(n)]  # clean uptrend — agrees with CPR + EMA
+    frame = pd.DataFrame(
+        {
+            "open": closes,
+            "high": [c + 1.0 for c in closes],
+            "low": [c - 1.0 for c in closes],
+            "close": closes,
+            "volume": [1000] * n,
+        }
+    )
+    regime, cross = _regime("TRENDING_BULL"), {"aligned": "bull"}
+
+    # too early in the session — a real 15m read was attempted but not enough
+    # bars have closed yet (summarize_trend15's own "ready": False shape)
+    action, reason, mode = pick_auto_credit(
+        regime,
+        cross,
+        ema_fast=8,
+        ema_slow=20,
+        frame=frame,
+        trend15={"ready": False, "direction": 0},
+    )
+    assert action is None and mode == "wait" and "early in the session" in reason
+
+    # enough 15m bars exist, but the 15m trend actively disagrees
+    action2, reason2, _mode2 = pick_auto_credit(
+        regime,
+        cross,
+        ema_fast=8,
+        ema_slow=20,
+        frame=frame,
+        trend15={"ready": True, "direction": -1},
+    )
+    assert action2 is None and "15m trend" in reason2
+
+    # a genuinely confirmed, agreeing 15m read still lets the trade through
+    action3, _r3, mode3 = pick_auto_credit(
+        regime,
+        cross,
+        ema_fast=8,
+        ema_slow=20,
+        frame=frame,
+        trend15={"ready": True, "direction": 1},
+    )
+    assert action3 == "SELL_BULL_PUT_SPREAD" and mode3 == "cpr_trend"
+
+    # a caller that never passes a 15m read at all keeps the old behaviour
+    action4, _r4, mode4 = pick_auto_credit(
+        regime,
+        cross,
+        ema_fast=8,
+        ema_slow=20,
+        frame=frame,
+    )
+    assert action4 == "SELL_BULL_PUT_SPREAD" and mode4 == "cpr_trend"
 
 
 def test_summarize_trend15_needs_ema_and_supertrend_to_agree() -> None:
