@@ -149,6 +149,19 @@ def test_config_for_every_index_has_a_real_second_trail_phase():
     assert pos["profit_armed"] and pos["stop"] > 24000.0
 
 
+def test_fetch_window_survives_a_holiday_gap():
+    """2026-09-15: every one of the 20 stocks silently returned
+    'need_two_sessions' the trading day right after the 2026-09-14 NSE
+    holiday — _fetch's old 2-calendar-day window only reached back to Sunday,
+    so it found just one real session (today) and tick() gave up with no
+    error logged anywhere. A holiday, or a holiday next to a weekend, can put
+    more than 2 calendar days between today and the prior trading day, so the
+    window must stay wide enough to comfortably bridge that."""
+    import inspect
+
+    assert inspect.signature(paper._fetch).parameters["days"].default >= 5
+
+
 def test_engine_trend_read_needs_agreement():
     up = _bars(list(np.linspace(24000, 24600, 40)), freq="15min")
     prev = _bars([23800] * 25, freq="15min")
