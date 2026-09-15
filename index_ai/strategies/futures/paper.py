@@ -200,9 +200,13 @@ def _journal(trade: dict[str, Any]) -> None:
         fh.write(json.dumps(trade, default=str) + "\n")
 
 
-def _fetch(client: DhanClient, key: str, interval: str, days: int = 2) -> pd.DataFrame:
+def _fetch(client: DhanClient, key: str, interval: str, days: int = 6) -> pd.DataFrame:
     # a 5m bar closes every 5 min — with a 20-stock universe, don't re-pull the
-    # same 2-day window every scan cycle
+    # same window every scan cycle. 6 calendar days, not 2: tick() needs the
+    # last TWO real trading sessions, and a 2-day window silently finds only
+    # one (net "need_two_sessions" on every instrument, no error logged) the
+    # first trading day after a market holiday or a holiday next to a weekend
+    # — confirmed live 2026-09-15, the day after the 2026-09-14 NSE holiday.
     ck = (key.upper(), interval)
     hit = _FRAME_CACHE.get(ck)
     if hit and time.monotonic() - hit[0] < _FRAME_TTL_S:
