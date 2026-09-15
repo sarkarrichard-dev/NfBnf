@@ -227,3 +227,56 @@ timeframe the channel-break exit is actually built for.
 Lane default set to **1h** (`AkRoxxConfig.timeframe`, env `CRYPTO_AK_ROXX_TF`).
 The optimiser sweeps `upper_len` / `lower_len` / the CPR gate — that might close
 the gap, or not. Worth the forward paper week. **Do not arm crypto live.**
+
+---
+
+# rsi_adx_trend — 2026-09-15 (adapted from freqtrade-strategies' `hlhb`)
+
+Richard asked to look through a list of trading GitHub repos and pull out
+concrete ideas. Most of what's in `freqtrade/freqtrade-strategies` is either a
+re-skin of indicators already on this platform, or numbers clearly hyperopted
+to one narrow backtest window (a stoploss of exactly −0.3211, an ROI table
+with four hand-tuned steps) — curve-fit, not signal. `hlhb` ("Huck Loves Her
+Bucks", a decades-old simple forex system) is the one exception: a momentum
+shift (RSI crossing its own midpoint of 50) confirmed by a fast/slow EMA
+cross, gated by ADX so it only fires when a real trend exists rather than in
+chop — a genuinely different combination from anything else here. Its
+freqtrade ROI table and stoploss were dropped (the same overfit problem as
+everything else in that repo); this reuses the platform's own shared P&L
+trailing stop instead, for a fair comparison, and trades both directions
+(the original was long-only). Module `crypto/strategies/rsi_adx_trend.py`;
+new `rsi()` / `adx()` helpers added to `crypto/strategies/indicators.py`.
+
+## Backtest — real Delta history + real charges, 150 days, all 6 live symbols, 1h
+
+| symbol | trades | net USD | win rate |
+|---|---:|---:|---:|
+| BTCUSD | 48 | **+$66** | 52% |
+| ETHUSD | 47 | **+$30** | 38% |
+| SOLUSD | 37 | **+$46** | 35% |
+| PAXGUSD | 34 | **−$47** | 38% |
+| XRPUSD | 40 | **−$55** | 30% |
+| BNBUSD | 48 | **−$76** | 40% |
+| **total (all 6)** | **254** | **−$37** | 39% |
+| **total (BTC+ETH+SOL only)** | **132** | **+$141** | 42% |
+
+`avg win $17.23` vs `avg loss −$11.43` — a real ~1.5:1 payoff, the best of any
+crypto strategy tested here except AK Roxx Pro. Net-negative across all 6
+configured symbols, but the split is not noise: **positive on the three
+original majors (BTC, ETH, SOL), negative on PAXG, XRP and BNB** — the exact
+same shape already seen with `ny_n_break` ("gave good returns in BTC and ETH
+… never worked for PAXG", `strategy-analysis-and-simplification-directive.md`).
+This is the whole reason the platform tracks per-(strategy, instrument), not
+one aggregate number: judged as one number this fails; judged per instrument,
+half of it (by trade count) is the best result on this platform.
+
+## Status
+
+**Not wired into `crypto/lanes.py`.** Overall net-negative on the configured
+6-symbol universe, so it does not meet the bar as-is. A version restricted to
+just BTC/ETH/SOL would be net-positive on this measurement, but that is a
+real product decision (does the crypto section want a strategy that only
+trades 3 of its 6 symbols) rather than something to decide unilaterally —
+flagged to Richard rather than shipped. Kept as research tooling
+(`crypto/strategies/rsi_adx_trend.py`, the new `rsi`/`adx` indicator helpers,
+and the `rsi_adx_trend` entry in `crypto/backtest.py`) either way.
