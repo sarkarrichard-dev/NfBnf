@@ -118,7 +118,7 @@ export function EquityCurve({
               dominantBaseline="middle"
               fontSize="9"
               fontFamily="monospace"
-              fill="var(--hair)"
+              className="fill-slate-500"
               stroke="none"
             >
               {money(t)}
@@ -127,10 +127,10 @@ export function EquityCurve({
         ))}
 
         {/* x-axis: first and last date */}
-        <text x={padL} y={H - 4} fontSize="9" fontFamily="monospace" fill="var(--hair)">
+        <text x={padL} y={H - 4} fontSize="9" fontFamily="monospace" className="fill-slate-500">
           {shortDate(points[0].date)}
         </text>
-        <text x={W - padR} y={H - 4} textAnchor="end" fontSize="9" fontFamily="monospace" fill="var(--hair)">
+        <text x={W - padR} y={H - 4} textAnchor="end" fontSize="9" fontFamily="monospace" className="fill-slate-500">
           {shortDate(points[points.length - 1].date)}
         </text>
 

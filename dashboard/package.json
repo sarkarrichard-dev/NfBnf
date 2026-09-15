@@ -10,6 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/geist-mono": "^5.3.0",
+    "@fontsource/orbitron": "^5.3.0",
+    "@fontsource/plus-jakarta-sans": "^5.3.0",
     "@tanstack/react-query": "^5.100.14",
     "clsx": "^2.1.1",
     "react": "^19.2.6",
