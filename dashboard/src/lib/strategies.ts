@@ -31,7 +31,7 @@ export type StrategyDef = {
   name: string
   kind: 'crypto' | 'index'
   /** which lane / status block reports it */
-  statusKey: 'ny_n_break' | 'ichimoku' | 'ak_roxx_pro' | 'cpr_trend' | 'index_options' | 'futures'
+  statusKey: 'ny_n_break' | 'ichimoku' | 'ak_roxx_pro' | 'cpr_trend' | 'rsi_adx_trend' | 'index_options' | 'futures'
   engine: string
   instrument: string
   timeframe: string
@@ -161,6 +161,32 @@ export const STRATEGIES: StrategyDef[] = [
     paperDefault: true,
     builder: true,
     params: [...TRAIL],
+  },
+  {
+    id: 'rsi_adx_trend',
+    name: 'RSI + ADX Trend',
+    kind: 'crypto',
+    statusKey: 'rsi_adx_trend',
+    engine: '1h · RSI momentum + EMA cross + ADX trend filter',
+    instrument: 'BTC / ETH / SOL perp only',
+    timeframe: '1h',
+    side: 'buying',
+    teaser: 'A decades-old simple forex system (RSI crossing its own midpoint, confirmed by an EMA cross, gated so it only fires in a real trend) — pulled from a public strategy repo and re-tested here. Backtested net-positive on BTC/ETH/SOL, net-negative on the other three coins, so it only trades those three.',
+    blurb:
+      'Richard, 2026-09-15: asked to look through a list of trading GitHub repos and pull out concrete ideas. Adapted from freqtrade-strategies\' "hlhb" ("Huck Loves Her Bucks", a long-standing simple forex trend system) — most of that repo is either indicators already used here or numbers hyperopted to one backtest window, but this entry logic is genuinely different from anything else on this platform: RSI crossing back above/below its own 50 midpoint, confirmed by a fast/slow EMA cross on the same bar, gated by ADX so it only fires when a real trend exists rather than in chop. The original\'s overfit ROI table and stoploss were dropped entirely — this exits through the same P&L trailing stop as every other crypto strategy, for a fair comparison, and trades both directions (the original was long-only). Backtested net-positive on BTC/ETH/SOL and net-negative on PAXG/XRP/BNB — the same per-instrument split already seen with NY N-Break — so the lane hardcodes it to just the three coins where it actually tested positive, not the full crypto symbol list.',
+    reads:
+      'Enter when RSI({rsi_period}) crosses its 50 midpoint, EMA{ema_fast}/EMA{ema_slow} cross the same direction on the same bar, and ADX({adx_period}) is above {adx_min} (a real trend, not chop). Exit on the trailing stop or the mirror-image signal. BTC/ETH/SOL only.',
+    backtest: { window: '150d, real Delta prices', net: '+$141 on BTC/ETH/SOL, -$178 on PAXG/XRP/BNB', trades: 254, note: 'net-negative on the full 6-symbol universe — restricted to the three symbols where it actually works' },
+    paperDefault: true,
+    builder: true,
+    params: [
+      { key: 'rsi_period', label: 'RSI period', group: 'signal', type: 'int', default: 10, min: 5, max: 30 },
+      { key: 'ema_fast', label: 'Fast EMA', group: 'signal', type: 'int', default: 5, min: 3, max: 20 },
+      { key: 'ema_slow', label: 'Slow EMA', group: 'signal', type: 'int', default: 10, min: 5, max: 40 },
+      { key: 'adx_period', label: 'ADX period', group: 'signal', type: 'int', default: 14, min: 5, max: 30 },
+      { key: 'adx_min', label: 'Min ADX (trend filter)', group: 'signal', type: 'int', default: 25, min: 10, max: 50 },
+      ...TRAIL,
+    ],
   },
   {
     id: 'index_options',
