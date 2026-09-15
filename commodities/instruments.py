@@ -27,12 +27,12 @@ UNIVERSE_META_PATH = MEMORY_DIR / "commodity_universe.json"
 
 @dataclass(frozen=True)
 class CommoditySpec:
-    key: str                 # our short key (also the journal `strategy`-peer tag)
-    root: str                # MCX trading-symbol root, e.g. "CRUDEOILM"
+    key: str  # our short key (also the journal `strategy`-peer tag)
+    root: str  # MCX trading-symbol root, e.g. "CRUDEOILM"
     label: str
-    multiplier: float        # ₹ P&L per 1.0 price move, per lot
-    tick: float              # min price increment (₹)
-    dst_session: bool        # evening close tracks US DST (23:55 in summer)
+    multiplier: float  # ₹ P&L per 1.0 price move, per lot
+    tick: float  # min price increment (₹)
+    dst_session: bool  # evening close tracks US DST (23:55 in summer)
     # The four risk fields below are the *fallback* only — one guess per
     # instrument, hand-picked when this section was built. lanes.py's
     # atr_scaled_spec() overrides all four every scan with numbers measured
@@ -43,19 +43,68 @@ class CommoditySpec:
     initial_stop_pct: float  # % of entry price
     trail_activate_pct: float
     trail_pct: float
-    daily_stop_pct: float    # stop trading this instrument for the day after this loss
-    margin_pct: float        # rough SPAN+exposure as a fraction of notional (sizing only)
+    daily_stop_pct: float  # stop trading this instrument for the day after this loss
+    margin_pct: float  # rough SPAN+exposure as a fraction of notional (sizing only)
+    # phase 2 -- a tighter profit-lock once the trade has run well past where
+    # phase 1 armed (Richard, 2026-09-15: every segment needs a real
+    # trailing-stop AND a separate trailing-profit phase, not one trail doing
+    # both jobs). ~2.5x trail_activate_pct / ~0.35x trail_pct, the same
+    # ratios used for the index-futures fields these mirror. lanes.py's
+    # atr_scaled_spec() overrides both with numbers measured off the same
+    # ATR_K_* pattern as the other four fields, same as it already does.
+    profit_trigger_pct: float = 0.0
+    profit_trail_pct: float = 0.0
 
 
 COMMODITIES: tuple[CommoditySpec, ...] = (
-    CommoditySpec("CRUDEOILM", "CRUDEOILM", "Crude Oil Mini", 10.0, 1.0, True,
-                  0.85, 0.6, 0.45, 2.2, 0.13),
-    CommoditySpec("NATGASMINI", "NATGASMINI", "Natural Gas Mini", 250.0, 0.1, True,
-                  1.2, 0.9, 0.7, 3.0, 0.15),
-    CommoditySpec("GOLDM", "GOLDM", "Gold Mini", 10.0, 1.0, True,
-                  0.45, 0.35, 0.25, 1.1, 0.09),
-    CommoditySpec("SILVERMIC", "SILVERMIC", "Silver Micro", 1.0, 1.0, True,
-                  0.8, 0.6, 0.45, 1.8, 0.12),
+    CommoditySpec(
+        "CRUDEOILM",
+        "CRUDEOILM",
+        "Crude Oil Mini",
+        10.0,
+        1.0,
+        True,
+        0.85,
+        0.6,
+        0.45,
+        2.2,
+        0.13,
+        1.5,
+        0.16,
+    ),
+    CommoditySpec(
+        "NATGASMINI",
+        "NATGASMINI",
+        "Natural Gas Mini",
+        250.0,
+        0.1,
+        True,
+        1.2,
+        0.9,
+        0.7,
+        3.0,
+        0.15,
+        2.25,
+        0.25,
+    ),
+    CommoditySpec(
+        "GOLDM", "GOLDM", "Gold Mini", 10.0, 1.0, True, 0.45, 0.35, 0.25, 1.1, 0.09, 0.88, 0.09
+    ),
+    CommoditySpec(
+        "SILVERMIC",
+        "SILVERMIC",
+        "Silver Micro",
+        1.0,
+        1.0,
+        True,
+        0.8,
+        0.6,
+        0.45,
+        1.8,
+        0.12,
+        1.5,
+        0.16,
+    ),
 )
 
 BY_KEY: dict[str, CommoditySpec] = {c.key: c for c in COMMODITIES}
@@ -92,7 +141,11 @@ if __name__ == "__main__":  # self-check
     assert len(COMMODITIES) == len({c.key for c in COMMODITIES})
     for c in COMMODITIES:
         assert c.multiplier > 0 and c.tick > 0 and 0 < c.margin_pct < 1
+        assert c.profit_trigger_pct > c.trail_activate_pct, c.key  # phase 2 must trigger later
+        assert c.profit_trail_pct < c.trail_pct, c.key  # phase 2 must be tighter
     meta = load_universe_meta()
     resolved = [k for k in BY_KEY if k in meta]
-    print(f"commodities.instruments: {len(COMMODITIES)} specs, {len(resolved)} resolved "
-          f"({resolved or 'run scripts.fetch_commodity_universe'})")
+    print(
+        f"commodities.instruments: {len(COMMODITIES)} specs, {len(resolved)} resolved "
+        f"({resolved or 'run scripts.fetch_commodity_universe'})"
+    )

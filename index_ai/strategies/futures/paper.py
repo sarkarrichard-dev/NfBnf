@@ -35,6 +35,7 @@ from index_ai.candle_cache import to_ist_session_frame
 from index_ai.charges import futures_round_trip_rupees, futures_slippage_rupees
 from index_ai.strategies.futures.config import FuturesConfig, config_for, with_overrides
 from index_ai.strategies.futures.engine import FLAT, LONG, entry_trigger, trend_read
+from index_ai.strategies.futures.price_trail import PriceTrailLevels, update_price_trail
 from index_ai.strategies.futures.stock_config import daily_atr, stock_config
 from index_ai.strategies.futures.stock_universe import STOCK_FUTURES_UNIVERSE, load_universe_meta
 
@@ -256,6 +257,7 @@ def _close(
         "brain": pos.get("brain"),
         "peak_price": round(pos.get("peak", pos["entry"]), 2),
         "trail_armed": pos.get("armed", False),
+        "profit_armed": pos.get("profit_armed", False),
         "trail_stop_at_exit": round(pos["stop"], 2) if pos.get("stop") is not None else None,
     }
     _journal(trade)
@@ -309,14 +311,13 @@ def tick(client: DhanClient, key: str, state: dict[str, Any]) -> dict[str, Any]:
     # manage open position
     if pos:
         d = 1 if pos["dir"] == "LONG" else -1
-        fav = (price - pos["entry"]) * d
-        pos["peak"] = max(pos["peak"], price) if d == 1 else min(pos["peak"], price)
-        if not pos["armed"] and fav >= cfg.trail_activate_pts:
-            pos["armed"] = True
-        if pos["armed"]:
-            trail = pos["peak"] - d * cfg.trail_pts
-            pos["stop"] = max(pos["stop"], trail) if d == 1 else min(pos["stop"], trail)
-        if (price <= pos["stop"]) if d == 1 else (price >= pos["stop"]):
+        levels = PriceTrailLevels(
+            trail_activate_pts=cfg.trail_activate_pts,
+            trail_pts=cfg.trail_pts,
+            profit_trigger_pts=cfg.profit_trigger_pts,
+            profit_trail_pts=cfg.profit_trail_pts,
+        )
+        if update_price_trail(pos, price, levels):
             out.update(event="exit", trade=_close(pos, pos["stop"], "stop", cfg, state))
             return out
         if ts.time() >= cfg.square_off:
