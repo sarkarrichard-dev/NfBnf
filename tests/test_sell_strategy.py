@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+
 import pandas as pd
 
 from index_ai.strategies.sell_strategy import _trend15_block
@@ -27,8 +29,16 @@ def test_trend15_block_direction_and_swing() -> None:
     # price broke the 15m swing the credit leans on -> block
     assert "support" in _trend15_block("SELL_BULL_PUT_SPREAD", 89.0, up, cfg)
     assert "resistance" in _trend15_block("SELL_BEAR_CALL_SPREAD", 111.0, down, cfg)
-    # not ready / disabled -> never blocks
-    assert _trend15_block("SELL_BULL_PUT_SPREAD", 89.0, {"ready": False}, cfg) is None
+    # not ready (too early in the session) -> blocks, 2026-09-15 fix. Before this
+    # fix "not ready" fell through as "no objection" on the OI-primary path too —
+    # the one thing that stopped BANKNIFTY/SENSEX repeating their 9:26 AM loss on
+    # a clean OI read was OI happening to be unclear that same morning.
+    assert _trend15_block("SELL_BULL_PUT_SPREAD", 89.0, {"ready": False}, cfg) is not None
+    # ...unless the operator explicitly turned the 15m requirement off
+    off = dataclasses.replace(cfg, sell_require_trend15=False)
+    assert _trend15_block("SELL_BULL_PUT_SPREAD", 89.0, {"ready": False}, off) is None
+    # ...or no 15m read was even attempted (trend15 is None, not just unready)
+    assert _trend15_block("SELL_BULL_PUT_SPREAD", 89.0, None, cfg) is None
 
 
 def test_dual_opportunities_split_sell_frame_populates_sell_regime(monkeypatch) -> None:
@@ -124,6 +134,12 @@ def test_oi_primary_picks_the_sell_direction():
     # spot 100, put wall 95, call wall 108 → mid 101.5, leaning the floor → bull put
     sig = _sell_signal(flat, _oi(95.0, 108.0))
     assert sig.action == "SELL_BULL_PUT_SPREAD" and "OI:" in sig.reason
+    # same decisive OI read, but too early in the session for a real 15m trend
+    # read (2026-09-15 fix) — the OI-primary path bypasses pick_auto_credit
+    # entirely, so _trend15_block is the *only* thing that can catch this; it
+    # used to let "not ready" straight through here.
+    sig_early = _sell_signal(flat, _oi(95.0, 108.0), trend15={"ready": False})
+    assert sig_early.action == "NO_TRADE" and "early in the session" in sig_early.reason
     # jam the walls around spot the other way → bear call
     sig = _sell_signal(flat, _oi(92.0, 101.0))
     assert sig.action == "SELL_BEAR_CALL_SPREAD"

@@ -110,9 +110,24 @@ def _trend15_block(
 
     A bullish credit (short puts) needs the 15m trend not to be down and price
     not to have broken the 15m swing low; mirror for a bearish credit.
+
+    ``trend15 is None`` (no 15m read was even attempted — e.g. the 5m frame
+    itself was too thin to run the sell lane) or the operator has
+    ``sell_require_trend15`` off: no opinion, don't block. But once a real
+    15m read was attempted and just isn't ready yet (too early in the session
+    for a full 15m bar), that must block too, same as an opposing read would —
+    2026-09-15: this is the check that runs for *every* sell path, including
+    the OI-primary one that bypasses ``pick_auto_credit`` entirely, and
+    "not ready" used to fall through as "no objection" here, which is exactly
+    how BANKNIFTY and SENSEX could still have sold the wrong direction 11
+    minutes after the open even with a decisive OI read (they didn't, only
+    because OI happened to be unclear that morning too — but this path was
+    never actually protected).
     """
-    if not trend15 or not trend15.get("ready") or not cfg.sell_require_trend15:
+    if trend15 is None or not cfg.sell_require_trend15:
         return None
+    if not trend15.get("ready"):
+        return "too early in the session for a confirmed 15m trend read."
     bull = action in _BULL_SELL
     want = 1 if bull else -1
     d = int(trend15.get("direction") or 0)
