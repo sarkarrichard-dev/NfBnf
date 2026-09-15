@@ -41,6 +41,51 @@ CTT 0.01% (sell) + SEBI 0.0001% + stamp 0.002% (buy) + 18% GST. A CRUDEOILM
 round trip is ~₹78 on ~₹60k notional — a tiny fraction of a normal daily move,
 which is the point of trading outright futures instead of option spreads.
 
+## Strategy candidates tested and rejected
+
+**Liquidity sweep + Open Interest confirmation + volume-profile gate**
+(2026-09-15, `scripts/backtest_liquidity_sweep_oi.py`) — Richard asked whether
+the platform understood liquidity sweeps, order flow and volume profile, then
+asked for a strategy combining them for futures/commodities, a section that
+had only ever reused the index signal. A plain version of this idea ("mark
+yesterday's high/low, fade the sweep, target the opposite extreme") was
+already tested on this section and on the Indian index/stock futures back in
+2026-09-11 and came back net-negative on every setting — the code was
+deleted and this is **not to be rebuilt** as a plain price-action strategy.
+This version tests something genuinely different: it only fades the sweep
+when real Open Interest (fetched from Dhan with `oi=true`, confirmed to
+return real, continuously varying history for these contracts) shows the
+move was unwinding rather than fresh conviction, and only when the sweep
+price sits outside the recent volume profile's value area (a thinly-traded
+level, not one with real acceptance).
+
+Backtest, 500 days, real MCX charges, all four commodities:
+
+| symbol | trades | net rupees | win rate |
+|---|---:|---:|---:|
+| CRUDEOILM | 13 | **−₹2,062** | 38% |
+| NATGASMINI | 12 | **−₹3,576** | 17% |
+| GOLDM | 5 | **−₹15,456** | 20% |
+| SILVERMIC | 18 | **+₹3,832** | 56% |
+| **total** | **48** | **−₹17,261** | 38% |
+
+Net-negative overall — 3 of 4 commodities lose, and the one winner
+(SILVERMIC) is a small sample (18 trades). Adding real order-flow and
+volume-profile confirmation on top of the sweep did not rescue the family of
+idea; the honest prior stated before this was built ("probably no edge,
+since the plain version already failed everywhere") held. **Not wired into
+any lane.** Kept as research tooling (`scripts/backtest_liquidity_sweep_oi.py`)
+and documented here so this specific combination — sweep + OI + volume
+profile, not just the plain sweep — isn't re-tested from scratch later.
+
+Scope note: this was tested on commodities only, not the Indian index or
+stock futures paper lanes. Those two trade the cash/spot price as a proxy for
+the future (see `index_ai/strategies/futures/paper.py`), not the actual
+futures contract, so there is no real Open Interest to read for what they
+currently fetch — extending this idea there would first need each
+instrument's actual futures-contract security id resolved, which isn't done
+today.
+
 ## Paper only
 
 `ENABLE_COMMODITIES_PAPER` (default on). The `_commodities_paper_loop` task in

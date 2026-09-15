@@ -52,6 +52,7 @@ def unwrap_dhan_record_list(data: Any) -> list[dict[str, Any]]:
                 return [x for x in block if isinstance(x, dict)]
     return []
 
+
 # Dhan v2 /charts/intraday allows up to 90 days per request (docs: "Only 90 days
 # of data can be polled at once"), history back ~5 years for active instruments.
 INTRADAY_MAX_CALENDAR_DAYS = 90
@@ -238,7 +239,11 @@ class DhanClient:
         sid = str(instrument.underlying_security_id)
         raw = self.ltp(instrument.underlying_segment, [instrument.underlying_security_id])
         data = raw.get("data") or raw
-        bucket = data.get(instrument.underlying_segment) or data.get(instrument.underlying_segment.lower()) or {}
+        bucket = (
+            data.get(instrument.underlying_segment)
+            or data.get(instrument.underlying_segment.lower())
+            or {}
+        )
         row = bucket.get(sid) or bucket.get(instrument.underlying_security_id) or {}
         last = row.get("last_price") or row.get("ltp") or row.get("lastPrice")
         if last is None and bucket:
@@ -258,6 +263,7 @@ class DhanClient:
         from_date: str,
         to_date: str,
         interval: str = "1",
+        include_oi: bool = False,
     ) -> dict[str, Any]:
         if instrument.underlying_security_id is None:
             raise RuntimeError(f"{instrument.label} security id is not configured.")
@@ -267,7 +273,7 @@ class DhanClient:
             "exchangeSegment": instrument.underlying_segment,
             "instrument": instrument.instrument_type,
             "interval": str(interval),
-            "oi": False,
+            "oi": bool(include_oi),
             "fromDate": from_clamped,
             "toDate": to_clamped,
         }
@@ -279,6 +285,7 @@ class DhanClient:
         *,
         from_date: str,
         to_date: str,
+        include_oi: bool = False,
     ) -> dict[str, Any]:
         if instrument.underlying_security_id is None:
             raise RuntimeError(f"{instrument.label} security id is not configured.")
@@ -287,7 +294,7 @@ class DhanClient:
             "exchangeSegment": instrument.underlying_segment,
             "instrument": instrument.instrument_type,
             "expiryCode": 0,
-            "oi": False,
+            "oi": bool(include_oi),
             "fromDate": from_date,
             "toDate": to_date,
         }
@@ -348,6 +355,10 @@ class DhanClient:
 
 def chart_response_to_frame(data: dict[str, Any]) -> pd.DataFrame:
     timestamps = data.get("timestamp") or data.get("t") or []
+    # open_interest is present only when the request set "oi": True (see
+    # DhanClient.intraday_history/historical_daily's include_oi) -- 0.0 for
+    # every other caller, a harmless extra column they never look at.
+    oi = data.get("open_interest")
     frame = pd.DataFrame(
         {
             "datetime": pd.to_datetime(timestamps, unit="s", errors="coerce"),
@@ -356,6 +367,7 @@ def chart_response_to_frame(data: dict[str, Any]) -> pd.DataFrame:
             "low": data.get("low") or [],
             "close": data.get("close") or [],
             "volume": data.get("volume") or [],
+            "open_interest": oi if oi else [0.0] * len(timestamps),
         }
     )
     frame = frame.dropna(subset=["datetime"]).sort_values("datetime")
