@@ -111,6 +111,13 @@ class CryptoSettings:
     # testing strategies — the video strategies above default off because they
     # were already measured net-negative; this one hasn't been measured yet.
     cpr_trend_enabled: bool
+    # RSI + EMA cross + ADX trend filter, adapted from freqtrade-strategies'
+    # `hlhb` (Richard, 2026-09-15 — asked to pull ideas from a list of trading
+    # GitHub repos). Backtested net-negative across all 6 configured symbols,
+    # but net-positive on BTC/ETH/SOL specifically (crypto/strategies/
+    # RESULTS.md) — the lane hardcodes it to just those three
+    # (lanes._STRATEGY_SYMBOLS), not the full symbol list, on purpose.
+    rsi_adx_trend_enabled: bool
     # Lane-level trading window, IST, 24h "HH:MM". NEW ENTRIES fire only inside
     # this window (default 16:00–06:00 — the evening + overnight, US/crypto-active
     # hours); the daytime belongs to the Indian lanes. Open positions are managed
@@ -171,6 +178,7 @@ def crypto_settings() -> CryptoSettings:
         ema_jaguar_enabled=_b("CRYPTO_EMA_JAGUAR_ENABLED", False),
         vp_edge_enabled=_b("CRYPTO_VP_EDGE_ENABLED", False),
         cpr_trend_enabled=_b("CRYPTO_CPR_TREND_ENABLED", True),
+        rsi_adx_trend_enabled=_b("CRYPTO_RSI_ADX_TREND_ENABLED", True),
         session_start=os.getenv("CRYPTO_SESSION_START", "16:00").strip(),
         session_end=os.getenv("CRYPTO_SESSION_END", "06:00").strip(),
         ny_start=os.getenv("CRYPTO_NY_START", "18:00").strip(),
@@ -205,6 +213,7 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_EMA_JAGUAR_ENABLED",
     "CRYPTO_VP_EDGE_ENABLED",
     "CRYPTO_CPR_TREND_ENABLED",
+    "CRYPTO_RSI_ADX_TREND_ENABLED",
     "CRYPTO_NBREAK_ALLROUND",
     "CRYPTO_NBREAK_MAX_TRADES",
     "CRYPTO_SESSION_START",

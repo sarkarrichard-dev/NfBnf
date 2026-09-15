@@ -316,8 +316,21 @@ def test_lane_noop_when_disabled(monkeypatch):
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_AK_ROXX_ENABLED", "false")
     monkeypatch.setenv("CRYPTO_CPR_TREND_ENABLED", "false")
+    monkeypatch.setenv("CRYPTO_RSI_ADX_TREND_ENABLED", "false")
     assert lanes.scan_crypto_paper() == []
     assert lanes.enabled() is False
+
+
+def test_rsi_adx_trend_restricted_to_its_proven_symbols(monkeypatch):
+    # net-positive on BTC/ETH/SOL, net-negative on PAXG/XRP/BNB (RESULTS.md) —
+    # the lane must not silently expand it to the full configured symbol list.
+    monkeypatch.setenv("CRYPTO_SYMBOLS", "BTCUSD,ETHUSD,SOLUSD,PAXGUSD,XRPUSD,BNBUSD")
+    from crypto.config import crypto_settings
+
+    s = crypto_settings()
+    assert lanes._symbols_for("rsi_adx_trend", s) == ("BTCUSD", "ETHUSD", "SOLUSD")
+    # an unrestricted strategy still gets the full configured list
+    assert set(lanes._symbols_for("ichimoku", s)) == set(s.symbols)
 
 
 def test_nbreak_allround_takes_the_setup_outside_the_ny_window(paper_env, monkeypatch):

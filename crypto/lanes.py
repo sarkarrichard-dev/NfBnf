@@ -68,7 +68,22 @@ def _enabled_strategies(s) -> list[str]:
         out.append("vp_edge")
     if s.cpr_trend_enabled:
         out.append("cpr_trend")
+    if s.rsi_adx_trend_enabled:
+        out.append("rsi_adx_trend")
     return out
+
+
+# Strategies proven on only a subset of the configured symbols — see
+# crypto/strategies/RESULTS.md. Everything else in _enabled_strategies()
+# trades the full s.symbols list; a name here overrides that.
+_STRATEGY_SYMBOLS: dict[str, tuple[str, ...]] = {
+    # net-positive on these three, net-negative on PAXG/XRP/BNB (2026-09-15)
+    "rsi_adx_trend": ("BTCUSD", "ETHUSD", "SOLUSD"),
+}
+
+
+def _symbols_for(strat: str, s) -> tuple[str, ...]:
+    return _STRATEGY_SYMBOLS.get(strat, tuple(s.symbols))
 
 
 def _closed(df: pd.DataFrame) -> pd.DataFrame:
@@ -134,6 +149,12 @@ def _vp_edge_cfg(s):
     return VpEdgeConfig(**_tuned("vp_edge"), trail=_trail_cfg(s))
 
 
+def _rsi_adx_trend_cfg(s):
+    from crypto.strategies.rsi_adx_trend import RsiAdxTrendConfig
+
+    return RsiAdxTrendConfig(trail=_trail_cfg(s))
+
+
 def _ak_roxx_cfg(s):
     from crypto.strategies.ak_roxx_pro import AkRoxxConfig
 
@@ -147,7 +168,7 @@ _SIMPLE: dict[str, "Any"] = {}
 
 
 def _register_simple() -> None:
-    from crypto.strategies import ak_roxx_pro, bb_reversal, ema_jaguar, vp_edge
+    from crypto.strategies import ak_roxx_pro, bb_reversal, ema_jaguar, rsi_adx_trend, vp_edge
 
     _SIMPLE.update(
         {
@@ -155,6 +176,7 @@ def _register_simple() -> None:
             "ema_jaguar": lambda s: (ema_jaguar, "5m", 2, _ema_jaguar_cfg(s)),
             "vp_edge": lambda s: (vp_edge, "15m", 6, _vp_edge_cfg(s)),
             "ak_roxx_pro": lambda s: (ak_roxx_pro, _ak_roxx_cfg(s).timeframe, 20, _ak_roxx_cfg(s)),
+            "rsi_adx_trend": lambda s: (rsi_adx_trend, "1h", 20, _rsi_adx_trend_cfg(s)),
         }
     )
 
@@ -256,7 +278,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
     open_by_strat = _open_counts(st)  # after prune — pruned positions must not count
 
     for strat in strategies:
-        for sym in s.symbols:
+        for sym in _symbols_for(strat, s):
             contract = contracts.get(sym)
             if not contract or not contract.usable:
                 events.append(

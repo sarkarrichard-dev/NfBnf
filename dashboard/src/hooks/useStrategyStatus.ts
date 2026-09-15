@@ -56,5 +56,6 @@ export function useStrategyStatus(): Record<string, LiveStatus> {
     ichimoku: cLane('ichimoku'),
     ak_roxx_pro: cLane('ak_roxx_pro'),
     cpr_trend: cLane('cpr_trend'),
+    rsi_adx_trend: cLane('rsi_adx_trend'),
   }
 }
