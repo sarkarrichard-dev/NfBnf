@@ -1,6 +1,17 @@
 """Per-index exit rule measured on the option's own price (premium points).
 
-Richard's spec (2026-08-31), applied to both lanes on NIFTY and BANKNIFTY:
+Richard's spec (2026-08-31), applied to both lanes on NIFTY and BANKNIFTY.
+SENSEX added 2026-09-15 (Richard: "I want all the segments should have a
+trailing stop loss and trailing profit... no deviation is allowed") — SENSEX
+never had Richard's own hand-picked numbers the way NIFTY/BANKNIFTY did, so
+these are derived from real recorded premiums instead of guessed: the ratio
+of hard_stop_pts to the average recorded entry premium is ~16% for NIFTY and
+~20% for BANKNIFTY; SENSEX's own recorded average entry premium (real trades
+since the 2026-09-10 epoch, a thin sample so far) was ~₹216, and applying the
+~18% average of those two ratios gives hard_stop_pts=39. trail_pts follows
+the same ~40% of hard_stop ratio NIFTY/BANKNIFTY both land near. Retune once
+more SENSEX trades accumulate — this is a reasoned starting point, not
+Richard's own spec the way the other two are.
 
   * Flat hard stop until the first target is hit.
   * First target = a quarter of the entry premium moved in your favour.
@@ -24,6 +35,7 @@ from typing import Any
 _CFG: dict[str, dict[str, float]] = {
     "NIFTY": {"hard_stop_pts": 11.0, "first_target_pct": 0.25, "trail_pts": 5.0},
     "BANKNIFTY": {"hard_stop_pts": 100.0, "first_target_pct": 0.25, "trail_pts": 35.0},
+    "SENSEX": {"hard_stop_pts": 39.0, "first_target_pct": 0.25, "trail_pts": 16.0},
 }
 
 

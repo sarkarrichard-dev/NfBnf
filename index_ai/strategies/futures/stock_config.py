@@ -23,6 +23,12 @@ K_INITIAL_STOP = 0.22
 K_TRAIL_ACTIVATE = 0.22
 K_TRAIL = 0.40
 K_DAILY_STOP = 0.55
+# phase 2 -- a tighter profit-lock once the trade has run well past where
+# phase 1 armed (Richard, 2026-09-15: every segment needs a real trailing-stop
+# AND a separate trailing-profit phase). Same ~2.5x / ~0.35x ratios as the
+# index configs in config.py's _RISK table.
+K_PROFIT_TRIGGER = 0.55
+K_PROFIT_TRAIL = 0.14
 
 
 def daily_atr(daily_bars: pd.DataFrame) -> float:
@@ -44,6 +50,8 @@ def stock_config(symbol: str, lot_size: int, atr_daily: float) -> FuturesConfig:
         trail_activate_pts=round(K_TRAIL_ACTIVATE * atr, 1),
         trail_pts=round(K_TRAIL * atr, 1),
         daily_stop_pts=round(K_DAILY_STOP * atr, 1),
+        profit_trigger_pts=round(K_PROFIT_TRIGGER * atr, 1),
+        profit_trail_pts=round(K_PROFIT_TRAIL * atr, 1),
     )
 
 
@@ -59,4 +67,6 @@ if __name__ == "__main__":  # self-check
     assert cfg.key == "RELIANCE" and cfg.lot_size == 500
     assert cfg.initial_stop_pts == round(0.22 * atr, 1)
     assert cfg.trend_ema_fast == 9 and cfg.entry_ema == 9  # scale-free defaults intact
+    assert cfg.profit_trigger_pts > cfg.trail_activate_pts  # phase 2 must trigger later
+    assert cfg.profit_trail_pts < cfg.trail_pts  # phase 2 must be tighter
     print(f"stock_config self-check ok — ATR {atr:.1f} -> stop {cfg.initial_stop_pts}")

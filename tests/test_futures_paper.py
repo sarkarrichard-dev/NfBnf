@@ -118,6 +118,37 @@ def test_status_position_without_a_live_mark_shows_no_pnl(tmp_path, monkeypatch)
     assert pos["mark"] is None and pos["unrealized_rupees"] is None
 
 
+def test_config_for_every_index_has_a_real_second_trail_phase():
+    """Richard, 2026-09-15: every segment needs a trailing-stop AND a separate
+    trailing-profit phase. profit_trigger_pts must fire later than
+    trail_activate_pts and profit_trail_pts must be tighter than trail_pts,
+    or phase 2 is a no-op -- check it for every configured index, not just
+    the one under test."""
+    from index_ai.strategies.futures.price_trail import PriceTrailLevels, update_price_trail
+
+    for key in ("NIFTY", "BANKNIFTY", "SENSEX"):
+        cfg = config_for(key)
+        assert cfg.profit_trigger_pts > cfg.trail_activate_pts, key
+        assert cfg.profit_trail_pts < cfg.trail_pts, key
+
+    # and prove it end to end with NIFTY's real numbers, the same way
+    # tick() actually calls it (index_ai/strategies/futures/paper.py)
+    cfg = config_for("NIFTY")
+    levels = PriceTrailLevels(
+        trail_activate_pts=cfg.trail_activate_pts,
+        trail_pts=cfg.trail_pts,
+        profit_trigger_pts=cfg.profit_trigger_pts,
+        profit_trail_pts=cfg.profit_trail_pts,
+    )
+    pos = {"dir": "LONG", "entry": 24000.0, "peak": 24000.0, "stop": 23955.0}
+    # past phase-1's arm level, short of phase 2
+    assert not update_price_trail(pos, 24000.0 + cfg.trail_activate_pts + 5, levels)
+    assert pos["armed"] and not pos.get("profit_armed")
+    # past phase 2's trigger -- the tighter trail takes over and locks in profit
+    assert not update_price_trail(pos, 24000.0 + cfg.profit_trigger_pts + 5, levels)
+    assert pos["profit_armed"] and pos["stop"] > 24000.0
+
+
 def test_engine_trend_read_needs_agreement():
     up = _bars(list(np.linspace(24000, 24600, 40)), freq="15min")
     prev = _bars([23800] * 25, freq="15min")

@@ -149,6 +149,33 @@ def test_atr_scaled_spec_scales_the_stop_to_each_contracts_own_volatility(monkey
     assert fallback == BY_KEY["SILVERMIC"]
 
 
+def test_manage_phase2_locks_in_more_profit_than_phase1():
+    """Richard, 2026-09-15: every segment needs a real trailing-stop AND a
+    separate, tighter trailing-profit phase, not one trail doing both jobs.
+    CRUDEOILM's static spec: trail_activate 0.6% / trail 0.45% (phase 1),
+    profit_trigger 1.5% / profit_trail 0.16% (phase 2, tighter, triggers
+    later)."""
+    from index_ai.strategies.futures.engine import FLAT
+
+    spec = BY_KEY["CRUDEOILM"]
+    pos = {"dir": "LONG", "entry": 100.0, "peak": 100.0, "stop": 95.0, "armed": False}
+
+    # +0.7% -- past phase-1's 0.6% arm level, short of phase-2's 1.5% trigger
+    assert lanes._manage(pos, 100.7, spec, FLAT) is None
+    assert pos["armed"] and not pos.get("profit_armed")
+    assert pos["stop"] == round(100.7 - 100.0 * spec.trail_pct / 100.0, 6)
+
+    # +1.6% -- past phase-2's 1.5% trigger -- the tighter trail takes over
+    assert lanes._manage(pos, 101.6, spec, FLAT) is None
+    assert pos["profit_armed"]
+    phase2_stop = 101.6 - 100.0 * spec.profit_trail_pct / 100.0
+    assert pos["stop"] == round(phase2_stop, 6)
+    assert pos["stop"] > 100.0, "phase 2 must have locked in real profit, not just breakeven"
+
+    # pulling back exactly to the phase-2 stop closes it -- with money on the table
+    assert lanes._manage(pos, phase2_stop, spec, FLAT) == "stop"
+
+
 def test_tick_opens_a_position_using_the_atr_scaled_stop(monkeypatch):
     """The whole point: a live scan must actually use the measured stop, not
     silently keep the old flat guess."""

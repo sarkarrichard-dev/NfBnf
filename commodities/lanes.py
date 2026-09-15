@@ -30,6 +30,7 @@ from index_ai.config import MEMORY_DIR, settings
 from index_ai.dhan import DhanClient, chart_response_to_frame
 from index_ai.market_clock import now_ist, now_ist_iso
 from index_ai.strategies.futures.engine import FLAT, LONG, entry_trigger, trend_read
+from index_ai.strategies.futures.price_trail import PriceTrailLevels, update_price_trail
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,13 @@ ATR_K_INITIAL_STOP = 0.22
 ATR_K_TRAIL_ACTIVATE = 0.22
 ATR_K_TRAIL = 0.40
 ATR_K_DAILY_STOP = 0.55
+# phase 2 -- a tighter profit-lock once the trade has run well past where
+# phase 1 armed (Richard, 2026-09-15: every segment needs a real
+# trailing-stop AND a separate trailing-profit phase). Same ~2.5x / ~0.35x
+# ratios as CommoditySpec's static fallback values and the index-futures
+# _RISK table this mirrors.
+ATR_K_PROFIT_TRIGGER = 0.55
+ATR_K_PROFIT_TRAIL = 0.14
 _ATR_TTL_S = 24 * 3600.0  # volatility drifts slowly; no need to re-measure every scan
 _atr_cache: dict[str, tuple[float, float]] = {}  # key -> (measured_at_monotonic, atr_pct)
 
@@ -190,6 +198,8 @@ def atr_scaled_spec(spec: CommoditySpec, security_id: int, client: DhanClient) -
         trail_activate_pct=round(ATR_K_TRAIL_ACTIVATE * atr, 3),
         trail_pct=round(ATR_K_TRAIL * atr, 3),
         daily_stop_pct=round(ATR_K_DAILY_STOP * atr, 3),
+        profit_trigger_pct=round(ATR_K_PROFIT_TRIGGER * atr, 3),
+        profit_trail_pct=round(ATR_K_PROFIT_TRAIL * atr, 3),
     )
 
 
@@ -237,6 +247,7 @@ def _close(
         "trend_reason": pos.get("trend_reason"),
         "peak_price": round(pos.get("peak", pos["entry"]), 2),
         "trail_armed": pos.get("armed", False),
+        "profit_armed": pos.get("profit_armed", False),
         "trail_stop_at_exit": round(pos["stop"], 2) if pos.get("stop") is not None else None,
     }
     _journal(trade)
@@ -254,16 +265,14 @@ def _manage(
     pos: dict[str, Any], price: float, spec: CommoditySpec, tr_direction: int
 ) -> str | None:
     d = 1 if pos["dir"] == "LONG" else -1
-    fav = (price - pos["entry"]) * d
-    pos["peak"] = max(pos["peak"], price) if d == 1 else min(pos["peak"], price)
-    activate = pos["entry"] * spec.trail_activate_pct / 100.0
-    if not pos["armed"] and fav >= activate:
-        pos["armed"] = True
-    if pos["armed"]:
-        trail_pts = pos["entry"] * spec.trail_pct / 100.0
-        trail = pos["peak"] - d * trail_pts
-        pos["stop"] = max(pos["stop"], trail) if d == 1 else min(pos["stop"], trail)
-    if (price <= pos["stop"]) if d == 1 else (price >= pos["stop"]):
+    entry = pos["entry"]
+    levels = PriceTrailLevels(
+        trail_activate_pts=entry * spec.trail_activate_pct / 100.0,
+        trail_pts=entry * spec.trail_pct / 100.0,
+        profit_trigger_pts=entry * spec.profit_trigger_pct / 100.0,
+        profit_trail_pts=entry * spec.profit_trail_pct / 100.0,
+    )
+    if update_price_trail(pos, price, levels):
         return "stop"
     if tr_direction not in (d, FLAT):
         return "trend_flip"

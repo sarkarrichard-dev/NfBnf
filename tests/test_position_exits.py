@@ -45,6 +45,9 @@ def test_premium_trailed_credit_ignores_signal_flip() -> None:
         strategy_exit_reason(trade, "SELL_BULL_PUT_SPREAD", {"day_bias": "TRENDING_BULL"}) is None
     )
     assert strategy_exit_reason(trade, "NO_TRADE", {"day_bias": "TRENDING_BULL"}) is None
+    # SENSEX also has premium-trail params now (2026-09-15) — same behaviour
+    sensex = {"action": "SELL_BEAR_CALL_SPREAD", "instrument": "SENSEX", "option": {}}
+    assert strategy_exit_reason(sensex, "NO_TRADE", {"day_bias": "TRENDING_BULL"}) is None
     # an index without premium-trail params still closes on the flip
-    other = {"action": "SELL_BEAR_CALL_SPREAD", "instrument": "SENSEX", "option": {}}
+    other = {"action": "SELL_BEAR_CALL_SPREAD", "instrument": "FINNIFTY", "option": {}}
     assert strategy_exit_reason(other, "NO_TRADE", {"day_bias": "TRENDING_BULL"}) is not None
