@@ -49,8 +49,8 @@ def test_send_threads_through_to_post(sent):
     assert sent == [("hello", "k1", 42.0)]
 
 
-def test_trade_opened_and_closed_shapes(sent, monkeypatch):
-    monkeypatch.setattr(notify, "_seen", lambda k, w: False)
+def test_trade_opened_and_closed_shapes(sent):
+    # _post itself is stubbed by the `sent` fixture, so dedup never runs here.
     notify.trade_opened(
         instrument="BANKNIFTY",
         action="SELL_BEAR_CALL_SPREAD",
@@ -112,8 +112,54 @@ def test_dedup_drops_the_second_send_of_a_key(monkeypatch, tmp_path):
     assert calls == [1]  # only the first actually hit the API
 
 
-def test_crypto_shapes_and_keys(sent, monkeypatch):
-    monkeypatch.setattr(notify, "_seen", lambda k, w: False)
+def test_a_failed_send_does_not_burn_the_dedup_key(monkeypatch, tmp_path):
+    """2026-09-15: a once-a-day message (pre-open, EOD) that hits a network
+    blip must be retryable, not silently lost for the rest of the day — the
+    real bug behind a missed EOD report (a transient DNS failure) traced to
+    the dedup key being stamped before the send was confirmed."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "c")
+    monkeypatch.setattr(notify, "_stamp_path", lambda: str(tmp_path / "seen.json"))
+    monkeypatch.setattr(notify.time, "sleep", lambda s: None)  # skip real retry delays
+
+    import httpx
+
+    calls: list[int] = []
+
+    def flaky_then_ok(*a, **k):
+        calls.append(1)
+        if len(calls) < 3:
+            raise httpx.ConnectError("getaddrinfo failed")
+        return type("R", (), {"status_code": 200})()
+
+    monkeypatch.setattr(httpx, "post", flaky_then_ok)
+    # fails twice, succeeds on the 3rd try within the same call — no key burned early
+    assert notify._post("x", "day:2026-09-15", 3600.0) is True
+    assert len(calls) == 3
+    # now it really is sent — a later attempt this window is correctly a duplicate
+    assert notify._post("x", "day:2026-09-15", 3600.0) is False
+    assert len(calls) == 3
+
+
+def test_a_send_that_never_succeeds_leaves_the_key_free_for_next_time(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "c")
+    monkeypatch.setattr(notify, "_stamp_path", lambda: str(tmp_path / "seen.json"))
+    monkeypatch.setattr(notify.time, "sleep", lambda s: None)
+
+    import httpx
+
+    def always_fails(*a, **k):
+        raise httpx.ConnectError("getaddrinfo failed")
+
+    monkeypatch.setattr(httpx, "post", always_fails)
+    assert notify._post("x", "preopen:2026-09-15", 3600.0) is False
+    # not stamped — the next scan cycle's attempt is a real retry, not a drop
+    assert notify._already_sent("preopen:2026-09-15", 3600.0) is False
+
+
+def test_crypto_shapes_and_keys(sent):
+    # _post itself is stubbed by the `sent` fixture, so dedup never runs here.
     notify.crypto_opened(
         {
             "strategy": "ak_roxx_pro",

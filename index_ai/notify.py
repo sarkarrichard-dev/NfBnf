@@ -61,18 +61,28 @@ def _stamp_path() -> str:
     return str(MEMORY_DIR / ".notify_seen.json")
 
 
-def _seen(key: str, window_s: float) -> bool:
-    """True if ``key`` was stamped within ``window_s`` — records it otherwise.
-    Any I/O error fails *open* (a possible duplicate beats a missed alert)."""
+def _load_stamps() -> dict[str, float]:
+    try:
+        with open(_stamp_path(), encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def _already_sent(key: str, window_s: float) -> bool:
+    """True if ``key`` was marked sent within ``window_s``. Peek only — does
+    not stamp, so a failed attempt can be retried by the next call."""
+    stamps = _load_stamps()
+    return time.time() - float(stamps.get(key) or 0) < window_s
+
+
+def _mark_sent(key: str) -> None:
+    """Record ``key`` as sent now. Call only once Telegram has actually
+    confirmed delivery — stamping before that would burn the once-a-day slot
+    on a transient network failure and silently lose the message for good."""
     now = time.time()
     path = _stamp_path()
-    try:
-        with open(path, encoding="utf-8") as fh:
-            stamps: dict[str, float] = json.load(fh)
-    except (OSError, ValueError):
-        stamps = {}
-    if now - float(stamps.get(key) or 0) < window_s:
-        return True
+    stamps = _load_stamps()
     stamps[key] = now
     stamps = {k: v for k, v in stamps.items() if now - float(v or 0) < _STAMP_TTL_S}
     try:
@@ -86,7 +96,6 @@ def _seen(key: str, window_s: float) -> bool:
         os.replace(tmp, path)
     except OSError:
         pass
-    return False
 
 
 # ── transport ───────────────────────────────────────────────────────────────
@@ -96,33 +105,44 @@ def _post(text: str, key: str, window_s: float) -> bool:
     cfg = _conf()
     if not cfg:
         return False
-    if _seen(key, window_s):
+    if _already_sent(key, window_s):
         logger.info("Telegram: dropped duplicate key=%s", key)
         return False
     token, chat = cfg
-    try:
-        import httpx
+    import httpx
 
-        resp = httpx.post(
-            _API.format(token=token),
-            json={
-                "chat_id": chat,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-            timeout=10,
-        )
-    except Exception as exc:
-        logger.warning("Telegram send error: %s", exc)
-        return False
-    if resp.status_code == 200:
-        return True
-    try:
-        why = resp.json().get("description") or resp.text[:200]
-    except Exception:
-        why = f"HTTP {resp.status_code}"
-    logger.warning("Telegram send failed: %s | %.100s", why, text)
+    # Up to 3 tries — a once-a-day message (pre-open, EOD) hitting a few
+    # seconds of DNS/network flakiness must not be silently lost for the
+    # whole day. Per-trade alerts pass through here too; the extra retries
+    # only fire on an actual failure, so the common case is unaffected.
+    last_err: str | None = None
+    for attempt in range(3):
+        try:
+            resp = httpx.post(
+                _API.format(token=token),
+                json={
+                    "chat_id": chat,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                timeout=10,
+            )
+        except Exception as exc:
+            last_err = str(exc)
+            if attempt < 2:
+                time.sleep(2)
+            continue
+        if resp.status_code == 200:
+            _mark_sent(key)
+            return True
+        try:
+            last_err = resp.json().get("description") or resp.text[:200]
+        except Exception:
+            last_err = f"HTTP {resp.status_code}"
+        if attempt < 2:
+            time.sleep(2)
+    logger.warning("Telegram send failed after retries: %s | %.100s", last_err, text)
     return False
 
 
