@@ -15,9 +15,11 @@ export function usePageVisible(): boolean {
   return visible
 }
 
-/** Poll interval in ms when page is visible; false when hidden. */
+/** Poll interval in ms. This is a trading dashboard — Richard, 2026-09-16:
+ *  "we are dealing in finance which relies on live data reflection so we
+ *  need to always keep this open no matter its in the background or
+ *  foreground." Positions and prices must keep updating even when the tab
+ *  isn't focused, so this deliberately ignores page visibility. */
 export function usePollMs(intervalMs: number, enabled = true): number | false {
-  const visible = usePageVisible()
-  if (!enabled || !visible) return false
-  return intervalMs
+  return enabled ? intervalMs : false
 }
