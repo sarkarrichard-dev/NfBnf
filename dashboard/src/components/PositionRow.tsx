@@ -5,7 +5,17 @@ import { getSeries, pushPoint } from '../hooks/useSeries'
 import { Sparkline } from './Sparkline'
 import type { LogRow } from '../types/analytics'
 
-function PositionRowInner({ row }: { row: LogRow }) {
+function PositionRowInner({
+  row,
+  showClose,
+  closing,
+  onClose,
+}: {
+  row: LogRow
+  showClose?: boolean
+  closing?: boolean
+  onClose?: () => void
+}) {
   const isBuy = row.side !== 'Sell'
   const qty = signedQty(row)
   const pnl = legPnlValue(row)
@@ -60,6 +70,18 @@ function PositionRowInner({ row }: { row: LogRow }) {
       <td className={cn('px-3 py-2 text-right tabular-nums', pnlClass(pnl))}>
         {pct != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '—'}
       </td>
+      <td className="px-3 py-2">
+        {showClose && onClose ? (
+          <button
+            type="button"
+            disabled={closing}
+            onClick={onClose}
+            className="rounded-md border border-[var(--down)]/40 px-2 py-1 font-sans text-[11px] font-semibold text-[var(--down)] transition hover:bg-[var(--down)]/10 disabled:opacity-40"
+          >
+            {closing ? 'Closing…' : 'Close'}
+          </button>
+        ) : null}
+      </td>
     </tr>
   )
 }
@@ -70,6 +92,8 @@ export const PositionRow = memo(
     a.row.trade_id === b.row.trade_id &&
     a.row.leg_index === b.row.leg_index &&
     a.row.leg_mtm === b.row.leg_mtm &&
+    a.showClose === b.showClose &&
+    a.closing === b.closing &&
     a.row.mark_price === b.row.mark_price &&
     a.row.display_pnl === b.row.display_pnl,
 )

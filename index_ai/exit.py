@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
@@ -12,6 +13,27 @@ from index_ai.dhan_errors import DhanRateLimitError
 from index_ai.instruments import get_instrument
 from index_ai.learning import record_trade_outcome
 from index_ai.market_clock import format_ist_display, now_ist_iso
+
+# Per-trade exit lock — mirrors execution_safety.py's _instrument_lock for
+# entries. close_open_trade()'s own DB check ("is pnl already set?") is
+# check-then-act with no lock, so two near-simultaneous callers for the same
+# trade_id (a manual Close click racing the automatic trailing-stop sweep, a
+# double-click, "Close" and "Close all" together) could both pass that check
+# before either commits — for a LIVE trade that means two real opposite-side
+# orders. A trading-safety review (2026-09-16, after adding manual Close
+# buttons) flagged this as newly reachable now that closes have more than
+# one real-world trigger. Serializes exits per trade_id only, so an
+# unrelated trade's close is never blocked waiting on this one's Dhan calls.
+_EXIT_LOCKS: dict[str, threading.Lock] = {}
+_EXIT_LOCKS_META = threading.Lock()
+
+
+def _exit_lock(trade_id: str) -> threading.Lock:
+    if trade_id not in _EXIT_LOCKS:
+        with _EXIT_LOCKS_META:
+            if trade_id not in _EXIT_LOCKS:
+                _EXIT_LOCKS[trade_id] = threading.Lock()
+    return _EXIT_LOCKS[trade_id]
 
 
 def _parse_ltp_from_feed(raw: dict[str, Any], segment: str, security_id: int) -> float | None:
@@ -151,10 +173,38 @@ def close_open_trade(
     exit_ltp: float | None = None,
     index_price: float | None = None,
 ) -> dict[str, Any]:
-    """Exit an open trade (paper journal or live opposite MARKET order)."""
+    """Exit an open trade (paper journal or live opposite MARKET order).
+
+    Serialized per trade_id (see _exit_lock above) so two near-simultaneous
+    callers for the same trade — a manual Close click racing the automatic
+    trailing-stop sweep, a double-click — can't both pass the "already
+    closed?" check before either commits, which for a LIVE trade would mean
+    two real opposite-side orders.
+    """
     trade_id = str(trade.get("id") or "")
     if not trade_id:
         raise ValueError("trade id required")
+    with _exit_lock(trade_id):
+        return _close_open_trade_locked(
+            trade,
+            client=client,
+            app_settings=app_settings,
+            reason=reason,
+            exit_ltp=exit_ltp,
+            index_price=index_price,
+        )
+
+
+def _close_open_trade_locked(
+    trade: dict[str, Any],
+    *,
+    client: DhanClient | None,
+    app_settings: AppSettings,
+    reason: str,
+    exit_ltp: float | None = None,
+    index_price: float | None = None,
+) -> dict[str, Any]:
+    trade_id = str(trade.get("id") or "")
     if trade.get("pnl") is not None:
         return {"status": "ALREADY_CLOSED", "trade_id": trade_id}
 

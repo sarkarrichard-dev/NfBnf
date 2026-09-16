@@ -24,6 +24,7 @@ from index_ai.config import (
     ARM_LIVE_PHRASE,
     DASHBOARD_DIR,
     MEMORY_DIR,
+    AppSettings,
     arm_live_trading,
     candle_interval_minutes,
     disarm_live_trading,
@@ -1176,6 +1177,30 @@ def futures_journal_api(limit: int = Query(500, ge=1, le=2000)) -> dict[str, Any
     return {"trades": _recent_trades(limit)}
 
 
+@app.post("/api/futures/positions/close", include_in_schema=False)
+async def futures_close_position(
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Manual "Close" button on the dashboard — force-exit one open futures
+    position now, at the current mark."""
+    from index_ai.strategies.futures.paper import close_position_manual
+
+    key = str(payload.get("key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=422, detail="key is required")
+    client = DhanClient(settings().dhan)
+    return await asyncio.to_thread(close_position_manual, key, client)
+
+
+@app.post("/api/futures/positions/close-all", include_in_schema=False)
+async def futures_close_all_positions() -> dict[str, Any]:
+    """Manual "Close all" button — force-exit every open futures position now."""
+    from index_ai.strategies.futures.paper import close_all_positions_manual
+
+    client = DhanClient(settings().dhan)
+    return await asyncio.to_thread(close_all_positions_manual, client)
+
+
 @app.get("/api/commodities/status", include_in_schema=False)
 def commodities_status_api() -> dict[str, Any]:  # sync
     from commodities.lanes import commodities_status
@@ -1190,6 +1215,28 @@ def commodities_journal_api(limit: int = Query(500, ge=1, le=2000)) -> dict[str,
     from commodities.lanes import _recent
 
     return {"trades": _recent(limit)[::-1]}
+
+
+@app.post("/api/commodities/positions/close", include_in_schema=False)
+async def commodities_close_position(
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Manual "Close" button on the dashboard — force-exit one open commodity
+    position now, at the current mark."""
+    from commodities.lanes import close_position_manual
+
+    key = str(payload.get("key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=422, detail="key is required")
+    return await asyncio.to_thread(close_position_manual, key)
+
+
+@app.post("/api/commodities/positions/close-all", include_in_schema=False)
+async def commodities_close_all_positions() -> dict[str, Any]:
+    """Manual "Close all" button — force-exit every open commodity position now."""
+    from commodities.lanes import close_all_positions_manual
+
+    return await asyncio.to_thread(close_all_positions_manual)
 
 
 @app.get("/api/futures/backtest", include_in_schema=False)
@@ -1622,6 +1669,88 @@ async def check_trailing_stops(
         "kill_switch": kill_switch_state(cfg.risk),
         "market": market_status(),
     }
+
+
+def _live_index_price(client: DhanClient | None, instrument_key: str) -> float | None:
+    """Best-effort spot LTP for the manual-close PnL fallback — never raises,
+    a quote failure just means close_open_trade falls back to its own
+    estimate instead of blocking the close."""
+    if client is None:
+        return None
+    try:
+        inst = get_instrument(instrument_key)
+        quote = client.index_ltp(inst)
+        price = quote.get("last_price") or quote.get("ltp")
+        return float(price) if price is not None else None
+    except Exception:
+        return None
+
+
+def _close_trade_by_id_sync(trade_id: str, cfg: AppSettings) -> dict[str, Any]:
+    """The full manual-close for one India index-options trade — DB lookup,
+    live-price fetch, and the close itself — run entirely on a worker thread
+    (see the async wrapper below). Doing the DB read and the Dhan LTP call
+    directly in an async handler body would block the event loop for every
+    concurrent dashboard poll, the exact class of bug CLAUDE.md flags as
+    having bitten this codebase before."""
+    from index_ai.learning import _row_to_trade, connect
+
+    with connect() as db:
+        row = db.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+    if not row:
+        return {"status": "NOT_FOUND", "trade_id": trade_id}
+    trade = _row_to_trade(row)
+    if trade.get("pnl") is not None:
+        return {"status": "ALREADY_CLOSED", "trade_id": trade_id}
+
+    client = DhanClient(cfg.dhan) if cfg.dhan.ready else None
+    index_price = _live_index_price(client, str(trade.get("instrument") or "NIFTY"))
+    return close_open_trade(
+        trade,
+        client=client,
+        app_settings=cfg,
+        reason="manual close",
+        index_price=index_price,
+    )
+
+
+def _close_all_trades_sync(cfg: AppSettings) -> dict[str, Any]:
+    """Close-all — same worker-thread reasoning as _close_trade_by_id_sync,
+    for the whole loop (open_trades() is a DB read; each trade needs its own
+    LTP fetch and close)."""
+    open_now = open_trades()
+    results = {str(t["id"]): _close_trade_by_id_sync(str(t["id"]), cfg) for t in open_now}
+    failed = {
+        k: v for k, v in results.items() if v.get("status") not in {"CLOSED", "ALREADY_CLOSED"}
+    }
+    return {"ok": not failed, "attempted": len(open_now), "results": results}
+
+
+@app.post("/api/trades/positions/close", include_in_schema=False)
+async def trades_close_position(
+    payload: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Manual "Close" button on the dashboard — force-exit one open India
+    index-options trade (NIFTY/BANKNIFTY/SENSEX) now, at the current price.
+    Reuses the exact same close_open_trade() the automatic trail/EOD paths
+    use, so a manual close can never compute P&L differently than an
+    automatic one — including sending a real opposite-side order when the
+    trade is LIVE and live trading is armed."""
+    trade_id = str(payload.get("trade_id") or "").strip()
+    if not trade_id:
+        raise HTTPException(status_code=422, detail="trade_id is required")
+    result = await asyncio.to_thread(_close_trade_by_id_sync, trade_id, settings())
+    if result.get("status") == "NOT_FOUND":
+        raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found")
+    return result
+
+
+@app.post("/api/trades/positions/close-all", include_in_schema=False)
+async def trades_close_all_positions() -> dict[str, Any]:
+    """Manual "Close all" button — force-exit every open India index-options
+    trade now (any instrument, paper or live), each at its own current price.
+    A trade that fails to close doesn't stop the rest."""
+    return await asyncio.to_thread(_close_all_trades_sync, settings())
 
 
 @app.get("/api/trades", include_in_schema=False)
