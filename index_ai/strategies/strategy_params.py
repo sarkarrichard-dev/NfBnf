@@ -77,6 +77,26 @@ class StrategyParams:
     buy_min_leg_oi: int = 0
     buy_min_leg_volume: int = 0
     buy_block_contra_oi: bool = True
+    # Richard, 2026-09-16: pick the strike itself by its Greeks, not just OI +
+    # volume — a strike near the target delta actually moves with the index;
+    # a far-OTM strike can sit at the busiest volume and still barely react.
+    # 0.35-0.55 is the standard "meaningful move, not lottery-ticket" band a
+    # directional option buyer targets.
+    buy_use_greeks_strike_selection: bool = True
+    buy_target_delta_low: float = 0.35
+    buy_target_delta_high: float = 0.55
+    # The old liquidity-only picker always chose the single busiest strike,
+    # so it never needed its own floor. Ranking by delta first means it can
+    # now legitimately choose a much thinner strike (real example: 200 OI
+    # over 500,000 OI, purely because its delta was better) — a trading-
+    # safety review of this feature (2026-09-16) flagged that as worth a
+    # dedicated floor rather than relying on buy_min_leg_oi/volume above,
+    # which default to 0/off for a different purpose. These are a
+    # conservative first pass, not measured against real fill data — NIFTY/
+    # BANKNIFTY/SENSEX near-ATM strikes normally run in the hundreds of
+    # thousands of OI, so this only excludes genuinely thin outliers.
+    buy_greeks_min_oi: int = 1000
+    buy_greeks_min_volume: int = 200
     auto_buy_trending_only: bool = True
     credit_profit_target_pct: float = 0.50
     credit_stop_loss_pct: float = 0.60
@@ -147,6 +167,11 @@ def get_strategy_params() -> StrategyParams:
         buy_min_leg_oi=_int("BUY_MIN_LEG_OI", 0),
         buy_min_leg_volume=_int("BUY_MIN_LEG_VOLUME", 0),
         buy_block_contra_oi=_bool("BUY_BLOCK_CONTRA_OI", True),
+        buy_use_greeks_strike_selection=_bool("BUY_USE_GREEKS_STRIKE_SELECTION", True),
+        buy_target_delta_low=_float("BUY_TARGET_DELTA_LOW", 0.35),
+        buy_target_delta_high=_float("BUY_TARGET_DELTA_HIGH", 0.55),
+        buy_greeks_min_oi=_int("BUY_GREEKS_MIN_OI", 1000),
+        buy_greeks_min_volume=_int("BUY_GREEKS_MIN_VOLUME", 200),
         auto_buy_trending_only=_bool("AUTO_BUY_TRENDING_ONLY", True),
         credit_profit_target_pct=_float("CREDIT_PROFIT_TARGET_PCT", 0.50),
         credit_stop_loss_pct=_float("CREDIT_STOP_LOSS_PCT", 0.60),

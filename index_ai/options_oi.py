@@ -59,6 +59,29 @@ def _leg_volume(leg: dict[str, Any]) -> int:
     return 0
 
 
+def _leg_greek(leg: dict[str, Any], name: str) -> float | None:
+    val = (leg.get("greeks") or {}).get(name)
+    try:
+        return float(val) if val is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _theta_drag_ratio(leg: dict[str, Any]) -> float:
+    """Daily time-decay as a fraction of the premium paid — lower bleeds less
+    per rupee. Missing theta or a worthless premium can't be compared, so it
+    sorts last (never wins a tiebreak over a leg we can actually price)."""
+    theta = _leg_greek(leg, "theta")
+    ltp = leg.get("last_price")
+    try:
+        premium = float(ltp) if ltp is not None else 0.0
+    except (TypeError, ValueError):
+        premium = 0.0
+    if theta is None or premium <= 0:
+        return float("inf")
+    return abs(theta) / premium
+
+
 def analyze_option_chain(
     chain: dict[str, Any],
     *,
@@ -181,6 +204,70 @@ def apply_oi_to_signal(signal: StrategySignal, oi: OptionOiContext) -> StrategyS
     )
 
 
+def _pick_by_liquidity(
+    candidates: list[tuple[float, dict[str, Any]]],
+) -> tuple[float, dict[str, Any]]:
+    def score(leg: dict[str, Any]) -> float:
+        return _leg_oi(leg) + _leg_volume(leg) * 0.1
+
+    return max(candidates, key=lambda item: score(item[1]))
+
+
+def _pick_by_greeks(
+    candidates: list[tuple[float, dict[str, Any]]],
+    *,
+    delta_low: float,
+    delta_high: float,
+    min_oi: int,
+    min_volume: int,
+) -> tuple[float, dict[str, Any]] | None:
+    """Prefer the strike whose |delta| sits in the target band — real
+    sensitivity to the underlying, not a cheap low-probability lottery ticket
+    or an expensive near-certainty with little leverage left. Gamma peaks in
+    this same near-the-money band, so targeting delta already leans toward
+    the strikes that accelerate fastest once the trade is working — a
+    separate gamma term would mostly double-count it. Ties within the band
+    go to whichever leg bleeds the least time-value per rupee paid (theta),
+    then to the more liquid one.
+
+    Ranking by delta instead of liquidity means this can legitimately prefer
+    a much thinner strike than the old picker ever would have — so
+    ``min_oi``/``min_volume`` drop genuinely illiquid candidates before
+    ranking starts. If *every* candidate is that thin, the floor is dropped
+    rather than blocking the trade (an unusually quiet day shouldn't stop
+    the lane outright — it just means delta ranking runs on what's there).
+
+    Returns ``None`` (fall back to liquidity-only) when no candidate has a
+    delta at all — a live-data gap must never stop the buy lane.
+    """
+    scored = [(strike, leg, _leg_greek(leg, "delta")) for strike, leg in candidates]
+    if all(d is None for _, _, d in scored):
+        return None
+
+    liquid = [
+        item for item in scored if _leg_oi(item[1]) >= min_oi and _leg_volume(item[1]) >= min_volume
+    ]
+    if liquid:
+        scored = liquid
+
+    def band_distance(d: float | None) -> float:
+        if d is None:
+            return float("inf")
+        ad = abs(d)
+        if ad < delta_low:
+            return delta_low - ad
+        if ad > delta_high:
+            return ad - delta_high
+        return 0.0
+
+    def key(item: tuple[float, dict[str, Any], float | None]) -> tuple[float, float, float]:
+        _, leg, d = item
+        return (band_distance(d), _theta_drag_ratio(leg), -_leg_oi(leg) - _leg_volume(leg) * 0.1)
+
+    strike, leg, _ = min(scored, key=key)
+    return strike, leg
+
+
 def choose_option_from_chain_with_oi(
     chain: dict[str, Any],
     signal: StrategySignal,
@@ -189,7 +276,11 @@ def choose_option_from_chain_with_oi(
     *,
     transaction_type: str = "BUY",
 ) -> dict[str, Any]:
-    """Pick liquid ATM-ish strike using OI + volume from Dhan chain."""
+    """Pick a strike near ATM from the Dhan chain — by delta/theta (the real
+    Greeks Dhan already sends per leg) when the config wants that, else the
+    older pure OI + volume liquidity pick."""
+    from index_ai.strategies.strategy_params import get_strategy_params
+
     side = "ce" if signal.action == "BUY_CALL" else "pe"
     rows = (chain.get("data") or {}).get("oc") or {}
     if not rows:
@@ -212,11 +303,20 @@ def choose_option_from_chain_with_oi(
     if not candidates:
         raise RuntimeError("No option legs with security_id near ATM.")
 
-    def score(leg: dict[str, Any]) -> float:
-        return _leg_oi(leg) + _leg_volume(leg) * 0.1
+    cfg = get_strategy_params()
+    picked = None
+    if cfg.buy_use_greeks_strike_selection:
+        picked = _pick_by_greeks(
+            candidates,
+            delta_low=cfg.buy_target_delta_low,
+            delta_high=cfg.buy_target_delta_high,
+            min_oi=cfg.buy_greeks_min_oi,
+            min_volume=cfg.buy_greeks_min_volume,
+        )
+    strike, leg = picked or _pick_by_liquidity(candidates)
 
-    strike, leg = max(candidates, key=lambda item: score(item[1]))
     oi_adj = oi_confidence_adjustment(signal.action, oi)
+    max_pain = oi.max_pain
     return {
         "instrument": instrument.key,
         "option_type": "CALL" if side == "ce" else "PUT",
@@ -228,10 +328,17 @@ def choose_option_from_chain_with_oi(
         "transaction_type": transaction_type.upper(),
         "oi": _leg_oi(leg),
         "volume": _leg_volume(leg),
+        "delta": _leg_greek(leg, "delta"),
+        "theta": _leg_greek(leg, "theta"),
+        "gamma": _leg_greek(leg, "gamma"),
         "chain_pcr": oi.pcr,
         "chain_bias": oi.bias,
         "oi_confidence_adjustment": oi_adj,
         "oi_note": oi.note,
         "total_call_oi": oi.total_call_oi,
         "total_put_oi": oi.total_put_oi,
+        # not used to pick the strike yet — tracked so we can measure whether
+        # trades near max pain actually fare worse before ever gating on it
+        "max_pain": max_pain,
+        "distance_to_max_pain": (abs(strike - max_pain) if max_pain else None),
     }
