@@ -5,12 +5,22 @@ from __future__ import annotations
 import pandas as pd
 
 
-def detect_breakout(candles: pd.DataFrame, *, lookback: int = 20) -> dict:
+def detect_breakout(candles: pd.DataFrame, *, lookback: int = 20, confirm_bars: int = 1) -> dict:
     """
-    Break Res: last close above highest high of prior ``lookback`` bars.
-    Break Sup: last close below lowest low of prior ``lookback`` bars.
+    Break Res: the last ``confirm_bars`` closes all hold above the highest
+    high of the ``lookback`` bars before that window (and the bar just
+    before the window hadn't already broken out — so this fires once, right
+    when confirmation completes, not on every bar price stays up there).
+    Break Sup is the mirror below the range low.
+
+    ``confirm_bars=1`` (the old, single-bar behaviour) is a plain close
+    crossing the level — the classic setup for a fakeout, since a level
+    getting poked through for one bar proves nothing. 2026-09-16: raised the
+    default caller-side to require 2 confirmed closes after a bad day traced
+    partly to single-bar breakout entries reversing straight into their stop.
     """
-    if len(candles) < lookback + 2:
+    n = max(1, int(confirm_bars))
+    if len(candles) < lookback + n + 1:
         return {
             "ready": False,
             "break_res": False,
@@ -19,16 +29,14 @@ def detect_breakout(candles: pd.DataFrame, *, lookback: int = 20) -> dict:
             "range_low": None,
         }
 
-    prior = candles.iloc[-(lookback + 1) : -1]
-    last = candles.iloc[-1]
-    prev = candles.iloc[-2]
-    range_high = float(prior["high"].max())
-    range_low = float(prior["low"].min())
-    close = float(last["close"])
-    prev_close = float(prev["close"])
+    window = candles.iloc[-(lookback + n) : -n]
+    recent_closes = candles["close"].astype(float).iloc[-n:]
+    pre_close = float(candles["close"].iloc[-(n + 1)])
+    range_high = float(window["high"].max())
+    range_low = float(window["low"].min())
 
-    break_res = close > range_high and prev_close <= range_high
-    break_sup = close < range_low and prev_close >= range_low
+    break_res = bool((recent_closes > range_high).all()) and pre_close <= range_high
+    break_sup = bool((recent_closes < range_low).all()) and pre_close >= range_low
 
     tag = ""
     if break_res:

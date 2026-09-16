@@ -32,6 +32,7 @@ def detect_candlestick_setup(
     sr_lookback: int = 30,
     trend_lookback: int = 15,
     breakout_lookback: int = 20,
+    breakout_confirm_bars: int = 1,
     oi_support: float | None = None,
     oi_resistance: float | None = None,
 ) -> dict[str, Any]:
@@ -53,7 +54,7 @@ def detect_candlestick_setup(
         return {"ready": False, "pattern": "", "direction": "none"}
 
     trend = intraday_candle_trend(frame, lookback=trend_lookback)
-    br = detect_breakout(frame, lookback=breakout_lookback)
+    br = detect_breakout(frame, lookback=breakout_lookback, confirm_bars=breakout_confirm_bars)
     curr = frame.iloc[-1]
     prev = frame.iloc[-2]
     body = _body(curr)

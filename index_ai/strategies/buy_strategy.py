@@ -53,6 +53,7 @@ def evaluate_buy_signal(
         sr_lookback=max(20, cfg.breakout_lookback),
         trend_lookback=15,
         breakout_lookback=cfg.breakout_lookback,
+        breakout_confirm_bars=cfg.entry_confirmation_bars,
         oi_support=walls[0] if walls else None,
         oi_resistance=walls[1] if walls else None,
     )
@@ -108,10 +109,27 @@ def evaluate_buy_signal(
         )
 
     direction = str(setup.get("direction") or "none")
+    pattern = str(setup.get("pattern") or "")
+
+    # 2026-09-16: a breakout is the one pattern here that's *betting the range
+    # is over* — on a SIDEWAYS CPR day (the market itself reading as
+    # directionless) that bet has the least going for it, and today's worst
+    # loss was exactly this: a breakout_resistance buy while CPR read
+    # SIDEWAYS. The reversal patterns (engulfing/hammer/shooting star) and
+    # trend-pullback don't make this same bet, so they're not gated here.
+    if pattern in {"breakout_resistance", "breakdown_support"} and regime.day_bias == "SIDEWAYS":
+        return StrategySignal(
+            action="NO_TRADE",
+            reason=f"{setup['reason']} — CPR reads SIDEWAYS, breakout skipped.",
+            confidence=0.0,
+            entry_quality="cpr_sideways_veto",
+            **base_fields,
+        )
+
     conf = 0.58
-    if setup.get("pattern") in {"bullish_engulfing", "bearish_engulfing"}:
+    if pattern in {"bullish_engulfing", "bearish_engulfing"}:
         conf = 0.68
-    if setup.get("pattern") in {"breakout_resistance", "breakdown_support"}:
+    if pattern in {"breakout_resistance", "breakdown_support"}:
         conf = 0.72
     if setup.get("intraday_trend") in {"UP", "DOWN"}:
         conf = min(0.78, conf + 0.04)
