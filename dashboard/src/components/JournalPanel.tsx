@@ -1,4 +1,7 @@
 import { useMemo, useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { api } from '../lib/api'
 import { cn } from '../lib/cn'
 import {
   legPnlValue,
@@ -33,6 +36,48 @@ function passesFilter(row: LogRow, filter: PositionsFilter): boolean {
 export function JournalPanel({ logRows, trades, period, range, mtmUpdatedAt }: Props) {
   const [tab, setTab] = useState<Tab>('open')
   const [filter, setFilter] = useState<PositionsFilter>('all')
+  const qc = useQueryClient()
+
+  const closePos = useMutation({
+    mutationFn: (trade_id: string) =>
+      api<{ status: string; pnl?: number }>('/api/trades/positions/close', {
+        method: 'POST',
+        body: JSON.stringify({ trade_id }),
+      }),
+    onSuccess: (res) => {
+      if (res.status === 'ALREADY_CLOSED') {
+        toast.info('Already closed')
+      } else {
+        toast.success(res.pnl != null ? `Closed — ${money(res.pnl)}` : 'Closed')
+      }
+      void qc.invalidateQueries({ queryKey: ['status'] })
+      void qc.invalidateQueries({ queryKey: ['analytics'] })
+      void qc.invalidateQueries({ queryKey: ['journal'] })
+      void qc.invalidateQueries({ queryKey: ['live-mtm'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const closeAllPos = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; attempted: number; results: Record<string, { status: string }> }>(
+        '/api/trades/positions/close-all',
+        { method: 'POST' },
+      ),
+    onSuccess: (res) => {
+      if (res.attempted === 0) {
+        toast.success('Nothing open to close')
+      } else {
+        const closed = Object.values(res.results).filter((r) => r.status === 'CLOSED').length
+        toast.success(`Closed ${closed} of ${res.attempted} open trade${res.attempted === 1 ? '' : 's'}`)
+      }
+      void qc.invalidateQueries({ queryKey: ['status'] })
+      void qc.invalidateQueries({ queryKey: ['analytics'] })
+      void qc.invalidateQueries({ queryKey: ['journal'] })
+      void qc.invalidateQueries({ queryKey: ['live-mtm'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
 
   const allOpen = useMemo(
     () => openLegRows(logRows, trades, period),
@@ -105,7 +150,7 @@ export function JournalPanel({ logRows, trades, period, range, mtmUpdatedAt }: P
                 All open legs (not limited by Today/Week/Month filter)
               </p>
             </div>
-            <div className="flex flex-wrap gap-4 text-sm">
+            <div className="flex flex-wrap items-center gap-4 text-sm">
               <div className="text-right">
                 <span className="block text-xs text-cyan-200/45">P&amp;L</span>
                 <strong className={cn('text-lg tabular-nums', pnlClass(openTotalPnl))}>
@@ -116,6 +161,21 @@ export function JournalPanel({ logRows, trades, period, range, mtmUpdatedAt }: P
                 <span className="block text-xs text-cyan-200/45">Open legs</span>
                 <strong className="text-lg text-cyan-50">{allOpen.length}</strong>
               </div>
+              {allOpen.length ? (
+                <button
+                  type="button"
+                  disabled={closeAllPos.isPending}
+                  onClick={() => {
+                    const n = new Set(allOpen.map((r) => r.trade_id)).size
+                    if (!window.confirm(`Close all ${n} open trade${n === 1 ? '' : 's'} now, at current prices?`))
+                      return
+                    closeAllPos.mutate()
+                  }}
+                  className="rounded-md border border-[var(--down)]/40 px-2 py-1 font-sans text-[11px] font-semibold text-[var(--down)] transition hover:bg-[var(--down)]/10 disabled:opacity-40"
+                >
+                  {closeAllPos.isPending ? 'Closing all…' : 'Close all'}
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -152,25 +212,47 @@ export function JournalPanel({ logRows, trades, period, range, mtmUpdatedAt }: P
                   <th className="px-3 py-2 text-right font-medium">LTP</th>
                   <th className="px-3 py-2 text-right font-medium">P&amp;L</th>
                   <th className="px-3 py-2 text-right font-medium">%</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 {!allOpen.length ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-6 text-center text-slate-500">
+                    <td colSpan={9} className="px-3 py-6 text-center text-slate-500">
                       No open positions in this period.
                     </td>
                   </tr>
                 ) : !visibleOpen.length ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-6 text-center text-slate-500">
+                    <td colSpan={9} className="px-3 py-6 text-center text-slate-500">
                       No legs match this filter.
                     </td>
                   </tr>
                 ) : (
-                  visibleOpen.map((row) => (
-                    <PositionRow key={`${row.trade_id}:${row.leg_index ?? 0}`} row={row} />
-                  ))
+                  (() => {
+                    const seenTrades = new Set<string>()
+                    return visibleOpen.map((row) => {
+                      const tradeId = row.trade_id
+                      const isFirstLeg = tradeId ? !seenTrades.has(tradeId) : false
+                      if (tradeId) seenTrades.add(tradeId)
+                      return (
+                        <PositionRow
+                          key={`${row.trade_id}:${row.leg_index ?? 0}`}
+                          row={row}
+                          showClose={isFirstLeg}
+                          closing={closePos.isPending && closePos.variables === tradeId}
+                          onClose={
+                            tradeId
+                              ? () => {
+                                  if (!window.confirm('Close this trade now, at the current price?')) return
+                                  closePos.mutate(tradeId)
+                                }
+                              : undefined
+                          }
+                        />
+                      )
+                    })
+                  })()
                 )}
               </tbody>
             </table>
