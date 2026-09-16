@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time as _time
 from dataclasses import replace
 from typing import Any
@@ -39,6 +40,12 @@ JOURNAL_PATH = MEMORY_DIR / "commodity_journal.jsonl"
 
 _FRAME_TTL_S = 240.0
 _frame_cache: dict[tuple[str, str], tuple[float, pd.DataFrame]] = {}
+
+# Guards read-modify-write on commodity_state.json — the periodic scan (every
+# ~60s, on its own thread via asyncio.to_thread) and a manual Close click can
+# otherwise race: both read the same state, both write their own copy, and
+# whichever save lands last silently discards the other's change.
+_STATE_LOCK = threading.Lock()
 
 
 def enabled() -> bool:
@@ -390,29 +397,81 @@ def scan_commodities_paper(client: DhanClient | None = None) -> list[dict[str, A
         ]
     client = client or DhanClient(settings().dhan)  # DhanClient is stateless — nothing to close
     try:
-        state = _load_state()
-        open_total = sum(1 for v in state.values() if isinstance(v, dict) and v.get("position"))
-        events: list[dict[str, Any]] = []
-        for key in s.symbols:
-            spec = BY_KEY.get(key)
-            row = meta.get(key)
-            if not spec or not row:
-                events.append({"instrument": key, "event": "unresolved"})
-                continue
-            try:
-                e = tick(client, spec, int(row["security_id"]), s, state, open_total)
-            except Exception as exc:  # one instrument failing must not stop the rest
-                e = {"instrument": key, "event": "error", "error": str(exc)}
-            if e.get("event") == "entry":
-                open_total += 1
-            elif e.get("event") == "exit":
-                open_total = max(0, open_total - 1)
-            events.append(e)
-        _save_state(state)
+        with _STATE_LOCK:
+            state = _load_state()
+            open_total = sum(1 for v in state.values() if isinstance(v, dict) and v.get("position"))
+            events: list[dict[str, Any]] = []
+            for key in s.symbols:
+                spec = BY_KEY.get(key)
+                row = meta.get(key)
+                if not spec or not row:
+                    events.append({"instrument": key, "event": "unresolved"})
+                    continue
+                try:
+                    e = tick(client, spec, int(row["security_id"]), s, state, open_total)
+                except Exception as exc:  # one instrument failing must not stop the rest
+                    e = {"instrument": key, "event": "error", "error": str(exc)}
+                if e.get("event") == "entry":
+                    open_total += 1
+                elif e.get("event") == "exit":
+                    open_total = max(0, open_total - 1)
+                events.append(e)
+            _save_state(state)
         return events
     except Exception as exc:
         logger.warning("commodities scan aborted", exc_info=True)
         return [{"event": "error", "where": "scan", "error": str(exc)}]
+
+
+def close_position_manual(key: str, client: DhanClient | None = None) -> dict[str, Any]:
+    """The dashboard's manual "Close" button — force-exit one open commodity
+    position right now, at the current mark, instead of waiting for the
+    strategy's own stop / trend-flip / square-off exit.
+
+    Reuses the exact same ``_close()`` math the automatic paths use, so a
+    manual close can never compute P&L differently than an automatic one.
+    Runs under the same ``_STATE_LOCK`` the scan holds, so this can never
+    interleave with an in-progress scan cycle reading or writing
+    ``commodity_state.json`` for the same (or any) key.
+    """
+    with _STATE_LOCK:
+        state = _load_state()
+        slot = state.get(key) or {}
+        pos = slot.get("position")
+        if not pos:
+            return {"ok": False, "error": f"no open position for {key}"}
+        spec = BY_KEY.get(key)
+        if not spec:
+            return {"ok": False, "error": f"unknown instrument {key}"}
+        meta = load_universe_meta()
+        security_id = (meta.get(key) or {}).get("security_id")
+        client = client or DhanClient(settings().dhan)
+        effective_spec = atr_scaled_spec(spec, security_id, client) if security_id else spec
+        mark = _mark_price(client, effective_spec, security_id)
+        if mark is None:
+            return {"ok": False, "error": f"couldn't fetch a live price for {key} — try again"}
+        s = commodity_settings()
+        trade = _close(pos, mark, "manual close", effective_spec, s.lots, state)
+        _save_state(state)
+        return {"ok": True, "trade": trade}
+
+
+def close_all_positions_manual(client: DhanClient | None = None) -> dict[str, Any]:
+    """The dashboard's "Close all" button — force-exit every open commodity
+    position now, each at its own current mark. Same machinery as the single
+    Close button, run once per open key; a key that fails (no live price)
+    doesn't stop the rest — the caller sees which closed and which didn't."""
+    state = _load_state()
+    keys = [k for k, v in state.items() if isinstance(v, dict) and v.get("position")]
+    client = client or DhanClient(settings().dhan)
+    results = {k: close_position_manual(k, client) for k in keys}
+    failed = {k: r.get("error") for k, r in results.items() if not r.get("ok")}
+    return {
+        "ok": not failed,
+        "attempted": len(keys),
+        "closed": [k for k, r in results.items() if r.get("ok")],
+        "failed": failed,
+    }
 
 
 def _mark_price(client: DhanClient, spec: CommoditySpec, security_id: int | None) -> float | None:

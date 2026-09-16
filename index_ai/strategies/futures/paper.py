@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from datetime import timedelta
 from typing import Any
@@ -49,6 +50,11 @@ _STOCK_META: dict[str, dict[str, int]] = {}
 _ATR_TODAY: dict[str, float] = {}
 _FRAME_CACHE: dict[tuple[str, str], tuple[float, pd.DataFrame]] = {}
 _FRAME_TTL_S = 240.0  # a 5m bar closes every 5 min — don't re-pull faster than that
+
+# Guards read-modify-write on futures_paper.json — the periodic scan and a
+# manual Close click can otherwise race: both read the same state, both write
+# their own copy, and whichever save lands last silently discards the other's.
+_STATE_LOCK = threading.Lock()
 
 
 def _stock_meta() -> dict[str, dict[str, int]]:
@@ -386,10 +392,52 @@ def scan_futures_paper(client: DhanClient) -> list[dict[str, Any]]:
     if not (enabled() or stock_paper_enabled()):
         return []
     warm_stock_atr(client)
-    state = _load_state()
-    events = [tick(client, key, state) for key in instruments()]
-    _save_state(state)
+    with _STATE_LOCK:
+        state = _load_state()
+        events = [tick(client, key, state) for key in instruments()]
+        _save_state(state)
     return events
+
+
+def close_position_manual(key: str, client: DhanClient) -> dict[str, Any]:
+    """The dashboard's manual "Close" button — force-exit one open futures
+    position right now, at the current mark, instead of waiting for the
+    strategy's own stop / profit-trail / EOD square-off exit.
+
+    Reuses the exact same ``_close()`` math the automatic paths use, so a
+    manual close can never compute P&L differently than an automatic one.
+    Runs under the same ``_STATE_LOCK`` the scan holds, so this can never
+    interleave with an in-progress scan cycle.
+    """
+    with _STATE_LOCK:
+        state = _load_state()
+        pos = (state.get(key) or {}).get("position")
+        if not pos:
+            return {"ok": False, "error": f"no open position for {key}"}
+        mark = _mark_price(client, key)
+        if mark is None:
+            return {"ok": False, "error": f"couldn't fetch a live price for {key} — try again"}
+        cfg = _cfg(key)
+        trade = _close(pos, mark, "manual close", cfg, state)
+        _save_state(state)
+        return {"ok": True, "trade": trade}
+
+
+def close_all_positions_manual(client: DhanClient) -> dict[str, Any]:
+    """The dashboard's "Close all" button — force-exit every open futures
+    position now, each at its own current mark. Same machinery as the single
+    Close button, run once per open key; a key that fails (no live price)
+    doesn't stop the rest — the caller sees which closed and which didn't."""
+    state = _load_state()
+    keys = [k for k, v in state.items() if isinstance(v, dict) and v.get("position")]
+    results = {k: close_position_manual(k, client) for k in keys}
+    failed = {k: r.get("error") for k, r in results.items() if not r.get("ok")}
+    return {
+        "ok": not failed,
+        "attempted": len(keys),
+        "closed": [k for k, r in results.items() if r.get("ok")],
+        "failed": failed,
+    }
 
 
 def _recent_trades(limit: int = 50) -> list[dict[str, Any]]:

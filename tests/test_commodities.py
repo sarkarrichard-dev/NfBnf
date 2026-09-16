@@ -113,6 +113,111 @@ def test_lane_plumbing_open_then_close(tmp_path, monkeypatch):
     )
 
 
+def test_close_position_manual_uses_the_same_close_math_as_automatic(tmp_path, monkeypatch):
+    """2026-09-16: the dashboard's manual "Close" button — Richard asked for
+    the same control commodities lacked while crypto already had it. Must
+    reuse _close() exactly (same journal shape, same reason field) and must
+    never touch a position that isn't actually open."""
+    monkeypatch.setattr(lanes, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(lanes, "JOURNAL_PATH", tmp_path / "journal.jsonl")
+    monkeypatch.setattr(lanes, "load_universe_meta", lambda: {"CRUDEOILM": {"security_id": 1}})
+    monkeypatch.setattr(lanes, "DhanClient", lambda *a, **k: object())
+    monkeypatch.setattr(lanes, "atr_scaled_spec", lambda spec, sid, client: spec)
+    monkeypatch.setattr(lanes, "_mark_price", lambda client, spec, sid: 10100.0)
+
+    state = {
+        "CRUDEOILM": {
+            "position": {
+                "instrument": "CRUDEOILM",
+                "dir": "LONG",
+                "entry": 10000.0,
+                "entry_time": "2026-09-16T10:00:00+05:30",
+                "day": "2026-09-16",
+                "peak": 10000.0,
+                "stop": 9900.0,
+                "armed": False,
+                "trend_reason": "forced",
+                "mode": "PAPER",
+            }
+        }
+    }
+    lanes._save_state(state)
+
+    result = lanes.close_position_manual("CRUDEOILM")
+    assert result["ok"] is True
+    trade = result["trade"]
+    assert trade["exit_reason"] == "manual close"
+    assert trade["exit"] == 10100.0
+    assert trade["net_rupees"] == pytest.approx(
+        trade["gross_rupees"] - trade["friction_rupees"], abs=1
+    )
+
+    after = lanes._load_state()
+    assert after["CRUDEOILM"]["position"] is None
+
+    # closing an already-flat instrument is a clean no-op, not an error
+    again = lanes.close_position_manual("CRUDEOILM")
+    assert again == {"ok": False, "error": "no open position for CRUDEOILM"}
+
+
+def test_close_all_positions_manual_closes_every_open_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(lanes, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(lanes, "JOURNAL_PATH", tmp_path / "journal.jsonl")
+    monkeypatch.setattr(
+        lanes,
+        "load_universe_meta",
+        lambda: {"CRUDEOILM": {"security_id": 1}, "SILVERMIC": {"security_id": 2}},
+    )
+    monkeypatch.setattr(lanes, "DhanClient", lambda *a, **k: object())
+    monkeypatch.setattr(lanes, "atr_scaled_spec", lambda spec, sid, client: spec)
+    monkeypatch.setattr(
+        lanes,
+        "_mark_price",
+        lambda client, spec, sid: 10100.0 if spec.key == "CRUDEOILM" else 233000.0,
+    )
+
+    state = {
+        "CRUDEOILM": {
+            "position": {
+                "instrument": "CRUDEOILM",
+                "dir": "LONG",
+                "entry": 10000.0,
+                "entry_time": "2026-09-16T10:00:00+05:30",
+                "day": "2026-09-16",
+                "peak": 10000.0,
+                "stop": 9900.0,
+                "armed": False,
+                "trend_reason": "forced",
+                "mode": "PAPER",
+            }
+        },
+        "SILVERMIC": {
+            "position": {
+                "instrument": "SILVERMIC",
+                "dir": "SHORT",
+                "entry": 233500.0,
+                "entry_time": "2026-09-16T10:00:00+05:30",
+                "day": "2026-09-16",
+                "peak": 233500.0,
+                "stop": 234700.0,
+                "armed": False,
+                "trend_reason": "forced",
+                "mode": "PAPER",
+            }
+        },
+        "GOLDM": {"position": None},
+    }
+    lanes._save_state(state)
+
+    result = lanes.close_all_positions_manual()
+    assert result["ok"] is True
+    assert result["attempted"] == 2
+    assert set(result["closed"]) == {"CRUDEOILM", "SILVERMIC"}
+    after = lanes._load_state()
+    assert after["CRUDEOILM"]["position"] is None
+    assert after["SILVERMIC"]["position"] is None
+
+
 def test_atr_scaled_spec_scales_the_stop_to_each_contracts_own_volatility(monkeypatch):
     """Richard, 2026-09-12: gold and silver don't move the same amount, so one
     flat stop-loss percentage for every commodity is wrong for at least some
