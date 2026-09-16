@@ -79,6 +79,44 @@ def test_india_rows_group_and_net(monkeypatch):
     assert cpr["charges"] == 0.0 and cpr["priced_pct"] == 0.0  # couldn't cost it
 
 
+def test_candlestick_buy_splits_by_pattern(monkeypatch):
+    """2026-09-16: candlestick_buy lumped 6 different patterns into one bucket,
+    hiding that breakout_resistance specifically was 0-for-2. Each pattern
+    (entry_quality on the signal) must get its own row so a bad pattern can't
+    hide behind a good one in the same average."""
+    trades = [
+        {
+            "instrument": "BANKNIFTY",
+            "action": "BUY_CALL",
+            "mode": "PAPER",
+            "pnl": -3123.0,
+            "created_at": "2026-09-16T13:00:00",
+            "signal": {"strategy_mode": "candlestick_buy", "entry_quality": "breakout_resistance"},
+            "option": {"instrument": "BANKNIFTY", "quantity": 30, "ltp": 552.05},
+        },
+        {
+            "instrument": "SENSEX",
+            "action": "BUY_PUT",
+            "mode": "PAPER",
+            "pnl": 2600.0,
+            "created_at": "2026-09-15T14:12:00",
+            "signal": {"strategy_mode": "candlestick_buy", "entry_quality": "breakdown_support"},
+            "option": {"instrument": "SENSEX", "quantity": 20, "ltp": 595.25},
+        },
+    ]
+    monkeypatch.setattr(sp, "data_epoch", lambda: None)
+    import index_ai.learning as learning
+
+    monkeypatch.setattr(learning, "recent_trades", lambda limit=0: trades)
+
+    rows = sp._india_rows()
+    by = {(r["strategy"], r["instrument"]): r for r in rows}
+    assert ("candlestick_buy · breakout_resistance", "BANKNIFTY") in by
+    assert ("candlestick_buy · breakdown_support", "SENSEX") in by
+    # not lumped into one plain "candlestick_buy" bucket
+    assert not any(r["strategy"] == "candlestick_buy" for r in rows)
+
+
 def test_crypto_rows_use_journal_fees(tmp_path, monkeypatch):
     j = tmp_path / "crypto_journal.jsonl"
     j.write_text(
