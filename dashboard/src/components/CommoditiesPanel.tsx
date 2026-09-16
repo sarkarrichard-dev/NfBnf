@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { useCommoditiesJournal } from '../hooks/useCommoditiesJournal'
@@ -56,6 +57,7 @@ type Status = {
 }
 
 export function CommoditiesPanel() {
+  const qc = useQueryClient()
   const poll = usePollMs(30_000)
   const q = useQuery({
     queryKey: ['commodities', 'status'],
@@ -64,6 +66,43 @@ export function CommoditiesPanel() {
     placeholderData: keepPreviousData,
   })
   const s = q.data
+
+  const closePos = useMutation({
+    mutationFn: (key: string) =>
+      api<{ ok: boolean; error?: string; trade?: { net_rupees: number } }>(
+        '/api/commodities/positions/close',
+        { method: 'POST', body: JSON.stringify({ key }) },
+      ),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        toast.error(res.error || 'Close failed')
+        return
+      }
+      toast.success(res.trade ? `Closed — ${rupees(res.trade.net_rupees)}` : 'Closed')
+      void qc.invalidateQueries({ queryKey: ['commodities'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
+
+  const closeAllPos = useMutation({
+    mutationFn: () =>
+      api<{ ok: boolean; attempted: number; closed: string[]; failed: Record<string, string> }>(
+        '/api/commodities/positions/close-all',
+        { method: 'POST' },
+      ),
+    onSuccess: (res) => {
+      if (res.attempted === 0) {
+        toast.success('Nothing open to close')
+      } else if (res.ok) {
+        toast.success(`Closed all ${res.closed.length} open position${res.closed.length === 1 ? '' : 's'}`)
+      } else {
+        const failedCount = Object.keys(res.failed).length
+        toast.error(`Closed ${res.closed.length}, ${failedCount} failed — see server log`)
+      }
+      void qc.invalidateQueries({ queryKey: ['commodities'] })
+    },
+    onError: (e: Error) => toast.error(e.message),
+  })
   const opens = Object.entries(s?.open_positions ?? {}).filter(([, p]) => p)
 
   const [period, setPeriod] = useState<PeriodKey>('month')
@@ -138,7 +177,25 @@ export function CommoditiesPanel() {
 
       {opens.length ? (
         <div>
-          <p className={fx.cardLabel}>Open positions</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className={fx.cardLabel}>Open positions</p>
+            <button
+              type="button"
+              disabled={closeAllPos.isPending}
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    `Close all ${opens.length} open position${opens.length === 1 ? '' : 's'} now, at current prices?`,
+                  )
+                )
+                  return
+                closeAllPos.mutate()
+              }}
+              className="rounded-md border border-[var(--down)]/40 px-2 py-1 font-sans text-[11px] font-semibold text-[var(--down)] transition hover:bg-[var(--down)]/10 disabled:opacity-40"
+            >
+              {closeAllPos.isPending ? 'Closing all…' : 'Close all'}
+            </button>
+          </div>
           <div className="mt-1 overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
             <table className="min-w-full text-[11px]">
               <thead className="text-slate-500">
@@ -148,6 +205,7 @@ export function CommoditiesPanel() {
                   <th>Entry → Mark</th>
                   <th>Stop</th>
                   <th className="text-right">Unrealised</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody className="font-mono text-slate-300">
@@ -165,6 +223,19 @@ export function CommoditiesPanel() {
                       {p?.unrealized_rupees != null
                         ? `${rupees(p.unrealized_rupees)}${p.unrealized_pct != null ? ` (${p.unrealized_pct > 0 ? '+' : ''}${p.unrealized_pct.toFixed(2)}%)` : ''}`
                         : 'no live mark'}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        disabled={closePos.isPending && closePos.variables === k}
+                        onClick={() => {
+                          if (!window.confirm(`Close ${k} now, at the current price?`)) return
+                          closePos.mutate(k)
+                        }}
+                        className="rounded-md border border-[var(--down)]/40 px-2 py-1 font-sans text-[11px] font-semibold text-[var(--down)] transition hover:bg-[var(--down)]/10 disabled:opacity-40"
+                      >
+                        {closePos.isPending && closePos.variables === k ? 'Closing…' : 'Close'}
+                      </button>
                     </td>
                   </tr>
                 ))}

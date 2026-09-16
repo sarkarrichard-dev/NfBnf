@@ -67,6 +67,51 @@ def test_close_journals_and_clears_position(tmp_path, monkeypatch):
     assert (tmp_path / "j.jsonl").read_text().strip()
 
 
+def test_close_position_manual_uses_the_same_close_math_as_automatic(tmp_path, monkeypatch):
+    """2026-09-16: the dashboard's manual "Close" button, missing for futures
+    the same way it was missing for commodities and Index Options."""
+    monkeypatch.setattr(paper, "STATE_PATH", tmp_path / "s.json")
+    monkeypatch.setattr(paper, "JOURNAL_PATH", tmp_path / "j.jsonl")
+    monkeypatch.setattr(paper, "_mark_price", lambda client, key: 24080.0)
+
+    state = {"NIFTY": {"position": {"dir": "LONG", "entry": 24000.0, "entry_time": "t0"}}}
+    paper._save_state(state)
+
+    result = paper.close_position_manual("NIFTY", client=object())
+    assert result["ok"] is True
+    trade = result["trade"]
+    assert trade["exit_reason"] == "manual close"
+    assert trade["points"] == 80.0
+    after = paper._load_state()
+    assert after["NIFTY"]["position"] is None
+
+    again = paper.close_position_manual("NIFTY", client=object())
+    assert again == {"ok": False, "error": "no open position for NIFTY"}
+
+
+def test_close_all_positions_manual_closes_every_open_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(paper, "STATE_PATH", tmp_path / "s.json")
+    monkeypatch.setattr(paper, "JOURNAL_PATH", tmp_path / "j.jsonl")
+    monkeypatch.setattr(
+        paper, "_mark_price", lambda client, key: 24080.0 if key == "NIFTY" else 56500.0
+    )
+
+    state = {
+        "NIFTY": {"position": {"dir": "LONG", "entry": 24000.0, "entry_time": "t0"}},
+        "BANKNIFTY": {"position": {"dir": "SHORT", "entry": 56600.0, "entry_time": "t0"}},
+        "SENSEX": {"position": None},
+    }
+    paper._save_state(state)
+
+    result = paper.close_all_positions_manual(client=object())
+    assert result["ok"] is True
+    assert result["attempted"] == 2
+    assert set(result["closed"]) == {"NIFTY", "BANKNIFTY"}
+    after = paper._load_state()
+    assert after["NIFTY"]["position"] is None
+    assert after["BANKNIFTY"]["position"] is None
+
+
 def test_short_pnl_sign(tmp_path, monkeypatch):
     monkeypatch.setattr(paper, "JOURNAL_PATH", tmp_path / "j.jsonl")
     cfg = config_for("NIFTY")
