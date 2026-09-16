@@ -42,9 +42,21 @@ def _after_epoch(when: str | None, epoch: str | None) -> bool:
 
 def _india_strategy(trade: dict[str, Any]) -> str:
     """The strategy label for a row: its ``strategy_mode`` if it has a real one,
-    else the buy/sell lane."""
-    mode = str((trade.get("signal") or {}).get("strategy_mode") or "").strip()
+    else the buy/sell lane.
+
+    The buy lane's ``candlestick_buy`` mode covers six different patterns
+    (engulfing, hammer, breakout, trend-pullback, …) lumped into one bucket —
+    2026-09-16, after a bad day traced to one specific pattern type, split it
+    by the real pattern (``entry_quality`` on the signal, already persisted
+    per trade) so each pattern's own win rate is visible, not averaged away.
+    """
+    signal = trade.get("signal") or {}
+    mode = str(signal.get("strategy_mode") or "").strip()
     if mode and mode.lower() not in _MEANINGLESS_MODE:
+        if mode == "candlestick_buy":
+            pattern = str(signal.get("entry_quality") or "").strip()
+            if pattern:
+                return f"{mode} · {pattern}"
         return mode
     from index_ai.strategies.strategy_router import trade_lane
 
