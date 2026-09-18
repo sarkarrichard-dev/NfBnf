@@ -30,11 +30,44 @@ MODEL_PATH = MODEL_DIR / "brain_model.joblib"
 META_PATH = MODEL_DIR / "brain_meta.json"
 
 SCHEMA_VERSION = 1
-MIN_LIVE_ROWS = 40          # forward trades before a live-only model is allowed
-MIN_ROWS = 60               # total rows (live + seed) before training at all
+MIN_LIVE_ROWS = 40  # forward trades before a live-only model is allowed
+MIN_ROWS = 60  # total rows (live + seed) before training at all
 MIN_CLASS_ROWS = 12
 WALK_BLOCKS = 5
 DEFAULT_GATE = 0.50
+
+# A feature added after the model was already trading needs its own minimum
+# real (non-zero) support before it's allowed to influence training — found
+# in a 2026-09-18 safety review: the option-Greeks columns below would
+# otherwise fit a coefficient off literally 3 real rows the first time the
+# unattended nightly EOD retrain ran, with no real out-of-sample evidence
+# behind it (the chronological walk-forward split barely exercises a column
+# that's only non-zero in the most recent few rows). Same "not enough data
+# yet" discipline as MIN_LIVE_ROWS/MIN_CLASS_ROWS above, just per-column.
+_YOUNG_FEATURE_MIN_SUPPORT: dict[str, int] = {
+    "option_delta": 15,
+    "option_gamma": 15,
+    "option_theta_drag_pct": 15,
+    "option_iv": 15,
+    "dist_max_pain_pct": 15,
+}
+
+
+def _suppress_immature_features(X: np.ndarray) -> tuple[np.ndarray, list[str]]:
+    """Zero out any young feature's column until it has real support —
+    inert (exactly like it never existed) rather than fitting a coefficient
+    off a handful of rows. Returns the (possibly modified) X and the names
+    still suppressed, for the training meta."""
+    X = X.copy()
+    suppressed = []
+    for name, min_support in _YOUNG_FEATURE_MIN_SUPPORT.items():
+        if name not in FEATURES:
+            continue
+        idx = FEATURES.index(name)
+        if int(np.count_nonzero(X[:, idx])) < min_support:
+            X[:, idx] = 0.0
+            suppressed.append(name)
+    return X, suppressed
 
 
 def _sklearn():
@@ -73,8 +106,9 @@ def _best_gate(proba: np.ndarray, pnl: np.ndarray) -> tuple[float, float]:
     return best_t, best_v
 
 
-def walk_forward(X: np.ndarray, y: np.ndarray, meta: list[dict[str, Any]],
-                 *, blocks: int = WALK_BLOCKS) -> dict[str, Any]:
+def walk_forward(
+    X: np.ndarray, y: np.ndarray, meta: list[dict[str, Any]], *, blocks: int = WALK_BLOCKS
+) -> dict[str, Any]:
     """Chronological rolling validation. Returns OOS rupees with and without the gate."""
     pnl = _pnl(meta)
     n = len(y)
@@ -125,13 +159,21 @@ def train(*, include_backtest: bool | None = None, force: bool = False) -> dict[
 
     n = ds["total_rows"]
     if n < MIN_ROWS and not force:
-        return {"trained": False, "reason": f"{n} rows < {MIN_ROWS} minimum",
-                "live_rows": live["live_rows"], "counts": ds["counts"]}
+        return {
+            "trained": False,
+            "reason": f"{n} rows < {MIN_ROWS} minimum",
+            "live_rows": live["live_rows"],
+            "counts": ds["counts"],
+        }
     X = np.array(ds["X"], dtype=float)
+    X, suppressed_features = _suppress_immature_features(X)
     y = np.array(ds["y"], dtype=int)
     if min(int((y == 0).sum()), int((y == 1).sum())) < MIN_CLASS_ROWS and not force:
-        return {"trained": False, "reason": "not enough of both win and loss outcomes",
-                "live_rows": live["live_rows"]}
+        return {
+            "trained": False,
+            "reason": "not enough of both win and loss outcomes",
+            "live_rows": live["live_rows"],
+        }
 
     wf = walk_forward(X, y, ds["meta"])
     model = _new_model()
@@ -169,6 +211,7 @@ def train(*, include_backtest: bool | None = None, force: bool = False) -> dict[
         "min_win_prob_gate": gate,
         "feature_names": list(FEATURES),
         "coefficients": coefs,
+        "suppressed_features": suppressed_features,
     }
     META_PATH.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return {"trained": True, **meta}
@@ -205,18 +248,33 @@ def score(trade_like: dict[str, Any]) -> dict[str, Any]:
     armed = bool(meta.get("gate_armed"))
     feats = unified_features(trade_like)
     if feats is None or not armed:
-        return {"win_probability": None, "passes": True, "gate": gate,
-                "armed": armed, "reason": "gate not armed" if not armed else "unmappable setup"}
+        return {
+            "win_probability": None,
+            "passes": True,
+            "gate": gate,
+            "armed": armed,
+            "reason": "gate not armed" if not armed else "unmappable setup",
+        }
     model = _load_model()
     if model is None:
-        return {"win_probability": None, "passes": True, "gate": gate,
-                "armed": False, "reason": "model file missing"}
+        return {
+            "win_probability": None,
+            "passes": True,
+            "gate": gate,
+            "armed": False,
+            "reason": "model file missing",
+        }
     try:
         x = np.array([[feats[k] for k in FEATURES]], dtype=float)
         p = float(model.predict_proba(x)[0][1])
     except Exception as exc:
-        return {"win_probability": None, "passes": True, "gate": gate,
-                "armed": armed, "reason": f"scoring failed: {exc}"}
+        return {
+            "win_probability": None,
+            "passes": True,
+            "gate": gate,
+            "armed": armed,
+            "reason": f"scoring failed: {exc}",
+        }
     return {
         "win_probability": round(p, 4),
         "passes": p >= gate,
@@ -240,8 +298,8 @@ def status() -> dict[str, Any]:
         "oos_static_rupees": wf.get("oos_static_rupees"),
         "oos_gated_rupees": wf.get("oos_gated_rupees"),
         "kept_fraction": wf.get("kept_fraction"),
-        "top_features": sorted(
-            (m.get("coefficients") or {}).items(), key=lambda kv: -abs(kv[1])
-        )[:6],
+        "top_features": sorted((m.get("coefficients") or {}).items(), key=lambda kv: -abs(kv[1]))[
+            :6
+        ],
         "model_present": MODEL_PATH.is_file(),
     }
