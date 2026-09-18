@@ -45,6 +45,18 @@ FEATURES: tuple[str, ...] = (
     # --- trade economics known at entry ---
     "risk_reward",  # target distance / stop distance
     "friction_pct_of_edge",  # round-trip cost / expected gross edge, when known
+    # --- the chosen option's own Greeks (buy lane, PR #115/#119, 2026-09-16/18) ---
+    # Delta/IV/gamma already pick *which* strike gets bought; they were never
+    # fed to the win-probability model, which reasons about the signal but
+    # not which option got chosen off it. 0.0 (a real Greeks value never
+    # legitimately lands exactly on 0) for every lane/trade that predates
+    # this or doesn't have it — inert until real buy-lane trades with real
+    # Greeks accumulate and a retrain gives these a real coefficient.
+    "option_delta",
+    "option_gamma",
+    "option_theta_drag_pct",  # |theta| as % of premium paid — scale-invariant across instruments
+    "option_iv",
+    "dist_max_pain_pct",
 )
 
 _BULLISH = {"BUY_CALL", "SELL_BULL_PUT_SPREAD", "SELL_ATM_PUT", "LONG"}
@@ -149,6 +161,22 @@ def unified_features(trade: dict[str, Any]) -> dict[str, float] | None:
         else _f(nested.get("dist_pivot_target_pct"))
     )
 
+    # the chosen option's own Greeks (buy lane only, PR #115/#119) — absent
+    # on every trade before that shipped and on every non-buy-lane trade
+    opt_theta = option.get("theta")
+    opt_premium = _f(option.get("ltp") or option.get("entry_ltp"))
+    theta_drag_pct = (
+        abs(_f(opt_theta)) / opt_premium * 100.0
+        if (opt_theta is not None and opt_premium > 0)
+        else 0.0
+    )
+    max_pain = option.get("max_pain")
+    dist_max_pain_pct = (
+        abs(price - _f(max_pain)) / max(abs(price), 1.0) * 100.0
+        if (price and max_pain is not None)
+        else 0.0
+    )
+
     out = {
         "is_buy_lane": 1.0 if is_buy else 0.0,
         "is_credit": 1.0 if is_credit else 0.0,
@@ -195,6 +223,11 @@ def unified_features(trade: dict[str, Any]) -> dict[str, float] | None:
         "weekday": _f(nested.get("weekday")) if "weekday" in nested else _weekday(entry_ts),
         "risk_reward": rr,
         "friction_pct_of_edge": min(5.0, cost_ratio),
+        "option_delta": abs(_f(option.get("delta"))),
+        "option_gamma": _f(option.get("gamma")),
+        "option_theta_drag_pct": min(20.0, theta_drag_pct),
+        "option_iv": _f(option.get("iv")),
+        "dist_max_pain_pct": dist_max_pain_pct,
     }
     return {k: _f(out.get(k)) for k in FEATURES}
 
@@ -266,4 +299,37 @@ if __name__ == "__main__":  # ponytail self-check
     assert unified_features(conflict)["trend_vs_cpr_agree"] == -1.0
     assert label(fut) == 1 and label(buy) == 0 and label({}) is None
     assert unified_features({"action": "NO_TRADE"}) is None
+
+    # a real buy-lane trade with Greeks (PR #115/#119) — the actual point of
+    # adding these features: the model should see which option got chosen,
+    # not just that a signal fired
+    buy_with_greeks = {
+        "instrument": "NIFTY",
+        "action": "BUY_CALL",
+        "entry_time": "2026-09-18T10:15:00+05:30",
+        "signal": {"price": 23300.0},
+        "option": {
+            "ltp": 120.0,
+            "delta": -0.42,  # sign shouldn't matter — always positive magnitude
+            "gamma": 0.0013,
+            "theta": -18.0,
+            "iv": 11.5,
+            "max_pain": 23200.0,
+        },
+        "net_rupees": 400.0,
+    }
+    v = unified_features(buy_with_greeks)
+    assert v["option_delta"] == 0.42
+    assert v["option_gamma"] == 0.0013
+    assert abs(v["option_theta_drag_pct"] - 15.0) < 1e-6  # 18/120 * 100
+    assert v["option_iv"] == 11.5
+    assert abs(v["dist_max_pain_pct"] - (100 / 23300 * 100)) < 1e-6
+
+    # every trade before this feature existed (no "option" dict, or one
+    # without Greeks) must read as a neutral 0.0, not crash or guess
+    assert unified_features(buy)["option_delta"] == 0.0
+    assert unified_features(buy)["option_gamma"] == 0.0
+    assert unified_features(buy)["option_theta_drag_pct"] == 0.0
+    assert unified_features(buy)["option_iv"] == 0.0
+    assert unified_features(buy)["dist_max_pain_pct"] == 0.0
     print("features.py self-check ok")
