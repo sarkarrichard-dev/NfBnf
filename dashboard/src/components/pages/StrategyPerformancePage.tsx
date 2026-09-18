@@ -178,6 +178,17 @@ function VenueTable({
         </div>
       </div>
 
+      {totals.charge_breakdown && totals.charge_breakdown.brokerage > 0 ? (
+        <p className="border-b border-[var(--hair)] px-4 py-2 font-mono text-[11px] text-slate-500">
+          brokerage {fmt(totals.charge_breakdown.brokerage, currency)} · STT{' '}
+          {fmt(totals.charge_breakdown.stt, currency)} · exchange{' '}
+          {fmt(totals.charge_breakdown.exch_txn, currency)} · SEBI{' '}
+          {fmt(totals.charge_breakdown.sebi, currency)} · GST{' '}
+          {fmt(totals.charge_breakdown.gst, currency)} · stamp{' '}
+          {fmt(totals.charge_breakdown.stamp, currency)}
+        </p>
+      ) : null}
+
       {rows.length === 0 ? (
         <p className="px-4 py-6 text-sm text-slate-500">No closed trades yet.</p>
       ) : (

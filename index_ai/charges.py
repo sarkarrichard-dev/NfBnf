@@ -47,14 +47,14 @@ def _f(name: str, default: float) -> float:
 class ChargeRates:
     """All rates are fractions of premium turnover unless noted."""
 
-    brokerage_per_order_rupees: float = 20.0     # Dhan F&O flat
-    brokerage_pct: float = 0.0003                # min(flat, pct*turnover)
-    stt_sell_pct: float = 0.001                  # 0.10% on option SELL premium
-    exch_txn_pct_nse: float = 0.0003503          # NSE options, per side
-    exch_txn_pct_bse: float = 0.000325           # BSE options, per side
-    sebi_pct: float = 0.000001                   # Rs 10 / crore, per side
-    gst_pct: float = 0.18                        # on brokerage + exch txn + sebi
-    stamp_buy_pct: float = 0.00003               # 0.003% on BUY side only
+    brokerage_per_order_rupees: float = 20.0  # Dhan F&O flat
+    brokerage_pct: float = 0.0003  # min(flat, pct*turnover)
+    stt_sell_pct: float = 0.001  # 0.10% on option SELL premium
+    exch_txn_pct_nse: float = 0.0003503  # NSE options, per side
+    exch_txn_pct_bse: float = 0.000325  # BSE options, per side
+    sebi_pct: float = 0.000001  # Rs 10 / crore, per side
+    gst_pct: float = 0.18  # on brokerage + exch txn + sebi
+    stamp_buy_pct: float = 0.00003  # 0.003% on BUY side only
 
     @staticmethod
     @lru_cache(maxsize=1)
@@ -110,8 +110,15 @@ def leg_charge_breakdown(
     r = rates or ChargeRates.load()
     turnover = max(0.0, float(premium)) * max(0, int(qty))
     if turnover <= 0:
-        return {"brokerage": 0.0, "stt": 0.0, "exch_txn": 0.0, "sebi": 0.0,
-                "gst": 0.0, "stamp": 0.0, "total": 0.0}
+        return {
+            "brokerage": 0.0,
+            "stt": 0.0,
+            "exch_txn": 0.0,
+            "sebi": 0.0,
+            "gst": 0.0,
+            "stamp": 0.0,
+            "total": 0.0,
+        }
     brokerage = r.brokerage_per_order_rupees  # flat per executed order (F&O options)
     exch_pct = r.exch_txn_pct_bse if str(exchange).upper() in {"BSE", "BFO"} else r.exch_txn_pct_nse
     exch_txn = exch_pct * turnover
@@ -120,8 +127,12 @@ def leg_charge_breakdown(
     stamp = r.stamp_buy_pct * turnover if side == "BUY" else 0.0
     gst = r.gst_pct * (brokerage + exch_txn + sebi)
     out = {
-        "brokerage": round(brokerage, 2), "stt": round(stt, 2), "exch_txn": round(exch_txn, 2),
-        "sebi": round(sebi, 4), "gst": round(gst, 2), "stamp": round(stamp, 2),
+        "brokerage": round(brokerage, 2),
+        "stt": round(stt, 2),
+        "exch_txn": round(exch_txn, 2),
+        "sebi": round(sebi, 4),
+        "gst": round(gst, 2),
+        "stamp": round(stamp, 2),
     }
     out["total"] = round(sum(out.values()), 2)
     return out
@@ -156,15 +167,77 @@ def round_trip_charges_rupees(
     for leg in _structural_legs(option):
         entry_px = abs(float(leg.get("ltp") or leg.get("last_price") or 0.0))
         exit_px = entry_px * max(0.0, float(exit_premium_factor))
-        open_side: Side = "SELL" if str(leg.get("transaction_type", "BUY")).upper() == "SELL" else "BUY"
+        open_side: Side = (
+            "SELL" if str(leg.get("transaction_type", "BUY")).upper() == "SELL" else "BUY"
+        )
         close_side: Side = "BUY" if open_side == "SELL" else "SELL"
         total += leg_charge_rupees(entry_px, qty, open_side, exchange=exchange, rates=rates)
         total += leg_charge_rupees(exit_px, qty, close_side, exchange=exchange, rates=rates)
     return round(total, 2)
 
 
+def round_trip_charge_breakdown(
+    option: dict[str, Any],
+    qty: int,
+    *,
+    exchange: str = "NSE",
+    exit_premium_factor: float = 1.0,
+    rates: ChargeRates | None = None,
+) -> dict[str, float]:
+    """Itemised open+close statutory/broker cost for every leg of an option
+    structure, summed across the whole trade -- the same lines a real Dhan
+    contract note shows (brokerage, STT, exchange txn, SEBI, GST, stamp).
+
+    ``total`` always exactly equals ``round_trip_charges_rupees`` on the same
+    inputs (computed the same way, not re-derived from the rounded line
+    items) -- a report showing both must never disagree with itself. The
+    line items are accumulated from raw, unrounded per-leg amounts and
+    rounded once at the end, so they may foot to a paisa or two off
+    ``total`` (real contract notes have the same rounding-line quirk); that
+    is display detail, not a second source of truth."""
+    r = rates or ChargeRates.load()
+    raw = {"brokerage": 0.0, "stt": 0.0, "exch_txn": 0.0, "sebi": 0.0, "gst": 0.0, "stamp": 0.0}
+    for leg in _structural_legs(option):
+        entry_px = abs(float(leg.get("ltp") or leg.get("last_price") or 0.0))
+        exit_px = entry_px * max(0.0, float(exit_premium_factor))
+        open_side: Side = (
+            "SELL" if str(leg.get("transaction_type", "BUY")).upper() == "SELL" else "BUY"
+        )
+        close_side: Side = "BUY" if open_side == "SELL" else "SELL"
+        for px, side in ((entry_px, open_side), (exit_px, close_side)):
+            turnover = max(0.0, px) * max(0, int(qty))
+            if turnover <= 0:
+                continue
+            brokerage = r.brokerage_per_order_rupees
+            exch_pct = (
+                r.exch_txn_pct_bse
+                if str(exchange).upper() in {"BSE", "BFO"}
+                else r.exch_txn_pct_nse
+            )
+            exch_txn = exch_pct * turnover
+            sebi = r.sebi_pct * turnover
+            stt = r.stt_sell_pct * turnover if side == "SELL" else 0.0
+            stamp = r.stamp_buy_pct * turnover if side == "BUY" else 0.0
+            gst = r.gst_pct * (brokerage + exch_txn + sebi)
+            raw["brokerage"] += brokerage
+            raw["stt"] += stt
+            raw["exch_txn"] += exch_txn
+            raw["sebi"] += sebi
+            raw["stamp"] += stamp
+            raw["gst"] += gst
+    out = {k: round(v, 2) for k, v in raw.items()}
+    out["total"] = round_trip_charges_rupees(
+        option, qty, exchange=exchange, exit_premium_factor=exit_premium_factor, rates=r
+    )
+    return out
+
+
 _FUT_HALF_SPREAD_POINTS: dict[str, float] = {
-    "NIFTY": 0.5, "BANKNIFTY": 1.5, "SENSEX": 2.0, "FINNIFTY": 0.75, "MIDCPNIFTY": 0.5
+    "NIFTY": 0.5,
+    "BANKNIFTY": 1.5,
+    "SENSEX": 2.0,
+    "FINNIFTY": 0.75,
+    "MIDCPNIFTY": 0.5,
 }
 
 

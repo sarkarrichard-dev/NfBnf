@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CollapsibleSection } from './components/CollapsibleSection'
 import { AppShell } from './components/shell/AppShell'
@@ -125,6 +125,12 @@ function App() {
 
   const dashboard = useDashboardData()
   const [tab, setTab] = useStickyTab('algo.tab', 'trade')
+  // 2026-09-17: commodities/futures hidden from nav to focus on index options +
+  // crypto — both lanes keep running and logging in the background, this just
+  // stops a stale sticky tab from reopening a section that's no longer in nav.
+  useEffect(() => {
+    if (tab === 'futures' || tab === 'commodities') setTab('trade')
+  }, [tab, setTab])
   const openCount = useMemo(
     () => (dashboard.trades ?? []).filter((t) => t.is_open).length,
     [dashboard.trades],
@@ -171,8 +177,9 @@ function App() {
         { id: 'trade', label: 'Index Options', icon: <IconGrid />, badge: openCount || null },
         { id: 'strategies', label: 'Strategies', icon: <IconLayers /> },
         { id: 'crypto', label: 'Crypto', icon: <IconCoin /> },
-        { id: 'futures', label: 'Futures', icon: <IconChart /> },
-        { id: 'commodities', label: 'Commodities', icon: <IconChart /> },
+        // futures/commodities hidden from nav 2026-09-17 (Richard: focus on
+        // NIFTY/BANKNIFTY + crypto for now) — lanes keep running, see the
+        // sticky-tab guard above the nav array.
       ],
     },
     {
