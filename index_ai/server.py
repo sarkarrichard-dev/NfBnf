@@ -1371,6 +1371,15 @@ async def strategy_performance_api() -> dict[str, Any]:
     return await asyncio.to_thread(strategy_scorecard)
 
 
+@app.get("/api/crypto/live-readiness", include_in_schema=False)
+async def crypto_live_readiness_api() -> dict[str, Any]:
+    """Per-strategy go-live bar: enough trades, enough days, net positive —
+    agreed with Richard 2026-09-17 rather than picking a live date up front."""
+    from index_ai.strategy_performance import crypto_live_readiness
+
+    return {"strategies": await asyncio.to_thread(crypto_live_readiness)}
+
+
 @app.get("/api/strategy-learning", include_in_schema=False)
 async def strategy_learning_api() -> dict[str, Any]:
     """The confidence ladder per (strategy, instrument): how much data each has,

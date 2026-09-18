@@ -24,6 +24,16 @@ export type PerfRow = {
   priced_pct: number | null
   first_day: string | null
   last_day: string | null
+  charge_breakdown: ChargeBreakdown
+}
+
+export type ChargeBreakdown = {
+  brokerage: number
+  stt: number
+  exch_txn: number
+  sebi: number
+  gst: number
+  stamp: number
 }
 
 export type PerfTotals = {
@@ -36,6 +46,10 @@ export type PerfTotals = {
   charges: number
   slippage: number
   net: number
+  /** Itemised brokerage/STT/exchange-txn/SEBI/GST/stamp — India only for
+   *  now; all zero for crypto/commodities (their journals already net the
+   *  charge at exit, with no line items kept). */
+  charge_breakdown: ChargeBreakdown
 }
 
 export type StrategyPerformance = {

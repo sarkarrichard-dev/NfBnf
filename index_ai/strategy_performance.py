@@ -86,8 +86,41 @@ def _india_charges(trade: dict[str, Any]) -> tuple[float, float] | None:
         return None
 
 
+def _india_charge_breakdown(trade: dict[str, Any]) -> dict[str, float] | None:
+    """Itemised brokerage/STT/exchange-txn/SEBI/GST/stamp for one India round
+    trip — the same total as ``_india_charges``, split into the lines a real
+    Dhan contract note shows."""
+    option = trade.get("option") or {}
+    inst = str(trade.get("instrument") or option.get("instrument") or "NIFTY")
+    qty = int(option.get("quantity") or 0)
+    legs = option.get("legs") or []
+    priced = (
+        any(float(leg.get("ltp") or 0) > 0 for leg in legs) or float(option.get("ltp") or 0) > 0
+    )
+    if qty <= 0 or not priced:
+        return None
+    try:
+        from index_ai.charges import round_trip_charge_breakdown
+
+        exchange = "BSE" if inst.upper() == "SENSEX" else "NSE"
+        return round_trip_charge_breakdown(option, qty, exchange=exchange)
+    except Exception:
+        return None
+
+
+_CHARGE_ITEMS = ("brokerage", "stt", "exch_txn", "sebi", "gst", "stamp")
+
+
 def _blank_bucket() -> dict[str, Any]:
-    return {"pnls": [], "gross": 0.0, "charges": 0.0, "slippage": 0.0, "priced": 0, "days": set()}
+    return {
+        "pnls": [],
+        "gross": 0.0,
+        "charges": 0.0,
+        "slippage": 0.0,
+        "priced": 0,
+        "days": set(),
+        "charge_items": dict.fromkeys(_CHARGE_ITEMS, 0.0),
+    }
 
 
 def _finish(key: tuple[str, str, str], b: dict[str, Any], currency: str) -> dict[str, Any]:
@@ -120,6 +153,10 @@ def _finish(key: tuple[str, str, str], b: dict[str, Any], currency: str) -> dict
         "priced_pct": round(b["priced"] / n, 2) if n else None,  # share of rows we could cost
         "first_day": days[0] if days else None,
         "last_day": days[-1] if days else None,
+        # itemised: brokerage/STT/exchange txn/SEBI/GST/stamp paid, the lines
+        # of a real contract note — India only for now (crypto/commodities
+        # journals already net the charge at exit, with no line items kept).
+        "charge_breakdown": {k: round(v, 2) for k, v in b["charge_items"].items()},
     }
 
 
@@ -143,6 +180,10 @@ def _india_rows() -> list[dict[str, Any]]:
             b["slippage"] += cs[1]
             b["priced"] += 1
             b["pnls"].append(gross - cs[0] - cs[1])  # net per trade, when we can cost it
+            items = _india_charge_breakdown(t)
+            if items:
+                for k in _CHARGE_ITEMS:
+                    b["charge_items"][k] += items.get(k, 0.0)
         else:
             b["pnls"].append(gross)  # unpriced — gross is the best we have
         day = str(t.get("created_at") or "")[:10]
@@ -223,6 +264,10 @@ def _totals(rows: list[dict[str, Any]], currency: str) -> dict[str, Any]:
     gross = round(sum(r["gross"] for r in rows), 2)
     charges = round(sum(r["charges"] for r in rows), 2)
     slippage = round(sum(r["slippage"] for r in rows), 2)
+    charge_breakdown = {
+        k: round(sum(r.get("charge_breakdown", {}).get(k, 0.0) for r in rows), 2)
+        for k in _CHARGE_ITEMS
+    }
     return {
         "currency": currency,
         "strategies": len({r["strategy"] for r in rows}),
@@ -233,6 +278,8 @@ def _totals(rows: list[dict[str, Any]], currency: str) -> dict[str, Any]:
         "charges": charges,
         "slippage": slippage,
         "net": round(gross - charges - slippage, 2),
+        # itemised — India only for now; zero/empty for crypto/commodities
+        "charge_breakdown": charge_breakdown,
     }
 
 
@@ -256,6 +303,70 @@ def strategy_scorecard() -> dict[str, Any]:
     }
 
 
+# The "go live with real money" bar for a crypto strategy, agreed with Richard
+# 2026-09-17 after he asked about going live next month: a handful of good
+# paper days isn't proof of an edge (the India sell lane looked fine under 30
+# trades too, then got worse). Live is a data-driven crossing, not a calendar
+# date — none of the five crypto strategies clear this yet.
+CRYPTO_LIVE_MIN_TRADES = 30
+CRYPTO_LIVE_MIN_DAYS = 14
+
+
+def crypto_live_readiness() -> list[dict[str, Any]]:
+    """Per-strategy (all its instruments combined) readiness verdict: enough
+    trades, enough calendar days, and net positive over that whole window.
+    Also reports how many of its instruments are individually net-positive,
+    since an aggregate profit from one strong coin carrying several weak ones
+    isn't the same as a real, broad edge."""
+    by_strategy: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"trades": 0, "net": 0.0, "days": set(), "instruments": {}}
+    )
+    for row in _crypto_rows():
+        if row["mode"] != "PAPER":
+            continue
+        s = by_strategy[row["strategy"]]
+        s["trades"] += row["trades"]
+        s["net"] += row["net"]
+        if row["first_day"]:
+            s["days"].add(row["first_day"])
+        if row["last_day"]:
+            s["days"].add(row["last_day"])
+        s["instruments"][row["instrument"]] = row["net"]
+
+    out = []
+    for strat, s in sorted(by_strategy.items()):
+        span_days = len(s["days"])
+        insts = s["instruments"]
+        ready = (
+            s["trades"] >= CRYPTO_LIVE_MIN_TRADES
+            and span_days >= CRYPTO_LIVE_MIN_DAYS
+            and s["net"] > 0
+        )
+        out.append(
+            {
+                "strategy": strat,
+                "trades": s["trades"],
+                "trades_needed": CRYPTO_LIVE_MIN_TRADES,
+                "days_span": span_days,
+                "days_needed": CRYPTO_LIVE_MIN_DAYS,
+                "net_usd": round(s["net"], 2),
+                "instruments_positive": sum(1 for v in insts.values() if v > 0),
+                "instruments_total": len(insts),
+                "ready": ready,
+                "why_not": None
+                if ready
+                else (
+                    f"needs {CRYPTO_LIVE_MIN_TRADES}+ trades ({s['trades']} so far)"
+                    if s["trades"] < CRYPTO_LIVE_MIN_TRADES
+                    else f"needs {CRYPTO_LIVE_MIN_DAYS}+ days of data ({span_days} so far)"
+                    if span_days < CRYPTO_LIVE_MIN_DAYS
+                    else f"net negative over the window (${s['net']:.2f})"
+                ),
+            }
+        )
+    return out
+
+
 if __name__ == "__main__":  # self-check — runs against the real journals, no network
     sc = strategy_scorecard()
     assert set(sc) == {"generated_at", "india", "crypto", "commodities", "note"}
@@ -270,4 +381,13 @@ if __name__ == "__main__":  # self-check — runs against the real journals, no 
             f"{s} {sc[s]['totals']['trades']} trades / {len(sc[s]['rows'])} rows"
             for s in ("india", "crypto", "commodities")
         )
+    )
+
+    readiness = crypto_live_readiness()
+    for r in readiness:
+        assert r["trades"] >= 0 and r["days_span"] >= 0
+        assert r["ready"] or r["why_not"]  # every non-ready verdict must say why
+    print(
+        "crypto_live_readiness ok — "
+        + ", ".join(f"{r['strategy']}={'READY' if r['ready'] else 'not yet'}" for r in readiness)
     )

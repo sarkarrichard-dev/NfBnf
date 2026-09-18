@@ -197,11 +197,17 @@ def _ensure_success_payload(data: dict[str, Any], step: str) -> None:
 
 
 def _extract_consume_payload(data: dict[str, Any]) -> dict[str, Any]:
-    if data.get("accessToken") or data.get("access_token") or _looks_like_token_field(data.get("token")):
+    if (
+        data.get("accessToken")
+        or data.get("access_token")
+        or _looks_like_token_field(data.get("token"))
+    ):
         return data
     inner = data.get("data")
     if isinstance(inner, dict) and (
-        inner.get("accessToken") or inner.get("access_token") or _looks_like_token_field(inner.get("token"))
+        inner.get("accessToken")
+        or inner.get("access_token")
+        or _looks_like_token_field(inner.get("token"))
     ):
         return inner
     return data
@@ -334,7 +340,9 @@ def save_access_token_direct(settings: DhanSettings, access_token: str) -> dict[
     payload = _jwt_payload(token)
     client_id = str(payload.get("dhanClientId") or settings.client_id or "").strip()
     if not client_id:
-        raise RuntimeError("Could not read dhanClientId from JWT. Set DHAN_CLIENT_ID in .env first.")
+        raise RuntimeError(
+            "Could not read dhanClientId from JWT. Set DHAN_CLIENT_ID in .env first."
+        )
     expiry = ""
     exp = payload.get("exp")
     if isinstance(exp, (int, float)):
@@ -356,7 +364,9 @@ def save_token_from_user_input(settings: DhanSettings, raw: str) -> dict[str, An
     """Accept OAuth tokenId (UUID) or a ready-made access token JWT."""
     text = parse_oauth_callback_value(raw)
     if not text:
-        raise RuntimeError("Paste tokenId from the redirect URL, or paste your Dhan access token JWT.")
+        raise RuntimeError(
+            "Paste tokenId from the redirect URL, or paste your Dhan access token JWT."
+        )
 
     if looks_like_jwt(text):
         return save_access_token_direct(settings, text)
@@ -584,12 +594,17 @@ def reconcile_env_with_jwt() -> dict[str, Any] | None:
     If .env has a JWT, ensure DHAN_CLIENT_ID matches the token's dhanClientId.
     Fixes 401 when an old/wrong client id was left in .env.
     """
-    from index_ai.config import ENV_PATH
+    from index_ai.config import ENV_PATH, _load_env
 
     if not ENV_PATH.exists():
         return None
-    load_dotenv = __import__("dotenv", fromlist=["load_dotenv"]).load_dotenv
-    load_dotenv(ENV_PATH, override=True)
+    # route through the guarded reloader — a bare load_dotenv(override=True)
+    # here silently reverted every monkeypatched env var in any test that
+    # called settings() (which calls this), since it ignored _ENV_FROZEN /
+    # PYTEST_CURRENT_TEST. Dormant until a real .env value diverged from what
+    # a test expected (found 2026-09-17 via test_lane_plumbing_open_then_close
+    # flipping ENABLE_COMMODITIES_PAPER mid-test after a live toggle).
+    _load_env()
     import os
 
     token = os.getenv("DHAN_ACCESS_TOKEN", "").strip()
@@ -1158,9 +1173,7 @@ def check_dhan_health(settings: DhanSettings, *, use_cache: bool = True) -> dict
     from index_ai.market_clock import format_ist_display
 
     raw_validity = profile.get("tokenValidity")
-    token_validity = (
-        format_ist_display(str(raw_validity)) if raw_validity else None
-    )
+    token_validity = format_ist_display(str(raw_validity)) if raw_validity else None
 
     if not charts_ok and charts_error:
         err = charts_error.lower()
