@@ -67,6 +67,14 @@ def _leg_greek(leg: dict[str, Any], name: str) -> float | None:
         return None
 
 
+def _leg_iv(leg: dict[str, Any]) -> float | None:
+    val = leg.get("implied_volatility")
+    try:
+        return float(val) if val is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _theta_drag_ratio(leg: dict[str, Any]) -> float:
     """Daily time-decay as a fraction of the premium paid — lower bleeds less
     per rupee. Missing theta or a worthless premium can't be compared, so it
@@ -220,6 +228,9 @@ def _pick_by_greeks(
     delta_high: float,
     min_oi: int,
     min_volume: int,
+    min_abs_delta: float = 0.0,
+    max_iv: float | None = None,
+    min_gamma: float | None = None,
 ) -> tuple[float, dict[str, Any]] | None:
     """Prefer the strike whose |delta| sits in the target band — real
     sensitivity to the underlying, not a cheap low-probability lottery ticket
@@ -237,6 +248,15 @@ def _pick_by_greeks(
     rather than blocking the trade (an unusually quiet day shouldn't stop
     the lane outright — it just means delta ranking runs on what's there).
 
+    Richard, 2026-09-18: three more hard cuts on top of the band —
+    ``min_abs_delta`` drops anything too far OTM to react at all,
+    ``max_iv`` drops strikes where the premium looks rich, ``min_gamma``
+    drops strikes that won't accelerate even once the trade is working.
+    Same quiet-day safety valve as the liquidity floor: a candidate missing
+    the field it's being checked against fails that check (never trust what
+    you can't verify), but if the cut would drop *every* remaining
+    candidate, it's skipped rather than blocking the trade.
+
     Returns ``None`` (fall back to liquidity-only) when no candidate has a
     delta at all — a live-data gap must never stop the buy lane.
     """
@@ -249,6 +269,24 @@ def _pick_by_greeks(
     ]
     if liquid:
         scored = liquid
+
+    def passes_quality(item: tuple[float, dict[str, Any], float | None]) -> bool:
+        _, leg, d = item
+        if d is None or abs(d) < min_abs_delta:
+            return False
+        if max_iv is not None:
+            iv = _leg_iv(leg)
+            if iv is None or iv >= max_iv:
+                return False
+        if min_gamma is not None:
+            gamma = _leg_greek(leg, "gamma")
+            if gamma is None or gamma <= min_gamma:
+                return False
+        return True
+
+    quality = [item for item in scored if passes_quality(item)]
+    if quality:
+        scored = quality
 
     def band_distance(d: float | None) -> float:
         if d is None:
@@ -312,6 +350,9 @@ def choose_option_from_chain_with_oi(
             delta_high=cfg.buy_target_delta_high,
             min_oi=cfg.buy_greeks_min_oi,
             min_volume=cfg.buy_greeks_min_volume,
+            min_abs_delta=cfg.buy_greeks_min_abs_delta,
+            max_iv=cfg.buy_greeks_max_iv,
+            min_gamma=cfg.buy_greeks_min_gamma,
         )
     strike, leg = picked or _pick_by_liquidity(candidates)
 
@@ -331,6 +372,7 @@ def choose_option_from_chain_with_oi(
         "delta": _leg_greek(leg, "delta"),
         "theta": _leg_greek(leg, "theta"),
         "gamma": _leg_greek(leg, "gamma"),
+        "iv": _leg_iv(leg),
         "chain_pcr": oi.pcr,
         "chain_bias": oi.bias,
         "oi_confidence_adjustment": oi_adj,

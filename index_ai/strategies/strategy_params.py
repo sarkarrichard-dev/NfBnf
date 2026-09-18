@@ -97,6 +97,15 @@ class StrategyParams:
     # thousands of OI, so this only excludes genuinely thin outliers.
     buy_greeks_min_oi: int = 1000
     buy_greeks_min_volume: int = 200
+    # Richard, 2026-09-18: on top of the delta *band* above, three hard
+    # quality cuts — a strike failing any one (when that Greek is actually
+    # available) is dropped from consideration entirely, not just ranked
+    # lower. Same quiet-day safety valve as the liquidity floor: if nothing
+    # clears all three (a live-data gap, or a genuinely unusual chain), the
+    # cut is dropped rather than blocking the trade.
+    buy_greeks_min_abs_delta: float = 0.30  # below this, too far OTM to react
+    buy_greeks_max_iv: float = 15.0  # above this, overpaying for premium
+    buy_greeks_min_gamma: float = 0.0012  # below this, won't accelerate even if working
     auto_buy_trending_only: bool = True
     credit_profit_target_pct: float = 0.50
     credit_stop_loss_pct: float = 0.60
@@ -172,6 +181,9 @@ def get_strategy_params() -> StrategyParams:
         buy_target_delta_high=_float("BUY_TARGET_DELTA_HIGH", 0.55),
         buy_greeks_min_oi=_int("BUY_GREEKS_MIN_OI", 1000),
         buy_greeks_min_volume=_int("BUY_GREEKS_MIN_VOLUME", 200),
+        buy_greeks_min_abs_delta=_float("BUY_GREEKS_MIN_ABS_DELTA", 0.30),
+        buy_greeks_max_iv=_float("BUY_GREEKS_MAX_IV", 15.0),
+        buy_greeks_min_gamma=_float("BUY_GREEKS_MIN_GAMMA", 0.0012),
         auto_buy_trending_only=_bool("AUTO_BUY_TRENDING_ONLY", True),
         credit_profit_target_pct=_float("CREDIT_PROFIT_TARGET_PCT", 0.50),
         credit_stop_loss_pct=_float("CREDIT_STOP_LOSS_PCT", 0.60),
