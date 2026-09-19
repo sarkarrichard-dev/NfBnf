@@ -456,6 +456,14 @@ try:
 except Exception as _crypto_exc:  # never let the crypto module stop the index server
     logging.getLogger(__name__).warning("crypto router not mounted: %s", _crypto_exc)
 
+# Investing section (NSE stock screener) — read-only research, no orders.
+try:
+    from investing.api import router as investing_router
+
+    app.include_router(investing_router)
+except Exception as _investing_exc:
+    logging.getLogger(__name__).warning("investing router not mounted: %s", _investing_exc)
+
 # Exposed on /api/status so the dashboard can detect a stale server process.
 API_CAPABILITIES: dict[str, Any] = {
     "backtest_dhan": True,
