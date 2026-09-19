@@ -637,7 +637,7 @@ async def _scan_index(
             option=opp.get("option"),
             signal=opp_signal,
         )
-        exec_result = execute_plan(plan, cfg, client)
+        exec_result = await asyncio.to_thread(execute_plan, plan, cfg, client)
         if exec_result.get("trade_id"):
             _state.executions += 1
             _state.last_error = None
