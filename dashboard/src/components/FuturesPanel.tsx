@@ -48,7 +48,7 @@ function VerdictBanner({ bt }: { bt: StockBacktest }) {
   return (
     <div
       className={cn(
-        'rounded-xl border p-4',
+        'rounded-md border p-4',
         edge
           ? 'border-[var(--up)]/30 bg-[var(--up)]/[0.06]'
           : 'border-[var(--down)]/30 bg-[var(--down)]/[0.06]',

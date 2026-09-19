@@ -39,8 +39,8 @@ export function Sidebar({
       ) : null}
       <aside
         className={cn(
-          'w-[13.75rem] shrink-0 border-r border-[var(--hair)] px-3 py-5',
-          'md:sticky md:top-[3.3rem] md:block md:h-[calc(100vh-3.3rem)] md:overflow-y-auto',
+          'w-[13.75rem] shrink-0 border-r border-[var(--hair)] px-3 py-4',
+          'md:sticky md:top-[4.6rem] md:block md:h-[calc(100vh-4.6rem)] md:overflow-y-auto',
           open
             ? 'fixed inset-y-0 left-0 z-40 overflow-y-auto bg-[var(--ground)]'
             : 'hidden',
@@ -63,12 +63,12 @@ export function Sidebar({
                     onClick={() => onSelect(it.id)}
                     aria-current={on ? 'page' : undefined}
                     className={cn(
-                      'flex items-center gap-2.5 rounded-lg px-2 py-[7px] text-[13.5px] font-medium',
+                      'flex items-center gap-2.5 rounded-sm border-l-2 px-2 py-[6px] text-[13.5px] font-medium',
                       'transition-colors duration-75',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--acc)]/70',
                       on
-                        ? 'bg-[var(--acc-soft)] text-[var(--acc)]'
-                        : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-100',
+                        ? 'border-[var(--acc)] bg-[var(--acc-soft)] text-[var(--acc)]'
+                        : 'border-transparent text-slate-400 hover:bg-white/[0.04] hover:text-slate-100',
                     )}
                   >
                     {it.icon ? (
