@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+.venv-openbb/
 .env
 .env.*
 !.env.example
