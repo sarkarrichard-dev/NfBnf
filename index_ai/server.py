@@ -706,6 +706,13 @@ def _status_payload() -> dict[str, Any]:
     }
 
 
+@app.get("/api/ticker", include_in_schema=False)
+async def ticker() -> dict[str, Any]:
+    from index_ai.ticker import live_ticker
+
+    return await asyncio.to_thread(live_ticker, settings())
+
+
 @app.get("/api/analytics", include_in_schema=False)
 def analytics(  # sync: SQLite + pandas (+ Dhan when enrich_mtm) — Starlette threadpools it
     enrich_mtm: bool = Query(True, description="Fetch live LTP for open legs"),

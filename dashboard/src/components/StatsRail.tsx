@@ -118,7 +118,7 @@ export function StatsOverview({
       ) : null}
 
       {/* cockpit headline: period P&L + a proper equity curve */}
-      <div className="grid items-center gap-4 rounded-lg border border-[var(--hair-soft)] bg-white/[0.015] p-3.5 lg:grid-cols-[minmax(0,1fr),1.5fr]">
+      <div className="grid items-center gap-4 rounded-md border border-[var(--hair-soft)] bg-white/[0.015] p-3.5 lg:grid-cols-[minmax(0,1fr),1.5fr]">
         <div>
           <p className={fx.cardLabel}>Realised P&amp;L · {PERIOD_LABEL[period]}</p>
           <p className={cn('mt-1 font-mono text-[2rem] font-extrabold leading-none tabular-nums', pnlClass(net))}>
@@ -143,7 +143,7 @@ export function StatsOverview({
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
-              className="h-16 animate-pulse rounded-xl border border-white/[0.04] bg-white/[0.03]"
+              className="h-16 animate-pulse rounded-md border border-white/[0.04] bg-white/[0.03]"
             />
           ))}
         </div>

@@ -157,7 +157,7 @@ export function BuilderView({ seedId }: { seedId: string }) {
 
       <section
         className={cn(
-          'rounded-xl border p-3 text-xs',
+          'rounded-md border p-3 text-xs',
           issues.length
             ? 'border-[var(--warn)]/40 bg-[var(--warn)]/10 text-[var(--warn)]'
             : 'border-[var(--up)]/30 bg-[var(--up)]/10 text-[var(--up)]',
