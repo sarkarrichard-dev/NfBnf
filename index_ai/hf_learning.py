@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
+import threading
 from typing import Any
 
 import httpx
@@ -17,6 +19,12 @@ _log = logging.getLogger(__name__)
 HF_DIR = MEMORY_DIR / "hf"
 DATASET_PATH = HF_DIR / "outcomes.jsonl"
 META_PATH = HF_DIR / "hf_meta.json"
+
+# sync_hf_dataset()/_save_meta() do an unlocked read-modify-write on shared
+# files (outcomes.jsonl, hf_meta.json). Harmless while every caller ran
+# serialized on the event loop; genuinely concurrent since executor.py and
+# scanner.py's exit path now call into this from separate threads.
+_HF_LOCK = threading.Lock()
 
 DEFAULT_SENTIMENT_MODEL = "ProsusAI/finbert"
 INFERENCE_URL = "https://api-inference.huggingface.co/models"
@@ -86,9 +94,14 @@ def _load_meta() -> dict[str, Any]:
 
 def _save_meta(meta: dict[str, Any]) -> None:
     HF_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = META_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    os.replace(tmp, META_PATH)
+    fd, tmp_name = tempfile.mkstemp(dir=HF_DIR, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(meta, indent=2))
+        os.replace(tmp_name, META_PATH)
+    except BaseException:
+        os.unlink(tmp_name)
+        raise
 
 
 def _parse_sentiment_result(raw: Any) -> dict[str, Any]:
@@ -225,47 +238,48 @@ def sync_hf_dataset() -> dict[str, Any]:
     """Export closed trades to JSONL for HF datasets / future fine-tuning."""
     from index_ai.learning import connect, _is_test_trade_id, _row_to_trade
 
-    HF_DIR.mkdir(parents=True, exist_ok=True)
-    rows_written = 0
-    with connect() as db:
-        trade_rows = db.execute(
-            "SELECT * FROM trades WHERE pnl IS NOT NULL ORDER BY created_at ASC"
-        ).fetchall()
+    with _HF_LOCK:
+        HF_DIR.mkdir(parents=True, exist_ok=True)
+        rows_written = 0
+        with connect() as db:
+            trade_rows = db.execute(
+                "SELECT * FROM trades WHERE pnl IS NOT NULL ORDER BY created_at ASC"
+            ).fetchall()
 
-    with DATASET_PATH.open("w", encoding="utf-8") as handle:
-        for raw in trade_rows:
-            trade = _row_to_trade(raw)
-            tid = str(trade.get("id") or "")
-            if _is_test_trade_id(tid):
-                continue
-            signal = trade.get("signal") or {}
-            option = trade.get("option") or {}
-            inst = str(trade.get("instrument") or "NIFTY")
-            text = build_setup_narrative(signal, option, inst)
-            pnl = float(trade.get("pnl") or 0)
-            record = {
-                "trade_id": tid,
-                "text": text,
-                "label": 1 if pnl > 0 else 0,
-                "win": pnl > 0,
-                "pnl": pnl,
-                "instrument": inst,
-                "action": trade.get("action"),
-                "created_at": trade.get("created_at"),
+        with DATASET_PATH.open("w", encoding="utf-8") as handle:
+            for raw in trade_rows:
+                trade = _row_to_trade(raw)
+                tid = str(trade.get("id") or "")
+                if _is_test_trade_id(tid):
+                    continue
+                signal = trade.get("signal") or {}
+                option = trade.get("option") or {}
+                inst = str(trade.get("instrument") or "NIFTY")
+                text = build_setup_narrative(signal, option, inst)
+                pnl = float(trade.get("pnl") or 0)
+                record = {
+                    "trade_id": tid,
+                    "text": text,
+                    "label": 1 if pnl > 0 else 0,
+                    "win": pnl > 0,
+                    "pnl": pnl,
+                    "instrument": inst,
+                    "action": trade.get("action"),
+                    "created_at": trade.get("created_at"),
+                }
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                rows_written += 1
+
+        meta = _load_meta()
+        meta.update(
+            {
+                "dataset_path": str(DATASET_PATH),
+                "dataset_rows": rows_written,
+                "dataset_synced_at": now_ist_iso(),
+                "dataset_synced_at_ist": format_ist_display(now_ist_iso()),
             }
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-            rows_written += 1
-
-    meta = _load_meta()
-    meta.update(
-        {
-            "dataset_path": str(DATASET_PATH),
-            "dataset_rows": rows_written,
-            "dataset_synced_at": now_ist_iso(),
-            "dataset_synced_at_ist": format_ist_display(now_ist_iso()),
-        }
-    )
-    _save_meta(meta)
+        )
+        _save_meta(meta)
     return {
         "rows": rows_written,
         "path": str(DATASET_PATH),
@@ -295,15 +309,16 @@ def upload_bucket_to_hub() -> dict[str, Any]:
 
     api = HfApi(token=token)
     plan = api.sync_bucket(str(HF_DIR), bucket, token=token)
-    meta = _load_meta()
-    meta["bucket_uri"] = bucket
-    meta["bucket_uploaded_at"] = now_ist_iso()
-    meta["bucket_uploaded_at_ist"] = format_ist_display(now_ist_iso())
-    meta["bucket_last_sync"] = {
-        "uploaded": getattr(plan, "uploaded", None),
-        "updated": getattr(plan, "updated", None),
-    }
-    _save_meta(meta)
+    with _HF_LOCK:
+        meta = _load_meta()
+        meta["bucket_uri"] = bucket
+        meta["bucket_uploaded_at"] = now_ist_iso()
+        meta["bucket_uploaded_at_ist"] = format_ist_display(now_ist_iso())
+        meta["bucket_last_sync"] = {
+            "uploaded": getattr(plan, "uploaded", None),
+            "updated": getattr(plan, "updated", None),
+        }
+        _save_meta(meta)
     uploaded = getattr(plan, "uploaded", 0) or 0
     updated = getattr(plan, "updated", 0) or 0
     return {
@@ -360,11 +375,12 @@ def upload_dataset_to_hub() -> dict[str, Any]:
                 repo_type="dataset",
                 commit_message=f"Sync {sync['rows']} trade outcomes",
             )
-            meta = _load_meta()
-            meta["hub_repo"] = repo
-            meta["hub_uploaded_at"] = now_ist_iso()
-            meta["hub_uploaded_at_ist"] = format_ist_display(now_ist_iso())
-            _save_meta(meta)
+            with _HF_LOCK:
+                meta = _load_meta()
+                meta["hub_repo"] = repo
+                meta["hub_uploaded_at"] = now_ist_iso()
+                meta["hub_uploaded_at_ist"] = format_ist_display(now_ist_iso())
+                _save_meta(meta)
             results.append(
                 {
                     "ok": True,

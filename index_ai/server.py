@@ -1638,7 +1638,7 @@ async def execute(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[
         signal=signal,
         option=option,
     )
-    return execute_plan(plan, cfg, client)
+    return await asyncio.to_thread(execute_plan, plan, cfg, client)
 
 
 @app.post("/api/trades/check-trails", include_in_schema=False)

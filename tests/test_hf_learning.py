@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -43,7 +43,16 @@ def test_score_setup_hf_without_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("index_ai.hf_learning._hf_token", lambda: "")
     monkeypatch.delenv("HF_USE_LOCAL", raising=False)
     result = score_setup_hf(
-        {"action": "BUY_CALL", "confidence": 0.7, "reason": "test", "price": 1, "tc": 1, "bc": 1, "ema_fast": 1, "ema_slow": 0},
+        {
+            "action": "BUY_CALL",
+            "confidence": 0.7,
+            "reason": "test",
+            "price": 1,
+            "tc": 1,
+            "bc": 1,
+            "ema_fast": 1,
+            "ema_slow": 0,
+        },
         {},
         "NIFTY",
     )
@@ -64,3 +73,24 @@ def test_sync_hf_dataset_empty_db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> 
     init_db()
     out = sync_hf_dataset()
     assert out["rows"] == 0
+
+
+def test_sync_hf_dataset_survives_concurrent_callers(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: executor.py/scanner.py now call into this from separate
+    threads (asyncio.to_thread). Before the _HF_LOCK fix this reproducibly
+    threw PermissionError on the shared hf_meta.json.tmp under real concurrency."""
+    db = tmp_path / "hf.sqlite"
+    hf_dir = tmp_path / "hf"
+    monkeypatch.setattr("index_ai.config.DB_PATH", db)
+    monkeypatch.setattr("index_ai.learning.DB_PATH", db)
+    monkeypatch.setattr("index_ai.hf_learning.HF_DIR", hf_dir)
+    monkeypatch.setattr("index_ai.hf_learning.DATASET_PATH", hf_dir / "outcomes.jsonl")
+    monkeypatch.setattr("index_ai.hf_learning.META_PATH", hf_dir / "hf_meta.json")
+    from index_ai.learning import init_db
+
+    init_db()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: sync_hf_dataset(), range(20)))
+    assert all(r["rows"] == 0 for r in results)

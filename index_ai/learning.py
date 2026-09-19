@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -24,6 +25,7 @@ def now_utc() -> str:
 
 
 _schema_initialized = False
+_schema_lock = threading.Lock()
 
 
 def init_db() -> None:
@@ -74,7 +76,9 @@ def init_db() -> None:
 @contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
     if not _schema_initialized:
-        init_db()
+        with _schema_lock:
+            if not _schema_initialized:
+                init_db()
     db = sqlite3.connect(DB_PATH, timeout=30)
     db.execute("PRAGMA journal_mode=WAL")
     db.row_factory = sqlite3.Row
@@ -1469,8 +1473,14 @@ def update_learning() -> dict[str, Any]:
     elif oi_insights.get("message"):
         parts.append(str(oi_insights["message"]))
 
-    hf = update_hf_learning()
-    hf_status = load_hf_status()
+    try:
+        hf = update_hf_learning()
+        hf_status = load_hf_status()
+    except Exception:
+        # diagnostic/analytics plumbing riding on the money path — a failure here
+        # (e.g. a concurrent HF dataset sync) must never veto or crash a trade.
+        hf = {}
+        hf_status = {}
     if hf.get("ready"):
         parts.append(
             f"Hugging Face ({hf.get('model')}): {hf.get('dataset_rows', 0)} outcomes in dataset."
