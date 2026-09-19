@@ -20,8 +20,8 @@ from crypto._util import env_float as _pct
 from crypto.config import CRYPTO_MEMORY
 
 _SAMPLES_PATH = CRYPTO_MEMORY / "crypto_spread_samples.jsonl"
-_MIN_SAMPLES = 30          # below this, use the bps fallback
-_SAMPLE_WINDOW = 2000      # rows scanned for the running median
+_MIN_SAMPLES = 30  # below this, use the bps fallback
+_SAMPLE_WINDOW = 2000  # rows scanned for the running median
 
 
 # Delta Exchange India published derivative fees; GST applies on the fee itself.
@@ -35,6 +35,7 @@ _HALF_SPREAD_BPS = {
     "BTCUSD": _pct("DELTA_HALF_SPREAD_BPS_BTC", 1.0),
     "ETHUSD": _pct("DELTA_HALF_SPREAD_BPS_ETH", 2.0),
     "PAXGUSD": _pct("DELTA_HALF_SPREAD_BPS_PAXG", 1.0),  # gold trades tight
+    "XAUTUSD": _pct("DELTA_HALF_SPREAD_BPS_XAUT", 1.0),  # gold trades tight
 }
 
 
@@ -45,6 +46,7 @@ def fee_usd(notional_usd: float, *, taker: bool = True) -> float:
 
 
 # --- measured half-spread -------------------------------------------------
+
 
 def sample_spread(symbol: str, book: dict[str, Any] | None) -> None:
     """Best-effort: record the observed top-of-book spread. Never raises."""
@@ -106,9 +108,16 @@ def half_spread_usd(symbol: str, mark_price: float, *, book: dict | None = None)
     return abs(float(mark_price)) * bps / 10_000.0
 
 
-def round_trip_cost_usd(notional_usd: float, symbol: str, mark_price: float, size: float,
-                        contract_value: float, *, book: dict | None = None,
-                        taker: bool = True) -> float:
+def round_trip_cost_usd(
+    notional_usd: float,
+    symbol: str,
+    mark_price: float,
+    size: float,
+    contract_value: float,
+    *,
+    book: dict | None = None,
+    taker: bool = True,
+) -> float:
     """Fee (both sides) + slippage (both sides) for opening and closing a position."""
     fee = fee_usd(notional_usd, taker=taker) * 2.0
     slip_per_unit = half_spread_usd(symbol, mark_price, book=book)
@@ -122,7 +131,7 @@ if __name__ == "__main__":  # self-check
     assert abs(fee_usd(1000) - 0.59) < 1e-6, fee_usd(1000)
     assert abs(half_spread_usd("BTCUSD", 60000) - 6.0) < 1e-6  # 1 bp of 60k (fallback)
     assert abs(half_spread_usd("PAXGUSD", 3000) - 0.3) < 1e-9  # 1 bp of 3k
-    assert abs(half_spread_usd("SOLUSD", 200) - 0.04) < 1e-9   # 2 bp default
+    assert abs(half_spread_usd("SOLUSD", 200) - 0.04) < 1e-9  # 2 bp default
     book = {"bids": [{"price": 100.0}], "asks": [{"price": 100.4}]}
     assert abs(half_spread_usd("BTCUSD", 100, book=book) - 0.2) < 1e-9
     rt = round_trip_cost_usd(6000, "BTCUSD", 60000, 100, 0.001)

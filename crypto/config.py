@@ -33,6 +33,7 @@ CRYPTO_ALLOWLIST: tuple[str, ...] = (
     "DOGEUSD",
     "ADAUSD",
     "PAXGUSD",
+    "XAUTUSD",  # Tether Gold Token perp — second gold-backed instrument alongside PAXG
 )
 
 # Default active set. Override at runtime with CRYPTO_SYMBOLS (a comma-separated
