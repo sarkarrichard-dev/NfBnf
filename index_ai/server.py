@@ -921,7 +921,7 @@ async def sync_broker_orders() -> dict[str, Any]:
     from index_ai.learning import live_trades_for_broker_sync, recent_trades
 
     client = DhanClient(cfg.dhan)
-    updated = sync_open_live_trades(client)
+    updated = await asyncio.to_thread(sync_open_live_trades, client)
     rows = [format_trade_for_ui(t) for t in recent_trades(limit=80) if is_live_trade_ui(t)]
     return {
         "updated": updated,

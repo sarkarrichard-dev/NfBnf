@@ -280,7 +280,9 @@ def wait_for_order_terminal(
     poll_sec: float = 0.45,
 ) -> dict[str, Any]:
     """Poll GET /orders until TRADED, REJECTED, or timeout (still PENDING)."""
-    deadline = time.monotonic() + (timeout_sec if timeout_sec is not None else _confirm_wait_seconds())
+    deadline = time.monotonic() + (
+        timeout_sec if timeout_sec is not None else _confirm_wait_seconds()
+    )
     last: dict[str, Any] = {}
     while time.monotonic() < deadline:
         raw = client.get_order(str(order_id))
@@ -353,9 +355,11 @@ def aggregate_order_status_from_statuses(
             for r, s in zip(leg_results, statuses, strict=False)
             if s in _REJECTED_STATUSES
         ]
-        if not reasons and any(
-            s in _FILLED_STATUSES for s in statuses
-        ) and not all(s in _FILLED_STATUSES for s in statuses):
+        if (
+            not reasons
+            and any(s in _FILLED_STATUSES for s in statuses)
+            and not all(s in _FILLED_STATUSES for s in statuses)
+        ):
             reasons.append("Partial fill — not all spread legs executed on Dhan")
         return "LIVE_REJECTED", "; ".join(reasons) or "Order rejected by Dhan"
     if statuses and all(s == "TRADED" for s in statuses):
@@ -394,7 +398,11 @@ def confirm_placed_orders(
     confirmed: list[dict[str, Any]] = []
     order_ids: list[str] = []
     for item in responses:
-        parsed = item.get("response") if isinstance(item.get("response"), dict) else normalize_order_response(item)
+        parsed = (
+            item.get("response")
+            if isinstance(item.get("response"), dict)
+            else normalize_order_response(item)
+        )
         oid = _order_id_str(parsed.get("orderId"))
         order_ids.append(oid)
         if not oid:
@@ -487,7 +495,7 @@ def _entry_leg_sort_key(leg: dict[str, Any]) -> tuple[int, int, float]:
     Live entry order for credit / hedged sells:
     1) All BUY legs (hedge) before any SELL
     2) Within each side: calls before puts (buy calls, then buy puts, then sell calls, then sell puts)
-  """
+    """
     tx = str(leg.get("transaction_type") or "").upper()
     opt = str(leg.get("option_type") or "").upper()
     if opt == "CE":
@@ -522,7 +530,8 @@ def _wait_hedge_before_short_legs(
     if str(leg.get("transaction_type") or "").upper() != "BUY":
         return
     if not any(
-        str(l.get("transaction_type") or "").upper() == "SELL" for l in sequenced[current_index + 1 :]
+        str(l.get("transaction_type") or "").upper() == "SELL"
+        for l in sequenced[current_index + 1 :]
     ):
         return
     oid = _order_id_str((responses[-1].get("response") or {}).get("orderId"))
@@ -534,9 +543,7 @@ def _wait_hedge_before_short_legs(
     responses[-1]["order_status"] = order_status_label(parsed)
     status = effective_order_status(parsed)
     if status in _REJECTED_STATUSES:
-        raise RuntimeError(
-            f"Hedge leg rejected before short leg: {order_rejection_detail(parsed)}"
-        )
+        raise RuntimeError(f"Hedge leg rejected before short leg: {order_rejection_detail(parsed)}")
 
 
 def live_orders_enabled(settings: AppSettings) -> bool:
@@ -605,7 +612,9 @@ def place_live_entry_orders(
         return {
             "status": status,
             "legs": responses,
-            "order_ids": [r["response"].get("orderId") for r in responses if r["response"].get("orderId")],
+            "order_ids": [
+                r["response"].get("orderId") for r in responses if r["response"].get("orderId")
+            ],
             "order_statuses": [r.get("order_status") for r in responses],
         }
 
@@ -699,10 +708,15 @@ def place_live_exit_orders(
     parsed = normalize_order_response(raw)
     if not order_response_ok(raw):
         raise RuntimeError(f"Dhan rejected exit order: {order_status_label(raw)}")
-    return {"response": parsed, "order_ids": [parsed.get("orderId")] if parsed.get("orderId") else []}
+    return {
+        "response": parsed,
+        "order_ids": [parsed.get("orderId")] if parsed.get("orderId") else [],
+    }
 
 
-def attach_broker_orders(option: dict[str, Any], broker_payload: dict[str, Any] | None) -> dict[str, Any]:
+def attach_broker_orders(
+    option: dict[str, Any], broker_payload: dict[str, Any] | None
+) -> dict[str, Any]:
     if not broker_payload:
         return option
     out = dict(option)
@@ -826,7 +840,9 @@ def sync_trade_broker_status(
     )
 
     option = dict(trade.get("option") or {})
-    order_ids = [_order_id_str(x) for x in (option.get("broker_order_ids") or []) if _order_id_str(x)]
+    order_ids = [
+        _order_id_str(x) for x in (option.get("broker_order_ids") or []) if _order_id_str(x)
+    ]
     if not order_ids:
         return trade
 
@@ -881,7 +897,11 @@ def sync_trade_broker_status(
 
     if agg_status != "LIVE_TRADED":
         option = clear_option_mtm_fields(option)
-        if prior_status == "LIVE_TRADED" and trade_id and agg_status in {"LIVE_SENT", "LIVE_PENDING"}:
+        if (
+            prior_status == "LIVE_TRADED"
+            and trade_id
+            and agg_status in {"LIVE_SENT", "LIVE_PENDING"}
+        ):
             update_trade_status(trade_id, str(agg_status), option=option)
             return {**trade, "status": agg_status, "pnl": None, "option": option}
 
@@ -957,6 +977,16 @@ def verify_trade_against_positions(
     return True, None
 
 
+# A fresh entry can show LIVE_TRADED before the broker's position book has
+# caught up (the same race verify_trade_against_positions exists to catch),
+# so a mismatch in the first few minutes is treated as "never really filled"
+# (reject_live_trade, pnl forced to 0 — correct for that case). Past this
+# window a mismatch almost certainly means a *real* position vanished from
+# Dhan's book — closed by hand in the Dhan app, a bracket stop, a liquidation
+# — and forcing pnl=0 there would silently erase the trade's real result.
+_EXTERNAL_CLOSE_GRACE_SEC = 300
+
+
 def sync_open_live_trades(client: DhanClient) -> int:
     from index_ai.learning import live_trades_for_broker_sync, reject_live_trade
 
@@ -977,21 +1007,42 @@ def sync_open_live_trades(client: DhanClient) -> int:
             ok, pos_reason = verify_trade_against_positions(after_trade, position_index)
             if not ok:
                 trade_id = str(after_trade.get("id") or "")
-                option = dict(after_trade.get("option") or {})
-                from index_ai.learning import sanitize_rejected_option
 
-                option = sanitize_rejected_option(option)
-                reject_live_trade(
-                    trade_id,
-                    pos_reason or "No matching broker positions for journal legs",
-                    option=option,
-                )
-                after_trade = {
-                    **after_trade,
-                    "status": "LIVE_REJECTED",
-                    "pnl": 0.0,
-                    "option": option,
-                }
+                from index_ai.market_clock import now_ist, parse_ist_datetime
+
+                entered = parse_ist_datetime(after_trade.get("created_at"))
+                age_sec = (now_ist() - entered).total_seconds() if entered else 0.0
+
+                if entered and age_sec > _EXTERNAL_CLOSE_GRACE_SEC:
+                    from index_ai.config import settings
+                    from index_ai.exit import close_open_trade
+
+                    result = close_open_trade(
+                        after_trade,
+                        client=client,
+                        app_settings=settings(),
+                        reason="closed outside the system — Dhan shows no matching "
+                        "position (likely closed manually, a bracket stop, or a "
+                        "liquidation)",
+                        skip_broker_exit=True,
+                    )
+                    after_trade = {**after_trade, **result}
+                else:
+                    option = dict(after_trade.get("option") or {})
+                    from index_ai.learning import sanitize_rejected_option
+
+                    option = sanitize_rejected_option(option)
+                    reject_live_trade(
+                        trade_id,
+                        pos_reason or "No matching broker positions for journal legs",
+                        option=option,
+                    )
+                    after_trade = {
+                        **after_trade,
+                        "status": "LIVE_REJECTED",
+                        "pnl": 0.0,
+                        "option": option,
+                    }
         if (
             str(after_trade.get("status") or "") != before_status
             or after_trade.get("pnl") != before_pnl
