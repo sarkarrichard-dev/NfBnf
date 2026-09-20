@@ -14,13 +14,17 @@ export function istDayBoundsMs(when = new Date()): { start: number; end: number 
   return { start, end: start + 24 * 60 * 60 * 1000 }
 }
 
+const IST_WEEKDAY: Record<string, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 }
+
+/** Mon=0 .. Sun=6, by IST calendar day (not the browser's local weekday). */
+export function istWeekdayIndex(when = new Date()): number {
+  const label = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' }).format(when)
+  return IST_WEEKDAY[label] ?? 0
+}
+
 export function istWeekStartMs(when = new Date()): number {
   const { start: dayStart } = istDayBoundsMs(when)
-  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' })
-    .format(when)
-  const map: Record<string, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 }
-  const offset = map[weekday] ?? 0
-  return dayStart - offset * 24 * 60 * 60 * 1000
+  return dayStart - istWeekdayIndex(when) * 24 * 60 * 60 * 1000
 }
 
 /** IST bounds for a custom [from, to] range of YYYY-MM-DD dates, end-inclusive. */

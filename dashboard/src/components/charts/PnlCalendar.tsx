@@ -1,15 +1,9 @@
 import { useState } from 'react'
 import { cn } from '../../lib/cn'
-import { istTodayDate } from '../../lib/ist'
+import { istTodayDate, istWeekdayIndex } from '../../lib/ist'
 import { money } from '../../lib/pnl'
 
 const DAY_MS = 24 * 60 * 60 * 1000
-const IST_WEEKDAY: Record<string, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 }
-
-function istWeekdayIndex(when: Date): number {
-  const label = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' }).format(when)
-  return IST_WEEKDAY[label] ?? 0
-}
 
 type Day = { period: string; pnl_rupees: number }
 

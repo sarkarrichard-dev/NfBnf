@@ -70,11 +70,8 @@ export function TickerStrip() {
         className="ticker-track flex h-10 w-max items-center font-mono text-sm tabular-nums"
         style={{ '--ticker-duration': `${duration}s` } as React.CSSProperties}
       >
-        {rows.map((r) => (
-          <Tile key={`a-${r.symbol}`} r={r} />
-        ))}
-        {rows.map((r) => (
-          <Tile key={`b-${r.symbol}`} r={r} />
+        {[...rows, ...rows].map((r, i) => (
+          <Tile key={i} r={r} />
         ))}
       </div>
     </div>
