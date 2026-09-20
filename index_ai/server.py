@@ -89,6 +89,18 @@ from index_ai.trade_lots import adjust_lots_per_trade, lots_settings_summary, se
 from index_ai.exit import close_open_trade
 
 
+def crypto_backtest_autotune_enabled() -> bool:
+    """CRYPTO_BACKTEST_AUTOTUNE — off by default. crypto.ml.optimize.retune_all
+    scores against downloaded historical candles, not the live journal;
+    Richard rejected trusting that for tuning (2026-09-12: "i do not trust
+    past data and testing... i want all testing on live data from the
+    market"). Manual diagnostic only (POST /api/crypto/ml/optimize) bypasses
+    this check and is unaffected."""
+    from index_ai.env import env_bool
+
+    return env_bool("CRYPTO_BACKTEST_AUTOTUNE", False)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     from index_ai.single_instance import acquire_or_exit
@@ -229,10 +241,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     commodities_task = asyncio.create_task(_commodities_paper_loop())
 
     async def _crypto_nightly_loop() -> None:
-        """Crypto ML retrain + walk-forward auto-tune + day-review — once per UTC
-        day, on its OWN task so it never blocks the 60s scan loop (the auto-tune
-        can run for many minutes). A disk marker survives restarts so bouncing
-        the server doesn't re-run it. Opt-in, never fatal."""
+        """Crypto ML retrain + day-review — once per UTC day, on its OWN task so
+        it never blocks the 60s scan loop. A disk marker survives restarts so
+        bouncing the server doesn't re-run it. Opt-in, never fatal.
+
+        The backtest-based walk-forward auto-tune is separately gated — see
+        crypto_backtest_autotune_enabled()."""
         try:
             from crypto.config import CRYPTO_MEMORY
             from crypto.lanes import enabled as crypto_enabled
@@ -256,13 +270,20 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                         _clog.info("crypto ML retrain: %s", r.get("reason") or "trained")
                     except Exception:
                         _clog.warning("crypto ML retrain failed", exc_info=True)
-                    try:
-                        from crypto.ml.optimize import retune_all
+                    if crypto_backtest_autotune_enabled():
+                        try:
+                            from crypto.ml.optimize import retune_all
 
-                        await asyncio.to_thread(retune_all)
-                        _clog.info("crypto strategy auto-tune done")
-                    except Exception:
-                        _clog.warning("crypto strategy auto-tune failed", exc_info=True)
+                            await asyncio.to_thread(retune_all)
+                            _clog.info("crypto strategy auto-tune done")
+                        except Exception:
+                            _clog.warning("crypto strategy auto-tune failed", exc_info=True)
+                    else:
+                        _clog.info(
+                            "crypto strategy auto-tune skipped — backtest-based, off by "
+                            "default (set CRYPTO_BACKTEST_AUTOTUNE=true to re-enable); "
+                            "POST /api/crypto/ml/optimize runs it manually as a diagnostic"
+                        )
                     try:
                         mark.parent.mkdir(parents=True, exist_ok=True)
                         mark.write_text(today, encoding="utf-8")
