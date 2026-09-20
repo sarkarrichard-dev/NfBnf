@@ -213,12 +213,12 @@ function App() {
       }
     >
       {ks?.active ? (
-        <p className="mb-4 rounded-lg border border-[var(--armed)]/40 bg-[var(--armed)]/10 px-3 py-2 text-sm text-[var(--armed)]">
+        <p className="mb-4 rounded-md border border-[var(--armed)]/40 bg-[var(--armed)]/10 px-3 py-2 text-sm text-[var(--armed)]">
           Kill switch active: {(ks.reasons || []).join(' ')}
         </p>
       ) : null}
       {dashboard.isError ? (
-        <p className="mb-4 rounded-lg border border-[var(--armed)]/40 bg-[var(--armed)]/10 px-3 py-2 text-sm text-[var(--armed)]">
+        <p className="mb-4 rounded-md border border-[var(--armed)]/40 bg-[var(--armed)]/10 px-3 py-2 text-sm text-[var(--armed)]">
           {dashboard.error instanceof Error ? dashboard.error.message : 'Failed to load analytics'}
         </p>
       ) : null}
