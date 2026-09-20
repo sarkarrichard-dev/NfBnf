@@ -253,6 +253,12 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
             charges.sample_spread(sym, market_data.depth(sym, client=client))
         except Exception:
             pass
+        try:
+            charges.sample_funding_rate(
+                sym, market_data.ticker(sym, client=client).get("funding_rate")
+            )
+        except Exception:
+            pass
 
     st = journal.load_state()
     fx = _fx_rate(client, s)
@@ -749,7 +755,15 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
     cost = round_trip_cost_usd(
         float(pos["notional_usd"]), sym, exit_px, float(pos["size"]), float(pos["contract_value"])
     )
-    pnl_usd = gross - cost
+    exit_time = ev.get("ts") or datetime.now(timezone.utc).isoformat()
+    funding = charges.funding_cost_usd(
+        symbol=sym,
+        side=pos["side"],
+        notional_usd=float(pos["notional_usd"]),
+        entry_time=pos.get("entry_time"),
+        exit_time=exit_time,
+    )
+    pnl_usd = gross - cost - funding
     return {
         "venue": "delta",
         "day": pos["day"],
@@ -766,12 +780,13 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
         "entry_price": pos["entry_price"],
         "entry_time": pos["entry_time"],
         "exit_price": exit_px,
-        "exit_time": ev.get("ts"),
+        "exit_time": exit_time,
         "closed_at": datetime.now(timezone.utc).isoformat(),
         "margin_usd": pos["margin_total_usd"],
         "notional_usd": pos["notional_usd"],
         "gross_usd": round(gross, 4),
         "fees_usd": round(cost, 4),
+        "funding_usd": round(funding, 4),
         "pnl_usd": round(pnl_usd, 4),
         "pnl_inr": round(pnl_usd * fx, 2),
         "fx_usdinr": round(fx, 4),
