@@ -1,10 +1,16 @@
-"""Delta trading-cost estimate — exchange fee + GST + observed half-spread.
+"""Delta trading-cost estimate — exchange fee + GST + observed half-spread +
+funding.
 
 The index-side lesson (``memory/strategy-findings.md``) applies verbatim: a
 friction number that decides the answer must be *measured*, not assumed. So the
 half-spread is sampled from the live l2 book on every paper scan
 (``memory/crypto_spread_samples.jsonl``) and, once there is enough data, the
-median measured spread replaces the per-asset bps fallback.
+median measured spread replaces the per-asset bps fallback. Funding (below)
+follows the same discipline: Delta exposes no historical-funding-rate
+endpoint, so the live ``funding_rate`` ticker field is sampled every scan
+(``memory/crypto_funding_samples.jsonl``) and a trade's funding cost is
+reconstructed from the samples nearest each settlement it was open across —
+never a guessed constant.
 
 Not modelled here (tax-return items, not per-trade entry costs): the Indian VDA
 tax on crypto gains (30% + 1% TDS).
@@ -14,14 +20,24 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from crypto._util import env_float as _pct
 from crypto.config import CRYPTO_MEMORY
+from index_ai.market_clock import IST
 
 _SAMPLES_PATH = CRYPTO_MEMORY / "crypto_spread_samples.jsonl"
 _MIN_SAMPLES = 30  # below this, use the bps fallback
 _SAMPLE_WINDOW = 2000  # rows scanned for the running median
+
+_FUNDING_SAMPLES_PATH = CRYPTO_MEMORY / "crypto_funding_samples.jsonl"
+_FUNDING_WINDOW = 2000  # rows scanned when looking up a rate near a settlement
+
+# Delta settles funding 3x/day at these IST clock times — confirmed against
+# Delta's own docs (2026-09-20): "Funding will now be exchanged once every 8
+# hours ... 5:30am, 1:30pm and 9:30pm [IST]".
+_FUNDING_TIMES_IST: tuple[tuple[int, int], ...] = ((5, 30), (13, 30), (21, 30))
 
 
 # Delta Exchange India published derivative fees; GST applies on the fee itself.
@@ -126,6 +142,100 @@ def round_trip_cost_usd(
     return fee + slip
 
 
+# --- measured funding ------------------------------------------------------
+
+
+def sample_funding_rate(symbol: str, funding_rate: float | None) -> None:
+    """Best-effort: record the live ticker's funding_rate field. Never raises."""
+    try:
+        if funding_rate is None:
+            return
+        row = {"t": int(time.time()), "symbol": str(symbol).upper(), "rate": float(funding_rate)}
+        CRYPTO_MEMORY.mkdir(parents=True, exist_ok=True)
+        with _FUNDING_SAMPLES_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except Exception:
+        pass
+
+
+def _funding_rate_near(symbol: str, when_ts: float) -> float | None:
+    """The sampled funding_rate closest in time to when_ts (before or after —
+    there's no historical endpoint, so nearest sample is the best estimate)."""
+    if not _FUNDING_SAMPLES_PATH.is_file():
+        return None
+    sym = str(symbol).upper()
+    try:
+        lines = _FUNDING_SAMPLES_PATH.read_text(encoding="utf-8").splitlines()[-_FUNDING_WINDOW:]
+    except OSError:
+        return None
+    best: float | None = None
+    best_dist: float | None = None
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get("symbol") != sym:
+            continue
+        dist = abs(float(r["t"]) - when_ts)
+        if best_dist is None or dist < best_dist:
+            best, best_dist = float(r["rate"]), dist
+    return best
+
+
+def _funding_crossings_utc(entry_utc: datetime, exit_utc: datetime) -> list[datetime]:
+    """UTC instants of every Delta funding settlement strictly between entry
+    and exit (a position open across a settlement owes/receives that one)."""
+    day = entry_utc.astimezone(IST).date()
+    end_day = exit_utc.astimezone(IST).date()
+    out: list[datetime] = []
+    while day <= end_day:
+        for h, m in _FUNDING_TIMES_IST:
+            ts = datetime(day.year, day.month, day.day, h, m, tzinfo=IST).astimezone(timezone.utc)
+            if entry_utc < ts <= exit_utc:
+                out.append(ts)
+        day += timedelta(days=1)
+    return out
+
+
+def funding_cost_usd(
+    *,
+    symbol: str,
+    side: str,
+    notional_usd: float,
+    entry_time: str | None,
+    exit_time: str | None,
+) -> float:
+    """Net funding paid (positive) or received (negative) across every Delta
+    settlement the position was open for, from sampled live funding_rate —
+    Delta gives no historical-funding endpoint, so this can't be exact for a
+    position opened before sampling started, but it's real measured data, not
+    an assumed constant. Zero if timestamps are missing/unparseable or no
+    sample exists near a crossing (never fabricates a number it can't measure).
+
+    Sign: Delta's own definition — a positive funding_rate means longs pay
+    shorts. A long position's cost scales +rate; a short's scales -rate (a
+    receipt, which lowers cost / raises P&L when subtracted upstream).
+    """
+    if not entry_time or not exit_time:
+        return 0.0
+    try:
+        entry_utc = datetime.fromisoformat(str(entry_time))
+        exit_utc = datetime.fromisoformat(str(exit_time))
+    except ValueError:
+        return 0.0
+    if entry_utc.tzinfo is None or exit_utc.tzinfo is None or exit_utc <= entry_utc:
+        return 0.0
+    direction = 1.0 if str(side).lower() == "long" else -1.0
+    total = 0.0
+    for ts in _funding_crossings_utc(entry_utc, exit_utc):
+        rate = _funding_rate_near(symbol, ts.timestamp())
+        if rate is None:
+            continue
+        total += rate * float(notional_usd) * direction
+    return round(total, 6)
+
+
 if __name__ == "__main__":  # self-check
     _SAMPLES_PATH = CRYPTO_MEMORY / "_no_such_spread_samples.jsonl"  # force the bps fallback
     assert abs(fee_usd(1000) - 0.59) < 1e-6, fee_usd(1000)
@@ -139,4 +249,72 @@ if __name__ == "__main__":  # self-check
     # sampling never raises on junk
     sample_spread("BTCUSD", None)
     sample_spread("BTCUSD", {"bids": [], "asks": []})
+
+    # --- funding self-check ---
+    _FUNDING_SAMPLES_PATH = CRYPTO_MEMORY / "_no_such_funding_samples.jsonl"
+    # a window with exactly one settlement (05:30 IST) inside it
+    entry = datetime(2026, 9, 20, 0, 0, tzinfo=IST).astimezone(timezone.utc)
+    exit_ = datetime(2026, 9, 20, 8, 0, tzinfo=IST).astimezone(timezone.utc)
+    crossings = _funding_crossings_utc(entry, exit_)
+    assert len(crossings) == 1, crossings
+    assert crossings[0].astimezone(IST).hour == 5 and crossings[0].astimezone(IST).minute == 30
+
+    # no sample near the crossing -> zero, never a guessed number
+    assert (
+        funding_cost_usd(
+            symbol="ZZZNOSAMPLE",
+            side="long",
+            notional_usd=1000,
+            entry_time=entry.isoformat(),
+            exit_time=exit_.isoformat(),
+        )
+        == 0.0
+    )
+
+    # sample a rate, then a long position pays (positive cost) and an
+    # equal-size short receives (equal-magnitude negative cost)
+    sample_funding_rate("ZZZTEST", 0.01)  # 1% for this settlement
+    long_cost = funding_cost_usd(
+        symbol="ZZZTEST",
+        side="long",
+        notional_usd=1000,
+        entry_time=entry.isoformat(),
+        exit_time=exit_.isoformat(),
+    )
+    short_cost = funding_cost_usd(
+        symbol="ZZZTEST",
+        side="short",
+        notional_usd=1000,
+        entry_time=entry.isoformat(),
+        exit_time=exit_.isoformat(),
+    )
+    assert abs(long_cost - 10.0) < 1e-6, long_cost  # 1% of $1000
+    assert abs(short_cost + 10.0) < 1e-6, short_cost
+
+    # a window with no settlement inside it -> zero regardless of sampled rate
+    tight_entry = datetime(2026, 9, 20, 6, 0, tzinfo=IST).astimezone(timezone.utc)
+    tight_exit = datetime(2026, 9, 20, 7, 0, tzinfo=IST).astimezone(timezone.utc)
+    assert (
+        funding_cost_usd(
+            symbol="ZZZTEST",
+            side="long",
+            notional_usd=1000,
+            entry_time=tight_entry.isoformat(),
+            exit_time=tight_exit.isoformat(),
+        )
+        == 0.0
+    )
+
+    # missing timestamps -> zero, not an exception
+    assert (
+        funding_cost_usd(
+            symbol="ZZZTEST",
+            side="long",
+            notional_usd=1000,
+            entry_time=None,
+            exit_time=None,
+        )
+        == 0.0
+    )
+
     print("crypto.charges self-check ok")
