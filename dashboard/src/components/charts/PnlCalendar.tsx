@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { cn } from '../../lib/cn'
+import { istTodayDate } from '../../lib/ist'
 import { money } from '../../lib/pnl'
+
+const DAY_MS = 24 * 60 * 60 * 1000
+const IST_WEEKDAY: Record<string, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 }
+
+function istWeekdayIndex(when: Date): number {
+  const label = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'short' }).format(when)
+  return IST_WEEKDAY[label] ?? 0
+}
 
 type Day = { period: string; pnl_rupees: number }
 
@@ -20,29 +29,35 @@ export function PnlCalendar({
   const peak =
     Math.max(1, ...days.map((d) => Math.abs(Number(d.pnl_rupees) || 0))) || 1
 
-  // Build a grid ending on the most recent Sunday-completed week.
-  const today = new Date()
-  const end = new Date(today)
-  const dow = (end.getDay() + 6) % 7 // 0 = Mon
-  end.setDate(end.getDate() + (6 - dow)) // → Sunday of this week
-  const start = new Date(end)
-  start.setDate(start.getDate() - (weeks * 7 - 1))
+  // Build a grid ending on the most recent Sunday-completed week — all in
+  // IST, since that's the platform's trading calendar. The old version used
+  // the browser's local Date/toISOString (effectively UTC), which put any
+  // trade from IST's 00:00-05:29 window a day early relative to the data
+  // (dailySeriesFromTrades buckets by IST too, for the same reason).
+  const now = Date.now()
+  const dow = istWeekdayIndex(new Date(now)) // 0 = Mon
+  const endMs = now + (6 - dow) * DAY_MS // → Sunday of this week, IST
+  const startMs = endMs - (weeks * 7 - 1) * DAY_MS
 
-  const iso = (d: Date) => d.toISOString().slice(0, 10)
   const rows: { label: string; cells: { date: string; pnl?: number; future: boolean }[] }[] = []
-  const cur = new Date(start)
   for (let w = 0; w < weeks; w++) {
     const cells = []
     let label = ''
     for (let i = 0; i < 7; i++) {
-      const date = iso(cur)
-      if (i === 0) label = cur.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      const cellMs = startMs + (w * 7 + i) * DAY_MS
+      const date = istTodayDate(new Date(cellMs))
+      if (i === 0) {
+        label = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Kolkata',
+          month: 'short',
+          day: 'numeric',
+        }).format(new Date(cellMs))
+      }
       cells.push({
         date,
         pnl: byDate.get(date),
-        future: cur > today,
+        future: cellMs > now,
       })
-      cur.setDate(cur.getDate() + 1)
     }
     rows.push({ label, cells })
   }

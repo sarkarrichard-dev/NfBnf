@@ -106,3 +106,30 @@ body {
 [class*='tabular'] {
   font-variant-numeric: tabular-nums;
 }
+
+/* Ticker strip — a continuous turntable scroll. The track renders its
+   content twice back to back and slides exactly one copy's width, so the
+   loop point is invisible. Paused on hover so a symbol can be read. */
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.ticker-track {
+  animation: ticker-scroll linear infinite;
+  animation-duration: var(--ticker-duration, 30s);
+}
+
+.ticker-wrap:hover .ticker-track {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track {
+    animation: none;
+  }
+}
