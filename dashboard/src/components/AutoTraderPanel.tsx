@@ -164,13 +164,13 @@ export function AutoTraderPanel() {
       </p>
 
       {tripped.length ? (
-        <p className="rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 px-3 py-2 text-sm text-[var(--warn)]">
+        <p className="rounded-md border border-[var(--warn)]/40 bg-[var(--warn)]/10 px-3 py-2 text-sm text-[var(--warn)]">
           Circuit breaker open on {tripped.join(', ')} — skipped until cooldown clears.
         </p>
       ) : null}
 
       {drift.length ? (
-        <p className="rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 px-3 py-2 text-sm text-[var(--warn)]">
+        <p className="rounded-md border border-[var(--warn)]/40 bg-[var(--warn)]/10 px-3 py-2 text-sm text-[var(--warn)]">
           Broker/journal drift: {drift.map((d) => `${d.kind} on ${d.security_id} (${d.expected_qty}→${d.broker_qty})`).join('; ')}
         </p>
       ) : null}
@@ -211,7 +211,7 @@ export function AutoTraderPanel() {
               <article
                 key={c.instrument || c.action}
                 className={cn(
-                  'rounded-lg border p-3 text-xs',
+                  'rounded-md border p-3 text-xs',
                   actionClass(c.action),
                   c.plan_allowed ? 'opacity-100' : 'opacity-75',
                 )}

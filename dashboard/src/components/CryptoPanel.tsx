@@ -511,7 +511,7 @@ function SymbolSelect({
         </span>
         <span className="text-slate-500">▾</span>
       </summary>
-      <div className="absolute z-20 mt-1 w-72 max-w-full rounded-lg border border-[var(--hair)] bg-[var(--panel)] p-2 shadow-lg">
+      <div className={cn(fx.panel, 'absolute z-20 mt-1 w-72 max-w-full p-2 shadow-lg')}>
         <div className="max-h-56 space-y-0.5 overflow-auto">
           {all.map((sym) => (
             <label

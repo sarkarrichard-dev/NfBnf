@@ -207,9 +207,12 @@ function VenueTable({
               </tr>
             </thead>
             {groups.map((g) => (
-              <tbody key={g.strategy} className="border-b border-[var(--hair)] last:border-0">
+              <tbody
+                key={g.strategy}
+                className="border-b border-[var(--hair)] font-mono last:border-0"
+              >
                 <tr className="bg-white/[0.02] font-semibold text-slate-100">
-                  <Cell className="whitespace-nowrap">{g.strategy}</Cell>
+                  <Cell className="whitespace-nowrap font-sans">{g.strategy}</Cell>
                   <Cell>—</Cell>
                   <Cell />
                   <Cell className="text-right">{g.rollup.trades}</Cell>
@@ -231,7 +234,7 @@ function VenueTable({
                 {g.rows.map((r) => (
                   <tr key={`${r.instrument}-${r.mode}`} className="text-slate-300">
                     <Cell />
-                    <Cell className="whitespace-nowrap text-slate-200">{r.instrument}</Cell>
+                    <Cell className="whitespace-nowrap font-sans text-slate-200">{r.instrument}</Cell>
                     <Cell>
                       <span
                         className={cn(
@@ -296,7 +299,7 @@ export function StrategyPerformancePage() {
   return (
     <div className="space-y-4">
       {q.isError ? (
-        <p className="rounded-lg border border-[var(--down)]/40 bg-[var(--down)]/10 px-3 py-2 text-sm text-[var(--down)]">
+        <p className="rounded-md border border-[var(--down)]/40 bg-[var(--down)]/10 px-3 py-2 text-sm text-[var(--down)]">
           {q.error instanceof Error ? q.error.message : 'Failed to load'}
         </p>
       ) : null}

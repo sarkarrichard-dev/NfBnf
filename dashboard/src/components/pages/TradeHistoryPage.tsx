@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { cn } from '../../lib/cn'
-import { fx } from '../../lib/theme'
 import { PeriodBar } from '../PeriodBar'
 import { SourceToggle, useTradeSource } from '../SourceToggle'
 import { TradeLogTable } from '../TradeLogTable'
@@ -94,15 +93,13 @@ export function TradeHistoryPage({
         )}
       </div>
 
-      <section className={cn(fx.panel, 'p-4')}>
-        <TradeLogTable
-          logRows={allLogRows}
-          trades={allTrades}
-          period={period}
-          range={range}
-          mtmUpdatedAt={mtmUpdatedAt}
-        />
-      </section>
+      <TradeLogTable
+        logRows={allLogRows}
+        trades={allTrades}
+        period={period}
+        range={range}
+        mtmUpdatedAt={mtmUpdatedAt}
+      />
     </div>
   )
 }
