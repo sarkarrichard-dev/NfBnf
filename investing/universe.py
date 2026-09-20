@@ -36,6 +36,10 @@ def fetch_fo_universe() -> dict[str, dict[str, int]]:
         (df["SEM_EXM_EXCH_ID"] == "NSE")
         & (df["SEM_INSTRUMENT_NAME"] == "EQUITY")
         & (df["SEM_TRADING_SYMBOL"].str.upper().isin(fo_symbols))
+        # Dhan's scrip master carries NSE's own connectivity-test instruments
+        # (e.g. "011NSETEST") with real FUTSTK/EQUITY rows — they sort first
+        # alphabetically and silently starve any limit=N screen of real names.
+        & ~df["SEM_TRADING_SYMBOL"].str.upper().str.contains("NSETEST")
     ]
     return {
         str(r["SEM_TRADING_SYMBOL"]).upper(): {"security_id": int(float(r["SEM_SMST_SECURITY_ID"]))}
