@@ -40,9 +40,7 @@ export function AppShell({
         </div>
       </header>
 
-      <div className="sticky top-[2.85rem] z-20">
-        <TickerStrip />
-      </div>
+      <TickerStrip />
 
       <div className="mx-auto flex max-w-[92rem]">
         <Sidebar
