@@ -13,11 +13,12 @@ from zoneinfo import ZoneInfo
 import httpx
 import pandas as pd
 import uvicorn
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
 
+from index_ai.admin_auth import require_admin_secret
 from index_ai.analytics import build_analytics
 from index_ai.reports import build_report, export_filename, report_to_csv
 from index_ai.config import (
@@ -968,7 +969,10 @@ async def update_lots_settings(
 
 
 @app.post("/api/trading/mode", include_in_schema=False)
-async def trading_mode(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+async def trading_mode(
+    payload: dict[str, Any] = Body(default_factory=dict),
+    _admin: None = Depends(require_admin_secret),
+) -> dict[str, Any]:
     from index_ai.learning import open_trades_for_mode
 
     def _switch() -> tuple[str, Any, int, int]:
@@ -1330,7 +1334,10 @@ async def update_feature(payload: dict[str, Any] = Body(default_factory=dict)) -
 
 
 @app.post("/api/trading/arm-live", include_in_schema=False)
-async def arm_live(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+async def arm_live(
+    payload: dict[str, Any] = Body(default_factory=dict),
+    _admin: None = Depends(require_admin_secret),
+) -> dict[str, Any]:
     """Arm or disarm real broker orders.
 
     Arming needs the exact confirmation phrase; disarming never does — the safe

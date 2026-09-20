@@ -10,7 +10,9 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+
+from index_ai.admin_auth import require_admin_secret
 
 from crypto import charges, executor, journal, sizing
 from crypto._util import num
@@ -496,7 +498,10 @@ def set_config(
 
 
 @router.post("/mode", include_in_schema=False)
-def crypto_mode(mode: str = Body(..., embed=True)) -> dict:
+def crypto_mode(
+    mode: str = Body(..., embed=True),
+    _admin: None = Depends(require_admin_secret),
+) -> dict:
     """PAPER | LIVE. LIVE alone places no orders — arming is a separate step.
     Switching to PAPER always disarms."""
     try:
@@ -525,6 +530,7 @@ def _reset_reconcile_stamp() -> None:
 def crypto_arm_live(
     confirm: str = Body("", embed=True),
     disarm: bool = Body(False, embed=True),
+    _admin: None = Depends(require_admin_secret),
 ) -> dict:
     """Arm real Delta orders (needs the exact phrase) or disarm (one click)."""
     if disarm:
@@ -551,6 +557,7 @@ def set_credentials(
     api_key: str = Body(..., embed=True),
     api_secret: str = Body(..., embed=True),
     confirm: bool = Body(False, embed=True),
+    _admin: None = Depends(require_admin_secret),
 ) -> dict:
     """Save Delta API credentials to .env. Money-path — requires confirm=true.
 
