@@ -3,6 +3,7 @@
  *  crypto trades next to index trades. The crypto journal holds closed
  *  round-trips only — every mapped row is `is_open: false`. */
 
+import { istTodayDate } from './ist'
 import type { LogRow, TradeRow } from '../types/analytics'
 
 export type CryptoJournalRow = {
@@ -77,15 +78,22 @@ export function cryptoToLogRows(rows: CryptoJournalRow[]): LogRow[] {
   }))
 }
 
-/** Realised P&L per UTC calendar day from a trade list — the client-side
+/** Realised P&L per IST calendar day from a trade list — the client-side
  *  equivalent of the server's `daily_series` (used for the equity curve and
- *  P&L calendar when crypto trades are in view). Newest day first. */
+ *  P&L calendar when crypto trades are in view). Newest day first.
+ *
+ *  Crypto timestamps are UTC ("2026-09-19 18:35:00+00:00"); a naive string
+ *  slice put any trade from IST's 00:00-05:29 window (the tail of crypto's
+ *  overnight session) a day early on the calendar, since that time is still
+ *  the *previous* UTC day. Every other section buckets by IST, so this must
+ *  too — the whole platform's trading day is IST, not UTC. */
 export function dailySeriesFromTrades(trades: TradeRow[]): DailyPoint[] {
   const byDay = new Map<string, number>()
   for (const t of trades) {
     if (t.pnl == null || !t.created_at) continue
-    const key = String(t.created_at).slice(0, 10)
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue
+    const when = new Date(t.created_at)
+    if (Number.isNaN(when.getTime())) continue
+    const key = istTodayDate(when)
     byDay.set(key, (byDay.get(key) ?? 0) + Number(t.pnl || 0))
   }
   return [...byDay.entries()]

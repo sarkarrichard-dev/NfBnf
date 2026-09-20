@@ -40,7 +40,7 @@ export function Sidebar({
       <aside
         className={cn(
           'w-[13.75rem] shrink-0 border-r border-[var(--hair)] px-3 py-4',
-          'md:sticky md:top-[4.6rem] md:block md:h-[calc(100vh-4.6rem)] md:overflow-y-auto',
+          'md:sticky md:top-[5.35rem] md:block md:h-[calc(100vh-5.35rem)] md:overflow-y-auto',
           open
             ? 'fixed inset-y-0 left-0 z-40 overflow-y-auto bg-[var(--ground)]'
             : 'hidden',
