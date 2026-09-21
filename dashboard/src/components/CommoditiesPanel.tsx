@@ -154,7 +154,7 @@ export function CommoditiesPanel() {
           {Object.entries(s?.contracts ?? {}).map(([k, c]) => (
             <div
               key={k}
-              className="flex flex-col gap-0.5 rounded-lg border border-[var(--hair-soft)] px-3 py-1.5"
+              className="flex flex-col gap-0.5 rounded-md border border-[var(--hair-soft)] px-3 py-1.5"
             >
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-xs font-semibold text-slate-200">{c.label || k}</span>
@@ -196,7 +196,7 @@ export function CommoditiesPanel() {
               {closeAllPos.isPending ? 'Closing all…' : 'Close all'}
             </button>
           </div>
-          <div className="mt-1 overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
+          <div className="mt-1 overflow-x-auto rounded-md border border-[var(--hair)] bg-black/25">
             <table className="min-w-full text-[11px]">
               <thead className="text-slate-500">
                 <tr className="border-b border-[var(--hair-soft)] [&>th]:px-2.5 [&>th]:py-1.5 [&>th]:text-left [&>th]:font-medium">

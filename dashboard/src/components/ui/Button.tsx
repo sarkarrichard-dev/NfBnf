@@ -59,7 +59,7 @@ export function Button({
       disabled={disabled || pending}
       aria-busy={pending || undefined}
       className={cn(
-        'inline-flex select-none items-center justify-center rounded-lg border font-semibold',
+        'inline-flex select-none items-center justify-center rounded-lg border font-semibold cursor-pointer',
         'transition-[transform,background-color,border-color,filter] duration-100 ease-out',
         'active:scale-[0.97] motion-reduce:active:scale-100 motion-reduce:transition-none',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--acc)]/70',

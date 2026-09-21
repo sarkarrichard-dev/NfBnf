@@ -4,6 +4,7 @@ import { usePollMs } from '../hooks/usePageVisible'
 import { money, pnlClass } from '../lib/pnl'
 import { cn } from '../lib/cn'
 import { Button } from './ui/Button'
+import { StatTile } from './ui/StatTile'
 
 type DhanPosition = {
   leg_label?: string
@@ -117,10 +118,7 @@ export function DhanAccountPanel({ tradingMode }: Props) {
           ['Collateral', funds.collateral_amount],
           ['Receivable', funds.receivable_amount],
         ].map(([label, val]) => (
-          <article key={String(label)} className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
-            <span className="text-xs text-slate-500">{label}</span>
-            <p className="text-lg font-semibold tabular-nums">{money(val as number | undefined)}</p>
-          </article>
+          <StatTile key={String(label)} label={String(label)} value={money(val as number | undefined)} />
         ))}
       </div>
 
@@ -175,7 +173,7 @@ function MiniTable({
   return (
     <div>
       <h3 className="mb-2 text-xs font-medium text-slate-400">{title}</h3>
-      <div className="max-h-48 overflow-auto rounded-lg border border-slate-800">
+      <div className="max-h-48 overflow-auto rounded-md border border-slate-800">
         <table className="min-w-full text-xs">
           <thead className="sticky top-0 bg-slate-950 text-slate-500">
             <tr>
@@ -186,7 +184,7 @@ function MiniTable({
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="font-mono">
             {!rows.length ? (
               <tr>
                 <td colSpan={headers.length} className="px-2 py-4 text-center text-slate-500">

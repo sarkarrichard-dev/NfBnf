@@ -3,7 +3,9 @@ import type { DateRange, LogRow, PeriodKey, PeriodStats, TradeRow } from '../typ
 
 export function money(v?: number | null): string {
   if (v == null || Number.isNaN(Number(v))) return '—'
-  const n = Number(v)
+  // `-0 >= 0` is true but `(-0).toLocaleString()` prints "-0" — without this,
+  // a value that rounds to zero renders as the nonsensical "+₹-0".
+  const n = Number(v) || 0
   const sign = n >= 0 ? '+' : ''
   return `${sign}₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 }

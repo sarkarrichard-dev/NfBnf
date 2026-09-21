@@ -89,7 +89,7 @@ export function DayReviewPanel() {
         <div className="mb-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <div>
             <span className="block text-xs text-slate-400">Net P&amp;L</span>
-            <strong className={cn('text-lg tabular-nums', pnlClass(net))}>{money(net)}</strong>
+            <strong className={cn('font-mono text-lg tabular-nums', pnlClass(net))}>{money(net)}</strong>
           </div>
           <div>
             <span className="block text-xs text-slate-400">Record</span>
@@ -117,7 +117,7 @@ export function DayReviewPanel() {
         </div>
 
         {r?.narrative ? (
-          <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+          <div className="rounded-md border border-white/[0.06] bg-white/[0.02] p-3">
             <div className="mb-1 flex items-center gap-2">
               <h4 className="text-xs uppercase tracking-wide text-slate-500">How today went</h4>
               <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
@@ -130,7 +130,7 @@ export function DayReviewPanel() {
 
         {(r?.went_right?.length || r?.went_wrong?.length) ? (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-[var(--up)]/20 bg-[var(--up)]/[0.04] p-3">
+            <div className="rounded-md border border-[var(--up)]/20 bg-[var(--up)]/[0.04] p-3">
               <h4 className="mb-1.5 text-xs uppercase tracking-wide text-[var(--up)]/80">
                 What went right
               </h4>
@@ -144,7 +144,7 @@ export function DayReviewPanel() {
                 {!r?.went_right?.length ? <li className="text-slate-500">—</li> : null}
               </ul>
             </div>
-            <div className="rounded-lg border border-[var(--down)]/20 bg-[var(--down)]/[0.04] p-3">
+            <div className="rounded-md border border-[var(--down)]/20 bg-[var(--down)]/[0.04] p-3">
               <h4 className="mb-1.5 text-xs uppercase tracking-wide text-[var(--down)]/80">
                 What went wrong
               </h4>
@@ -162,7 +162,7 @@ export function DayReviewPanel() {
         ) : null}
 
         {r?.watch?.length ? (
-          <div className="mt-3 rounded-lg border border-[var(--warn)]/20 bg-[var(--warn)]/[0.04] p-3">
+          <div className="mt-3 rounded-md border border-[var(--warn)]/20 bg-[var(--warn)]/[0.04] p-3">
             <h4 className="mb-1.5 text-xs uppercase tracking-wide text-[var(--warn)]/80">
               Watch tomorrow
             </h4>
@@ -191,7 +191,7 @@ export function DayReviewPanel() {
             {trades.map((t) => (
               <article
                 key={t.id}
-                className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3"
+                className="rounded-md border border-white/[0.06] bg-white/[0.02] p-3"
               >
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <div className="text-sm">
@@ -199,7 +199,7 @@ export function DayReviewPanel() {
                     <span className="text-slate-400">{t.structure}</span>
                     {t.lots ? <span className="text-slate-500"> · {t.lots}</span> : null}
                   </div>
-                  <div className="flex items-center gap-3 text-xs tabular-nums">
+                  <div className="flex items-center gap-3 font-mono text-xs tabular-nums">
                     <span className="text-slate-500">
                       {hhmm(t.opened_ist)} → {t.is_open ? 'open' : hhmm(t.closed_ist)}
                     </span>

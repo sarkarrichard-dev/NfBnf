@@ -113,7 +113,10 @@ export function StatsOverview({
 
       {period === 'today' && marketOpen === false && marketMessage ? (
         <p className="text-[11px] text-[var(--warn)]/80">
-          Market closed — {marketMessage}. Today counts IST session entries only (9:20–15:10 Mon–Fri).
+          {/* marketMessage already reads "Market closed — ..." from the
+              backend, so no extra prefix here — that used to double up into
+              "Market closed — Market closed — session ended..". */}
+          {marketMessage} Today counts IST session entries only (9:20–15:10 Mon–Fri).
         </p>
       ) : null}
 

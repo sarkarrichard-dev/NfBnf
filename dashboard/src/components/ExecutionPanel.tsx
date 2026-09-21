@@ -194,7 +194,7 @@ export const ExecutionPanel = memo(function ExecutionPanel({
             <strong
               aria-live="polite"
               className={cn(
-                'min-w-[2rem] text-center text-lg tabular-nums text-slate-50',
+                'min-w-[2rem] text-center font-mono text-lg tabular-nums text-slate-50',
                 adjustLots.isPending && 'animate-pulse text-[var(--acc)]',
               )}
             >
@@ -221,15 +221,15 @@ export const ExecutionPanel = memo(function ExecutionPanel({
         <div className="flex flex-wrap gap-4 text-sm">
           <div>
             <span className="block text-xs text-slate-400">{summaryLabel} open</span>
-            <strong className="text-slate-50">{summary?.open ?? 0}</strong>
+            <strong className="font-mono tabular-nums text-slate-50">{summary?.open ?? 0}</strong>
           </div>
           <div>
             <span className="block text-xs text-slate-400">{summaryLabel} realized</span>
-            <strong className="text-slate-50">{money(summary?.realized_pnl)}</strong>
+            <strong className="font-mono tabular-nums text-slate-50">{money(summary?.realized_pnl)}</strong>
           </div>
           <div>
             <span className="block text-xs text-slate-400">{summaryLabel} MTM</span>
-            <strong className="text-slate-50">{money(summary?.open_mtm)}</strong>
+            <strong className="font-mono tabular-nums text-slate-50">{money(summary?.open_mtm)}</strong>
           </div>
         </div>
       </div>

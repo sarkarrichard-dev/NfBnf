@@ -96,7 +96,7 @@ export function BacktestPanel() {
         </div>
       </div>
       <p className="text-sm text-slate-400">{summary}</p>
-      <pre className="max-h-64 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 text-[11px] text-slate-500">
+      <pre className="max-h-64 overflow-auto rounded-md border border-slate-800 bg-slate-950 p-3 text-[11px] text-slate-500">
         {output}
       </pre>
     </div>

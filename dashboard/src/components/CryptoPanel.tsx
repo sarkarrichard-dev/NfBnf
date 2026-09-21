@@ -371,7 +371,7 @@ export function CryptoPanel() {
           ) : null}
         </div>
         {positions.data?.paper?.length ? (
-          <div className="overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
+          <div className="overflow-x-auto rounded-md border border-[var(--hair)] bg-black/25">
             <table className="min-w-full text-xs">
               <thead className="text-cyan-200/50">
                 <tr className="border-b border-slate-800 [&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">
@@ -513,7 +513,7 @@ function SymbolSelect({
       }}
       className="relative inline-block"
     >
-      <summary className="flex w-72 max-w-full cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-[var(--hair)] bg-black/30 px-3 py-1.5 text-xs text-slate-100 [&::-webkit-details-marker]:hidden">
+      <summary className="flex w-72 max-w-full cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[var(--hair)] bg-black/30 px-3 py-1.5 text-xs text-slate-100 [&::-webkit-details-marker]:hidden">
         <span className="truncate">
           {picked.length} symbol{picked.length === 1 ? '' : 's'}: {picked.join(', ') || '—'}
         </span>
@@ -653,7 +653,7 @@ function LotTable({ rows }: { rows: LotRow[] }) {
     return r ? (r.margin_per_lot_inr as number) / (r.margin_per_lot_usd as number) : 0
   })()
   return (
-    <div className="overflow-x-auto rounded-lg border border-[var(--hair)] bg-black/25">
+    <div className="overflow-x-auto rounded-md border border-[var(--hair)] bg-black/25">
       <table className="min-w-full text-xs">
         <thead className="text-cyan-200/50">
           <tr className="border-b border-slate-800 [&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium">

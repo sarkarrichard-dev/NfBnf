@@ -4,6 +4,7 @@ import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { pctRate } from '../lib/pnl'
 import { Button } from './ui/Button'
+import { StatTile } from './ui/StatTile'
 
 export function LearningPanel() {
   const qc = useQueryClient()
@@ -79,10 +80,7 @@ export function LearningPanel() {
           ['HF status', hf.ready ? 'Ready' : 'Off'],
           ['HF rows', String(hf.dataset_rows ?? '—')],
         ].map(([label, val]) => (
-          <article key={String(label)} className="rounded-lg border border-slate-800 p-3">
-            <span className="text-xs text-slate-500">{label}</span>
-            <p className="font-semibold text-slate-200">{String(val)}</p>
-          </article>
+          <StatTile key={String(label)} label={String(label)} value={String(val)} />
         ))}
       </div>
     </div>

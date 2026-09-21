@@ -229,7 +229,11 @@ export const byId = (id: string) => STRATEGIES.find((s) => s.id === id)
 
 /** The one mechanic left visible when internals are redacted. */
 export function sideLabel(def: StrategyDef): string {
-  if (def.kind === 'index') {
+  // 'futures' is also kind:'index' (same instruments, same signal) but it's
+  // an outright long/short position, never an option leg — it was falling
+  // through to the options branch below and showing "Option buying", which
+  // is simply wrong for a futures strategy.
+  if (def.kind === 'index' && def.id !== 'futures') {
     return def.side === 'selling'
       ? 'Option selling'
       : def.side === 'mixed'

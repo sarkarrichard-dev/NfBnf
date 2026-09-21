@@ -52,7 +52,7 @@ export function FeaturesPanel() {
       {flags.map((f) => (
         <div
           key={f.flag}
-          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 p-3"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-800 p-3"
         >
           <div className="min-w-0">
             <p className="font-mono text-xs text-slate-300">{f.flag}</p>

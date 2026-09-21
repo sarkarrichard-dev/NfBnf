@@ -60,8 +60,8 @@ export function TradeHistoryPage({
   }, [source, allLogRows, allTrades, period, range])
 
   const exportBtn =
-    'inline-flex items-center gap-1.5 rounded-lg border border-[var(--hair)] bg-white/[0.04] ' +
-    'px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-white/[0.08]'
+    'inline-flex items-center gap-1.5 rounded-md border border-[var(--hair)] bg-white/[0.04] ' +
+    'px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-white/[0.08] cursor-pointer'
   const downloadIcon = (
     <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />

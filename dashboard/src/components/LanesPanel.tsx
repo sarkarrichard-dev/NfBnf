@@ -74,7 +74,7 @@ export function LaneCard({ title, data }: { title: string; data?: LaneStatus }) 
   })
 
   return (
-    <section className="rounded-lg border border-slate-800 p-3">
+    <section className="rounded-md border border-slate-800 p-3">
       <header className="mb-2 flex items-center justify-between gap-2">
         <h4 className="text-sm font-semibold text-slate-200">{title}</h4>
         <span
@@ -126,7 +126,7 @@ export function LaneCard({ title, data }: { title: string; data?: LaneStatus }) 
               {closeAllPos.isPending ? 'Closing all…' : 'Close all'}
             </button>
           </div>
-          <div className="mt-1 overflow-x-auto rounded-lg border border-slate-800 bg-black/25">
+          <div className="mt-1 overflow-x-auto rounded-md border border-slate-800 bg-black/25">
             <table className="min-w-full text-[11px]">
               <thead className="text-slate-500">
                 <tr className="border-b border-slate-800 [&>th]:px-2.5 [&>th]:py-1.5 [&>th]:text-left [&>th]:font-medium">
