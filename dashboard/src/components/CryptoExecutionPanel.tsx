@@ -40,6 +40,12 @@ type Lots = { margin_per_position_usd: number; leverage: number; table: LotRow[]
  * pill, a $ per position input, and the arm strip. Its own two locks and its
  * own phrase ("ARM CRYPTO LIVE"), separate from the index arm.
  *
+ * Arming is a one-click "are you sure?" popup, same as the index panel — the
+ * confirm phrase is sent automatically on confirm, never typed by hand
+ * (Richard, 2026-09-22: the old type-the-phrase box was needless friction;
+ * the server-side phrase check is what actually guards against a stray
+ * request, not what the operator has to type).
+ *
  * Sizing is dollar-first (Richard, 2026-09-14): the operator sets one $ margin
  * budget per position, and each symbol auto-sizes to however many contracts
  * that budget covers at its own price and the configured leverage — a fixed
@@ -62,18 +68,15 @@ export function CryptoExecutionPanel() {
   const armed = !!s?.live_armed
   const leverage = s?.sizing.leverage ?? lotsQ.data?.leverage ?? 20
   const margin = s?.sizing.margin_per_position_usd ?? 50
-  const [phrase, setPhrase] = useState('')
-  const [arming, setArming] = useState(false)
+  // 'go-live' = switch PAPER→LIVE and arm in one confirm. 'arm' = already in
+  // Live, just arm. null = closed.
+  const [modal, setModal] = useState<'go-live' | 'arm' | null>(null)
   const [marginDraft, setMarginDraft] = useState('')  // '' = show the live `margin`
 
   const setMode = useMutation({
     mutationFn: (mode: string) =>
       api('/api/crypto/mode', { method: 'POST', body: JSON.stringify({ mode }) }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['crypto'] })
-      setArming(false)
-      setPhrase('')
-    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['crypto'] }),
     onError: (e: Error) => toast.error(e.message),
   })
 
@@ -87,12 +90,17 @@ export function CryptoExecutionPanel() {
       toast[r.live_orders_enabled ? 'warning' : 'success'](
         r.live_orders_enabled ? 'CRYPTO LIVE ORDERS ARMED' : 'Crypto live orders disarmed',
       )
-      setArming(false)
-      setPhrase('')
       void qc.invalidateQueries({ queryKey: ['crypto'] })
     },
     onError: (e: Error) => toast.error(e.message),
   })
+
+  const busy = setMode.isPending || armLive.isPending
+  const confirmModal = async () => {
+    if (modal === 'go-live') await setMode.mutateAsync('LIVE')
+    await armLive.mutateAsync({ confirm: s?.arm_phrase ?? '' })
+    setModal(null)
+  }
 
   const adjustMargin = useMutation({
     mutationFn: (usd: number) =>
@@ -106,7 +114,6 @@ export function CryptoExecutionPanel() {
 
   const ks = s?.kill_switch
   const eg = s?.egress
-  const busy = setMode.isPending || armLive.isPending
   const commitMargin = () => {
     const n = Math.round(Number(marginDraft))
     setMarginDraft('')
@@ -145,8 +152,8 @@ export function CryptoExecutionPanel() {
             disabled={busy || (!isLive && !s?.credentials_ready)}
             onClick={() => {
               if (busy) return
-              if (isLive) setMode.mutate('PAPER')
-              else setMode.mutate('LIVE')
+              if (isLive) setMode.mutate('PAPER') // safe direction — no confirm, server disarms
+              else setModal('go-live')
             }}
             className={cn(
               'relative flex h-9 w-[164px] items-center rounded-full border p-1 text-xs font-semibold transition-colors',
@@ -249,35 +256,8 @@ export function CryptoExecutionPanel() {
             >
               Disarm
             </Button>
-          ) : arming ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                autoFocus
-                className="w-52 rounded-md border border-[var(--hair)] bg-black/30 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-[var(--armed)]"
-                placeholder={s?.arm_phrase}
-                value={phrase}
-                onChange={(e) => setPhrase(e.target.value)}
-              />
-              <Button
-                variant="danger"
-                pending={armLive.isPending}
-                disabled={phrase.trim().toUpperCase() !== (s?.arm_phrase ?? '').toUpperCase()}
-                onClick={() => armLive.mutate({ confirm: phrase })}
-              >
-                Arm
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setArming(false)
-                  setPhrase('')
-                }}
-              >
-                Cancel
-              </Button>
-            </div>
           ) : (
-            <Button variant="primary" onClick={() => setArming(true)}>
+            <Button variant="primary" onClick={() => setModal('arm')}>
               Arm live orders
             </Button>
           )}
@@ -311,6 +291,37 @@ export function CryptoExecutionPanel() {
               : `${ks?.today_live_trades ?? 0} live trades · net $${(ks?.today_live_net_usd ?? 0).toFixed(2)} · limit $${ks?.max_daily_loss_usd ?? 50} / ${ks?.max_consec_losses ?? 3} losses`}
           </dd>
         </dl>
+      ) : null}
+
+      {modal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="crypto-exec-modal-title"
+          onClick={() => !busy && setModal(null)}
+        >
+          <div
+            className={cn(fx.panel, 'w-full max-w-sm p-5')}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="crypto-exec-modal-title" className="text-base font-semibold text-[var(--armed)]">
+              {modal === 'go-live' ? 'Switch to Live crypto trading?' : 'Arm crypto live orders?'}
+            </h3>
+            <p className="mt-2 text-sm text-slate-300">
+              This arms real Delta orders. Strategy entries will be sent with real money until
+              you disarm or switch back to Paper.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="ghost" disabled={busy} onClick={() => setModal(null)}>
+                Cancel
+              </Button>
+              <Button variant="danger" pending={busy} onClick={() => void confirmModal()}>
+                Confirm
+              </Button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </section>
   )
