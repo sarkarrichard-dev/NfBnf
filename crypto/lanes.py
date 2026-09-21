@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any
 
@@ -43,6 +43,22 @@ logger = logging.getLogger(__name__)
 _STATE_LOCK = threading.Lock()
 
 _ICHI_DAYS = {"15m": 4, "30m": 8, "1h": 15, "2h": 25, "4h": 45, "6h": 60, "1d": 260}
+
+# Every scan cycle's events (enter/exit/wait/error), most-recent-first, so a
+# skipped LIVE entry (insufficient wallet, IP block, ML gate, ...) is visible
+# on the dashboard even though it's too routine to log to server.log the way
+# an enter/exit is. Mirrors index_ai.scanner's own _state.events deque.
+_recent_events: deque[dict[str, Any]] = deque(maxlen=60)
+
+
+def recent_events() -> list[dict[str, Any]]:
+    return list(_recent_events)
+
+
+def _record_events(events: list[dict[str, Any]]) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    for ev in events:
+        _recent_events.appendleft({"at": now, **ev})
 
 
 def enabled() -> bool:
@@ -231,10 +247,14 @@ def scan_crypto_paper(client: DeltaClient | None = None) -> list[dict[str, Any]]
     client = client or DeltaClient(s)
     try:
         with _STATE_LOCK:  # serialize against a concurrent manual close (see lock docstring)
-            return _scan(s, client)
+            events = _scan(s, client)
+            _record_events(events)
+            return events
     except Exception as exc:  # the "never raises" contract — the loop must survive
         logger.warning("crypto scan aborted", exc_info=True)
-        return [{"event": "error", "where": "scan", "error": str(exc)}]
+        err_event = [{"event": "error", "where": "scan", "error": str(exc)}]
+        _record_events(err_event)
+        return err_event
     finally:
         if own and client is not None:  # close the pooled httpx.Client we opened
             client.close()

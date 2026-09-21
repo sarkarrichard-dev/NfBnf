@@ -67,6 +67,14 @@ type Status = {
       { params?: Record<string, number>; net_usd?: number | null; stable?: boolean; tuned_at?: string }
     >
   }
+  events?: Array<{
+    at: string
+    event: string
+    strategy?: string
+    asset?: string
+    reason?: string
+    error?: string
+  }>
 }
 type LotRow = {
   symbol: string
@@ -233,6 +241,8 @@ export function CryptoPanel() {
       </p>
 
       <CryptoExecutionPanel />
+
+      <LastSkippedBanner events={s?.events} />
 
       {/* stats rail — same shape as the index tab */}
       <section className={cn(fx.panel, 'px-3 py-2.5')}>
@@ -544,6 +554,24 @@ function SymbolSelect({
         </div>
       </div>
     </details>
+  )
+}
+
+/** The most recent skipped-entry reason (insufficient wallet, ML gate, IP
+ *  block, ...) — these never show up in the trade log since no trade was
+ *  placed, so without this a "why isn't it trading" test looks like silence
+ *  instead of a visible, explained skip. */
+function LastSkippedBanner({ events }: { events?: Status['events'] }) {
+  const last = (events ?? []).find((e) => e.event === 'wait' || e.event === 'error')
+  if (!last) return null
+  const ageMin = Math.max(0, Math.round((Date.now() - new Date(last.at).getTime()) / 60_000))
+  if (ageMin > 30) return null // stale — don't keep an old skip visible forever
+  const who = [last.strategy, last.asset].filter(Boolean).join(' · ')
+  const why = last.reason || last.error || 'skipped'
+  return (
+    <p className="rounded-md border border-[var(--warn)]/40 bg-[var(--warn)]/10 px-3 py-2 text-sm text-[var(--warn)]">
+      Last skipped entry{who ? ` (${who})` : ''}, {ageMin}m ago: {why}
+    </p>
   )
 }
 
