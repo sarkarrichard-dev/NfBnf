@@ -241,7 +241,14 @@ function LegRow({ row, cols }: { row: LogRow; cols: ColFlags }) {
       <td className="whitespace-nowrap px-2 py-2 text-xs">{row.open_time_ist || '—'}</td>
       <td className="whitespace-nowrap px-2 py-2 text-xs">{row.close_time_ist || '—'}</td>
       <td className="px-2 py-2">
-        <span className="rounded border border-slate-700 px-1.5 py-0.5 text-[11px]">
+        <span
+          className={cn(
+            'rounded border px-1.5 py-0.5 text-[11px]',
+            String(row.mode).toLowerCase() === 'live'
+              ? 'border-[var(--warn)]/50 bg-[var(--warn)]/10 text-[var(--warn)] font-semibold'
+              : 'border-slate-700',
+          )}
+        >
           {row.mode || '—'}
         </span>
       </td>
