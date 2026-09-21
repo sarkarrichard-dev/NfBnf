@@ -16,6 +16,12 @@ from index_ai.atomic_io import atomic_write_json
 
 STATE_PATH = CRYPTO_MEMORY / "crypto_state.json"
 JOURNAL_PATH = CRYPTO_MEMORY / "crypto_journal.jsonl"
+# A LIVE signal that fired but never became a real position (insufficient
+# wallet balance, IP block, ML gate, a broker rejection, ...). Kept in its
+# own file, never JOURNAL_PATH, so the scorecard / kill switch / equity
+# curve — every one of which treats a journal row as a real priced trade —
+# stay untouched. The trade-history table merges the two for display only.
+BLOCKED_PATH = CRYPTO_MEMORY / "crypto_blocked.jsonl"
 
 
 def load_state() -> dict[str, Any]:
@@ -57,6 +63,27 @@ def day_rows(day: str, *, strategy: str | None = None) -> list[dict[str, Any]]:
     return out
 
 
+def log_blocked(row: dict[str, Any]) -> None:
+    CRYPTO_MEMORY.mkdir(parents=True, exist_ok=True)
+    with BLOCKED_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, default=str) + "\n")
+
+
+def recent_blocked(limit: int = 100) -> list[dict[str, Any]]:
+    if not BLOCKED_PATH.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in BLOCKED_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    return rows[-limit:]
+
+
 if __name__ == "__main__":  # self-check (tmp files, no clobber of real journal)
     import tempfile
     from pathlib import Path
@@ -64,10 +91,17 @@ if __name__ == "__main__":  # self-check (tmp files, no clobber of real journal)
     d = Path(tempfile.mkdtemp())
     STATE_PATH = d / "crypto_state.json"
     JOURNAL_PATH = d / "crypto_journal.jsonl"
+    BLOCKED_PATH = d / "crypto_blocked.jsonl"
     save_state({"ny_n_break:BTCUSD": {"position": None}})
     assert load_state()["ny_n_break:BTCUSD"]["position"] is None
     journal({"day": "2026-09-07", "strategy": "ny_n_break", "asset": "BTCUSD", "pnl_usd": 12.0})
     journal({"day": "2026-09-07", "strategy": "ichimoku", "asset": "ETHUSD", "pnl_usd": -3.0})
     assert len(recent()) == 2
     assert len(day_rows("2026-09-07", strategy="ny_n_break")) == 1
+    assert recent_blocked() == []  # file doesn't exist yet
+    log_blocked(
+        {"strategy": "ny_n_break", "asset": "BTCUSD", "reason": "sizing: no wallet balance"}
+    )
+    assert len(recent_blocked()) == 1
+    assert len(recent()) == 2  # blocked entries never touch the real journal
     print("crypto.journal self-check ok")

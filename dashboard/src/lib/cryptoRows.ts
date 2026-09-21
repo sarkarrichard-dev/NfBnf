@@ -55,27 +55,34 @@ export function cryptoToTradeRows(rows: CryptoJournalRow[]): TradeRow[] {
 }
 
 export function cryptoToLogRows(rows: CryptoJournalRow[]): LogRow[] {
-  return rows.map((r) => ({
-    trade_id: rowId(r),
-    leg_index: 0,
-    leg_count: 1,
-    open_time_ist: istDisplay(openedIso(r)),
-    close_time_ist: istDisplay(r.closed_at || r.exit_time) ?? null,
-    instrument: coin(r.asset),
-    strategy: r.strategy,
-    side: (r.side || '').toLowerCase() === 'short' ? 'Sell' : 'Buy',
-    quantity: r.size,
-    avg_entry: r.entry_price ?? null,
-    avg_exit: r.exit_price ?? null,
-    leg_pnl: r.pnl_inr ?? null,
-    display_pnl: r.pnl_inr ?? null,
-    spread_pnl: r.pnl_inr ?? null,
-    is_open: false,
-    status: 'Closed',
-    display_status: r.exit_reason || 'Closed',
-    mode: r.mode,
-    quote_ccy: 'USD',
-  }))
+  return rows.map((r) => {
+    // A LIVE signal that never became a real position (insufficient funds,
+    // ML gate, broker rejection, ...) — no fill, so no price/pnl, only a
+    // reason. Reuses the same LIVE_REJECTED dimming the India side already
+    // has, rather than looking like an ordinary closed trade.
+    const blocked = r.pnl_inr == null && r.pnl_usd == null
+    return {
+      trade_id: rowId(r),
+      leg_index: 0,
+      leg_count: 1,
+      open_time_ist: istDisplay(openedIso(r)),
+      close_time_ist: istDisplay(r.closed_at || r.exit_time) ?? null,
+      instrument: coin(r.asset),
+      strategy: r.strategy,
+      side: (r.side || '').toLowerCase() === 'short' ? 'Sell' : 'Buy',
+      quantity: r.size,
+      avg_entry: r.entry_price ?? null,
+      avg_exit: r.exit_price ?? null,
+      leg_pnl: r.pnl_inr ?? null,
+      display_pnl: r.pnl_inr ?? null,
+      spread_pnl: r.pnl_inr ?? null,
+      is_open: false,
+      status: blocked ? 'LIVE_REJECTED' : 'Closed',
+      display_status: r.exit_reason || (blocked ? 'Order not placed' : 'Closed'),
+      mode: r.mode,
+      quote_ccy: 'USD',
+    }
+  })
 }
 
 /** Realised P&L per IST calendar day from a trade list — the client-side

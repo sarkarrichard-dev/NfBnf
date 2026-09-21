@@ -28,6 +28,7 @@ def test_status_ok(monkeypatch):
 
 def test_journal_and_day(tmp_path, monkeypatch):
     monkeypatch.setattr(journal, "JOURNAL_PATH", tmp_path / "j.jsonl")
+    monkeypatch.setattr(journal, "BLOCKED_PATH", tmp_path / "b.jsonl")
     journal.journal(
         {
             "day": "2026-09-07",
@@ -52,6 +53,44 @@ def test_positions_no_creds(monkeypatch):
     r = client.get("/api/crypto/positions").json()
     assert r["paper"] == [] and r["live"] == []
     assert r["open_unrealized_usd"] == 0.0
+
+
+def test_positions_unrealized_deducts_cost_and_funding(monkeypatch, tmp_path):
+    """Richard closed a batch of positions expecting the ~gross profit shown
+    on screen and the journal recorded a net loss instead — the unrealized
+    number was pure price movement with fees/funding never subtracted, so a
+    position could look profitable right up until the moment it closed."""
+    from crypto import charges as charges_mod
+
+    monkeypatch.setattr(charges_mod, "_FUNDING_SAMPLES_PATH", tmp_path / "f.jsonl")
+    monkeypatch.setattr(charges_mod, "_SAMPLES_PATH", tmp_path / "s.jsonl")
+    monkeypatch.setattr(
+        journal,
+        "load_state",
+        lambda: {
+            "cpr_trend:BTCUSD": {
+                "position": {
+                    "asset": "BTCUSD",
+                    "strategy": "cpr_trend",
+                    "side": "long",
+                    "size": 12,
+                    "contract_value": 0.001,
+                    "entry_price": 80000.0,
+                    "notional_usd": 960.0,
+                    "entry_time": "2026-09-20T00:00:00+00:00",
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(market_data, "ticker", lambda *a, **k: {"mark_price": 80100.0})
+    r = client.get("/api/crypto/positions").json()
+    pos = r["paper"][0]
+    # gross: (80100 - 80000) * 0.001 * 12 = $1.20, all price move, no costs
+    assert abs(pos["unrealized_gross_usd"] - 1.2) < 0.01
+    # net must be gross minus something real (fees at minimum) — never equal
+    # to gross, which was the bug: nothing was ever being deducted
+    assert pos["unrealized_usd"] < pos["unrealized_gross_usd"]
+    assert pos["accrued_cost_usd"] > 0
 
 
 def test_config_validates_and_clamps(monkeypatch):

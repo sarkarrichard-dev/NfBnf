@@ -61,6 +61,50 @@ def _record_events(events: list[dict[str, Any]]) -> None:
         _recent_events.appendleft({"at": now, **ev})
 
 
+def _plain_reason(raw: str) -> str:
+    """The internal reason strings (sizing math, ML gate scores, broker
+    error text) are meant for logs, not for reading at a glance. Translate
+    the common ones; an unrecognised reason still shows verbatim rather
+    than being hidden."""
+    low = raw.lower()
+    if "ip_not_whitelisted" in low:
+        return "Blocked — your internet address isn't approved on Delta right now"
+    if low.startswith("sizing:") and "safe bankroll is $0" in low:
+        return "Not enough money in the Delta account to open even the smallest position"
+    if low.startswith("sizing:") and "safe bankroll is" in low:
+        return f"Not enough money in the Delta account ({raw.split(':', 1)[1].strip()})"
+    if low.startswith("sizing:") and "over the" in low and "cap" in low:
+        return "Would need more money than your per-trade limit allows"
+    if low.startswith("sizing:"):
+        return f"Couldn't size the trade ({raw.split(':', 1)[1].strip()})"
+    if low.startswith("ml gate:"):
+        return f"The AI confidence check said no ({raw.split(':', 1)[1].strip()})"
+    if "kill switch" in low:
+        return f"Live trading paused — {raw.split(':', 1)[-1].strip()}"
+    if low.startswith("order rejected:"):
+        return f"Delta rejected the order ({raw.split(':', 1)[1].strip()})"
+    return raw
+
+
+def _log_blocked_live(strat: str, sym: str, side: str, reason: str) -> None:
+    """A LIVE signal fired but never became a position — Richard wants this
+    visible in the trade table itself (same row shape, real reason instead
+    of a PnL number), not just a transient banner."""
+    now = datetime.now(timezone.utc).isoformat()
+    journal.log_blocked(
+        {
+            "strategy": strat,
+            "asset": sym,
+            "side": side,
+            "mode": "live",
+            "day": now[:10],
+            "opened_at": now,
+            "closed_at": now,
+            "reason": _plain_reason(reason),
+        }
+    )
+
+
 def enabled() -> bool:
     """The section runs whenever a strategy is enabled. PAPER vs LIVE is the
     execution mode; turning every strategy toggle off is the pause switch."""
@@ -638,14 +682,20 @@ def _apply_entry(
     )
     if not sr.ok:
         new_state["position"] = None
-        ev.update(event="wait", reason=f"sizing: {sr.reason}")
+        reason = f"sizing: {sr.reason}"
+        ev.update(event="wait", reason=reason)
+        if live:
+            _log_blocked_live(strat, sym, side, reason)
         return
 
     snapshot = _entry_features(strat, sym, frame, side) if frame is not None else {}
     g = ml_gate.check({"features": snapshot, "asset": sym})
     if not g["allowed"]:
         new_state["position"] = None
-        ev.update(event="wait", reason=f"ML gate: {g['reason']}")
+        reason = f"ML gate: {g['reason']}"
+        ev.update(event="wait", reason=reason)
+        if live:
+            _log_blocked_live(strat, sym, side, reason)
         return
 
     order_id = None
@@ -656,6 +706,7 @@ def _apply_entry(
         if not ok:
             new_state["position"] = None
             ev.update(event="wait", reason=why)
+            _log_blocked_live(strat, sym, side, why)
             return
         try:
             resp = executor.place_entry(
@@ -671,6 +722,7 @@ def _apply_entry(
             new_state["position"] = None  # order failed → we are flat, record nothing
             logger.error("crypto live entry FAILED for %s %s: %s", sym, side.upper(), exc)
             ev.update(event="live_rejected", reason=str(exc))
+            _log_blocked_live(strat, sym, side, f"order rejected: {exc}")
             notify.crypto_alert(
                 f"\U0001f534 <b>CRYPTO LIVE ENTRY FAILED</b> — {sym} {side.upper()}\n{exc}",
                 key=f"c-entryfail:{sym}:{strat}",
@@ -930,6 +982,7 @@ if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
         ema_jaguar_enabled=False,
         vp_edge_enabled=False,
         cpr_trend_enabled=False,
+        rsi_adx_trend_enabled=False,
         trading_mode="PAPER",
         live_armed=False,
     )
@@ -941,4 +994,28 @@ if __name__ == "__main__":  # self-check — a fully-disabled lane is a no-op
     assert (
         close_position_manual("ny_n_break:NOSUCHPOS")["ok"] is False
     )  # nothing open, no network hit
+
+    # plain-language reasons for the trade-log's blocked-entry rows
+    assert "Not enough money" in _plain_reason(
+        "sizing: 3 lot(s) need $150.00, safe bankroll is $0.00"
+    )
+    assert "AI confidence check" in _plain_reason("ML gate: score 0.32 below 0.60")
+    assert "internet address isn't approved" in _plain_reason(
+        "order rejected: HTTP 401 — {'code': 'ip_not_whitelisted_for_api_key'}"
+    )
+    assert _plain_reason("some unrecognised reason") == "some unrecognised reason"
+
+    # a blocked live entry is journaled separately from real trades
+    import tempfile
+    from pathlib import Path
+
+    from crypto import journal as _j
+
+    tmp = Path(tempfile.mkdtemp())
+    _j.JOURNAL_PATH = tmp / "j.jsonl"
+    _j.BLOCKED_PATH = tmp / "b.jsonl"
+    _log_blocked_live("cpr_trend", "BTCUSD", "long", "sizing: no funds")
+    assert len(_j.recent_blocked()) == 1
+    assert _j.recent() == []  # never touches the real trades journal
+
     print("crypto.lanes self-check ok (all lanes off -> no-op)")
