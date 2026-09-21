@@ -26,7 +26,7 @@ from crypto.config import CryptoSettings, crypto_settings
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 15.0        # signed calls (orders, wallet, margin)
+_TIMEOUT = 15.0  # signed calls (orders, wallet, margin)
 _PUBLIC_TIMEOUT = 8.0  # public market data — kept short so telemetry can't stall the scan loop
 _MAX_RETRIES = 3
 _MAX_429_WAIT = 8.0
@@ -92,9 +92,7 @@ class DeltaClient:
         of CPU — so a fresh one per request made a scan cycle's ~25 calls burn a
         core on SSL setup. Timeout is passed per-request instead."""
         if self._http is None or self._http.is_closed:
-            transport = (
-                httpx.HTTPTransport(local_address="0.0.0.0") if self._force_ipv4 else None
-            )
+            transport = httpx.HTTPTransport(local_address="0.0.0.0") if self._force_ipv4 else None
             # keepalive_expiry well under a typical API-gateway idle timeout: a
             # pooled connection that's been idle a few seconds is replaced rather
             # than reused, so a signed POST /v2/orders can't hit a server-closed
@@ -236,6 +234,8 @@ class DeltaClient:
                     f"{m} {path}: HTTP {resp.status_code} — {err}", code=code, context=ctx
                 )
 
+            if LAST_IP_BLOCK:
+                LAST_IP_BLOCK.clear()  # a later call got through — the block is stale
             return data.get("result", data) if isinstance(data, dict) else data
 
         raise DeltaError(f"{m} {path}: retries exhausted ({last_exc})")
@@ -252,6 +252,7 @@ if __name__ == "__main__":  # self-check — no network
     assert e.code == "ip_not_whitelisted_for_api_key" and e.context["client_ip"] == "1.2.3.4"
     # IPv4 pin builds a bound transport; opt-out builds none
     import dataclasses as _dc
+
     _s = crypto_settings()
     dc4 = DeltaClient(_s)
     c4 = dc4._client()
