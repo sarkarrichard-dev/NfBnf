@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
@@ -310,12 +311,43 @@ def crypto_positions() -> dict:
         direction = 1 if p.get("side") == "long" else -1
         coins = float(p.get("size") or 0) * float(p.get("contract_value") or 0)
         if mark > 0 and coins > 0:
-            upnl = (mark - float(p.get("entry_price") or 0)) * direction * coins
+            gross = (mark - float(p.get("entry_price") or 0)) * direction * coins
             notional = float(p.get("notional_usd") or 0)
+            # Same deductions a real close applies (charges.round_trip_cost_usd,
+            # funding_cost_usd) — a position can be gross-positive and still
+            # net-negative once accrued funding is counted, and until this the
+            # dashboard never showed that: it displayed pure price movement,
+            # so a close could land far worse than what was on screen a moment
+            # before (confirmed 2026-09-21 against a real "closed all, screen
+            # said profit, journal said loss" report — funding accrued the
+            # whole hold and was invisible until the trade actually closed).
+            try:
+                cost = charges.round_trip_cost_usd(
+                    notional,
+                    sym,
+                    mark,
+                    float(p.get("size") or 0),
+                    float(p.get("contract_value") or 0),
+                )
+            except Exception:
+                cost = 0.0
+            try:
+                funding = charges.funding_cost_usd(
+                    symbol=sym,
+                    side=str(p.get("side") or "long"),
+                    notional_usd=notional,
+                    entry_time=p.get("entry_time"),
+                    exit_time=datetime.now(timezone.utc).isoformat(),
+                )
+            except Exception:
+                funding = 0.0
+            upnl = gross - cost - funding
             p["mark"] = round(mark, 2)
             p["unrealized_usd"] = round(upnl, 2)
             p["unrealized_inr"] = round(upnl * fx, 0)
             p["unrealized_pct"] = round(upnl / notional * 100.0, 2) if notional else None
+            p["unrealized_gross_usd"] = round(gross, 2)
+            p["accrued_cost_usd"] = round(cost + funding, 2)
             open_pnl_usd += upnl
         else:  # no live mark — show the position but not a fake $0 P&L
             p["mark"] = None
@@ -371,9 +403,40 @@ def crypto_close_all_positions() -> dict:
     return close_all_positions_manual()
 
 
+def _blocked_as_journal_row(r: dict) -> dict:
+    """Shape a crypto_blocked.jsonl row into the same fields a real closed
+    trade carries, so the dashboard's trade-log table can render it with no
+    special-casing: no fill happened, so price/size/pnl are all null and the
+    reason takes the Reason column real trades use for their exit reason."""
+    at = r.get("opened_at") or r.get("closed_at")
+    return {
+        "exit_id": f"blocked:{r.get('asset')}:{at}",
+        "strategy": r.get("strategy"),
+        "asset": r.get("asset"),
+        "mode": r.get("mode", "live"),
+        "side": r.get("side"),
+        "size": None,
+        "entry_price": None,
+        "exit_price": None,
+        "opened_at": at,
+        "entry_time": at,
+        "exit_time": at,
+        "closed_at": at,
+        "pnl_inr": None,
+        "pnl_usd": None,
+        "exit_reason": r.get("reason") or "order not placed",
+    }
+
+
 @router.get("/journal", include_in_schema=False)
 def crypto_journal(limit: int = 100) -> dict:
-    return {"trades": journal.recent(max(1, min(500, limit)))}
+    n = max(1, min(500, limit))
+    trades = journal.recent(n)
+    blocked = [_blocked_as_journal_row(r) for r in journal.recent_blocked(n)]
+    merged = sorted(
+        trades + blocked, key=lambda r: str(r.get("opened_at") or r.get("entry_time") or "")
+    )
+    return {"trades": merged[-n:]}
 
 
 @router.post("/ml/train", include_in_schema=False)
