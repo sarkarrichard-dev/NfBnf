@@ -16,6 +16,10 @@ _ARMING_ROUTES = [
     # confirm=False everywhere it appears -- these stop at a 400 before ever
     # reaching update_env_values, so the gate is exercised without a real write.
     ("/api/crypto/credentials", {"api_key": "k", "api_secret": "s", "confirm": False}),
+    (
+        "/api/dhan/credentials",
+        {"client_id": "c", "api_key": "k", "api_secret": "s", "confirm": False},
+    ),
 ]
 
 
@@ -50,3 +54,35 @@ def test_unrelated_routes_are_never_gated(monkeypatch):
     must keep working whether or not a secret is configured."""
     monkeypatch.setenv("ADMIN_API_SECRET", "s3cr3t")
     assert client.get("/api/health").status_code == 200
+
+
+def test_dhan_credentials_requires_confirm():
+    r = client.post(
+        "/api/dhan/credentials",
+        json={"client_id": "c", "api_key": "k", "api_secret": "s", "confirm": False},
+    )
+    assert r.status_code == 400
+
+
+def test_dhan_credentials_saves_the_right_env_keys(monkeypatch):
+    saved = {}
+    monkeypatch.setattr("index_ai.config.update_env_values", lambda v: saved.update(v))
+    monkeypatch.delenv("ADMIN_API_SECRET", raising=False)
+    r = client.post(
+        "/api/dhan/credentials",
+        json={
+            "client_id": "1100426170",
+            "api_key": "my-key",
+            "api_secret": "my-secret",
+            "confirm": True,
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["saved"] is True
+    assert saved == {
+        "DHAN_CLIENT_ID": "1100426170",
+        "DHAN_API_KEY": "my-key",
+        "DHAN_API_SECRET": "my-secret",
+    }
+    # the access token itself is untouched -- this only sets app credentials
+    assert "DHAN_ACCESS_TOKEN" not in saved

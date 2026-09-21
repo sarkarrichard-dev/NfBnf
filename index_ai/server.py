@@ -1010,6 +1010,47 @@ async def auth_setup() -> dict[str, Any]:
     return out
 
 
+@app.post("/api/dhan/credentials", include_in_schema=False)
+def dhan_set_credentials(
+    payload: dict[str, Any] = Body(default_factory=dict),
+    _admin: None = Depends(require_admin_secret),
+) -> dict[str, Any]:
+    """Save the Dhan app credentials (client id + API key/secret) to .env —
+    same treatment as crypto's POST /api/crypto/credentials: money-path, so
+    it stays off the generic feature-toggle path, requires confirm=true, and
+    sits behind the admin-secret gate. Lets these be set from the dashboard
+    (e.g. once hosted on a cloud box with no file/SSH access) instead of
+    hand-editing .env. Does NOT touch DHAN_ACCESS_TOKEN — that's the actual
+    login session, already has its own paste-token flow at /api/auth/health.
+
+    Plain ``def``, not ``async`` — update_env_values/settings() do blocking
+    file I/O (.env read+write), and a plain def is threadpooled by Starlette
+    automatically instead of stalling the event loop (CLAUDE.md: this has
+    bitten twice; matches crypto/api.py's set_credentials exactly).
+    """
+    client_id = str(payload.get("client_id") or "").strip()
+    api_key = str(payload.get("api_key") or "").strip()
+    api_secret = str(payload.get("api_secret") or "").strip()
+    if not payload.get("confirm"):
+        raise HTTPException(400, "Set confirm=true to save Dhan credentials.")
+    if not client_id or not api_key or not api_secret:
+        raise HTTPException(400, "client_id, api_key, and api_secret are all required.")
+
+    from index_ai.config import update_env_values
+
+    values = {"DHAN_CLIENT_ID": client_id, "DHAN_API_KEY": api_key, "DHAN_API_SECRET": api_secret}
+    update_env_values(values)
+    os.environ.update(values)
+
+    cfg = settings()
+    return {
+        "saved": True,
+        "client_id": client_id,
+        "app_credentials_ready": cfg.dhan.app_credentials_ready,
+        "can_generate_consent": cfg.dhan.can_generate_consent,
+    }
+
+
 @app.post("/api/auth/generate-consent", include_in_schema=False)
 async def auth_generate_consent() -> dict[str, Any]:
     try:
