@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 
 from index_ai.admin_auth import require_admin_secret
 
-from crypto import charges, executor, journal, sizing
+from crypto import charges, executor, journal, lanes, sizing
 from crypto._util import num
 from crypto.ml import gate as ml_gate
 from crypto.ml import model as ml_model
@@ -92,6 +92,7 @@ def crypto_status() -> dict:
         "egress": _egress(s),
         "kill_switch": _kill_switch_state(s),
         "ml": {**ml_gate.status(), "tuning": _tuning_status()},
+        "events": lanes.recent_events(),
     }
 
 
