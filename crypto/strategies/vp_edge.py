@@ -46,6 +46,7 @@ def step(
     *,
     state: dict[str, Any] | None,
     cfg: VpEdgeConfig,
+    live_price: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     st = {**_blank_state(), **(state or {})}
     ev: dict[str, Any] = {"strategy": "vp_edge", "asset": symbol, "event": "none"}
@@ -76,12 +77,15 @@ def step(
 
     price = float(candles["close"].iloc[-1])
     ts = str(candles["datetime"].iloc[-1])
+    # trailing stop/target reacts to the live mark, not just the last closed
+    # candle — see crypto/strategies/cpr_trend.py for why.
+    trail_price = live_price if live_price is not None else price
     buf = cfg.edge_buffer_pct / 100.0
 
     pos = st["position"]
     if pos:
         side = pos["side"]
-        reason = update_and_check(pos, price, cfg.trail)
+        reason = update_and_check(pos, trail_price, cfg.trail)
         if not reason:
             if side == "long" and price >= poc:
                 reason = "reached POC"
@@ -92,7 +96,7 @@ def step(
             ev.update(
                 event="exit",
                 side=side,
-                price=price,
+                price=trail_price,
                 reason=reason,
                 ts=ts,
                 peak_pnl_pct=pos.get("peak_pnl_pct"),

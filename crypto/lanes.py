@@ -260,6 +260,17 @@ def _fx_rate(client: DeltaClient, s) -> float:
         return 88.0
 
 
+def _live_mark(sym: str, client: DeltaClient) -> float | None:
+    """Current mark price, for the trailing stop/target's per-scan live check
+    (a strategy's own signal price is the last closed candle — see
+    crypto/strategies/cpr_trend.py). None on any fetch failure; callers fall
+    back to the candle close."""
+    try:
+        return float(market_data.ticker(sym, client=client).get("mark_price") or 0) or None
+    except Exception:
+        return None
+
+
 def _open_counts(state: dict[str, Any]) -> dict[str, int]:
     """Open positions per strategy — each strategy trades its own independent book."""
     out: dict[str, int] = defaultdict(int)
@@ -379,6 +390,10 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 )
                 continue
             try:
+                # only fetch a live mark when there's a position to protect — an
+                # idle strategy/symbol has nothing for it to react to, and this
+                # is an extra API call per (strategy, symbol) every scan.
+                live_px = _live_mark(sym, client) if slot.get("position") else None
                 if strat == "ny_n_break":
                     c5 = _closed(market_data.candles(sym, "5m", days=2, client=client))
                     c15 = _closed(market_data.candles(sym, "15m", days=4, client=client))
@@ -394,24 +409,36 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         cfg=_nb_cfg(s),
                         in_session=nb_session,
                         session_date=nb_date,
+                        live_price=live_px,
                     )
                     day, frame = nb_date, c5
                 elif strat == "ichimoku":
                     days = _ICHI_DAYS.get(s.ichimoku_tf, 15)
                     ch = _closed(market_data.candles(sym, s.ichimoku_tf, days=days, client=client))
-                    new_state, ev = ichi.step(sym, ch, state=slot.get("strategy"), cfg=_ichi_cfg(s))
+                    new_state, ev = ichi.step(
+                        sym, ch, state=slot.get("strategy"), cfg=_ichi_cfg(s), live_price=live_px
+                    )
                     day, frame = crypto_day(now_utc), ch
                 elif strat == "cpr_trend":
                     c5 = _closed(market_data.candles(sym, "5m", days=2, client=client))
                     c15 = _closed(market_data.candles(sym, "15m", days=4, client=client))
                     new_state, ev = cpr_trend.step(
-                        sym, c5, c15, state=slot.get("strategy"), cfg=_cpr_trend_cfg(s)
+                        sym,
+                        c5,
+                        c15,
+                        state=slot.get("strategy"),
+                        cfg=_cpr_trend_cfg(s),
+                        live_price=live_px,
                     )
                     day, frame = crypto_day(now_utc), c5
                 else:
                     mod, tf, days_n, cfg = _SIMPLE[strat](s)
                     fr = _closed(market_data.candles(sym, tf, days=days_n, client=client))
-                    new_state, ev = mod.step(sym, fr, state=slot.get("strategy"), cfg=cfg)
+                    # ak_roxx_pro's own exit is its channel band, not the shared
+                    # P&L trail (see its cfg.trail docstring) — its step()
+                    # doesn't take live_price.
+                    kwargs = {} if strat == "ak_roxx_pro" else {"live_price": live_px}
+                    new_state, ev = mod.step(sym, fr, state=slot.get("strategy"), cfg=cfg, **kwargs)
                     day, frame = crypto_day(now_utc), fr
 
                 slot["strategy"] = new_state

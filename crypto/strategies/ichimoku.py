@@ -39,6 +39,7 @@ def step(
     *,
     state: dict[str, Any] | None,
     cfg: IchimokuConfig,
+    live_price: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     st = {**_blank_state(), **(state or {})}
     ev: dict[str, Any] = {"strategy": "ichimoku", "asset": symbol, "event": "none"}
@@ -62,6 +63,10 @@ def step(
 
     price = float(row["close"])
     ts = str(candles["datetime"].iloc[-1])
+    # trailing stop/target reacts to the live mark, not just the last closed
+    # candle — see crypto/strategies/cpr_trend.py for why. Matters even more
+    # here since this lane's default timeframe is 1h.
+    trail_price = live_price if live_price is not None else price
     cross_up = prev["tenkan"] <= prev["kijun"] and row["tenkan"] > row["kijun"]
     cross_dn = prev["tenkan"] >= prev["kijun"] and row["tenkan"] < row["kijun"]
     above_cloud = price > float(row["cloud_top"])
@@ -81,7 +86,7 @@ def step(
     if pos:
         side = pos["side"]
         direction = 1 if side == "long" else -1
-        reason = update_and_check(pos, price, cfg.trail)
+        reason = update_and_check(pos, trail_price, cfg.trail)
         if not reason:
             should_exit, why = cloud_reentry_exit(
                 direction,
@@ -98,7 +103,7 @@ def step(
             ev.update(
                 event="exit",
                 side=side,
-                price=price,
+                price=trail_price,
                 reason=reason,
                 ts=ts,
                 peak_pnl_pct=pos.get("peak_pnl_pct"),
