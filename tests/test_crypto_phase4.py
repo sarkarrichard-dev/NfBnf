@@ -233,11 +233,18 @@ def test_order_fills_but_fill_lookup_throws_still_records_position(live_lane):
 def test_position_closed_on_exchange_is_reaped(live_lane):
     live_lane.setattr(lanes.executor, "place_entry", lambda *a, **k: {"order_id": "27:1"})
     lanes.scan_crypto_paper()
-    assert journal.load_state()["ny_n_break:BTCUSD"]["position"]["mode"] == "live"
+    pos = journal.load_state()["ny_n_break:BTCUSD"]["position"]
+    assert pos["mode"] == "live"
 
-    # bracket stop filled — Delta now shows flat, strategy still says "hold"
+    # bracket stop filled — Delta now shows flat, strategy still says "hold".
+    # Mark price stays at the entry level so the lane's own live trailing
+    # check (crypto/strategies/trailing.py, live-priced since 2026-09-21)
+    # doesn't independently exit too — this test isolates the exchange-side
+    # reap path specifically.
     live_lane.setattr(lanes.executor, "position_state", lambda c, sym: "flat")
-    live_lane.setattr(lanes.market_data, "ticker", lambda sym, **k: {"mark_price": 58000.0})
+    live_lane.setattr(
+        lanes.market_data, "ticker", lambda sym, **k: {"mark_price": pos["entry_price"]}
+    )
     events = lanes.scan_crypto_paper()
     assert any(e.get("event") == "reaped" for e in events)
     rows = journal.recent()

@@ -88,6 +88,7 @@ def step(
     *,
     state: dict[str, Any] | None,
     cfg: CprTrendConfig,
+    live_price: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     st = {**_blank_state(), **(state or {})}
     ev: dict[str, Any] = {"strategy": "cpr_trend", "asset": symbol, "event": "none"}
@@ -98,6 +99,11 @@ def step(
 
     price = float(c5["close"].iloc[-1])
     ts = str(c5["datetime"].iloc[-1])
+    # the trailing stop/target must react to the live mark, not just the last
+    # closed 5m candle — otherwise a fast swing inside the candle only gets
+    # noticed up to 5 minutes late (2026-09-21: SOL gave back +18%/+37% peak
+    # P&L before the candle-close check even saw it move).
+    trail_price = live_price if live_price is not None else price
 
     split = _last_two_days(c15)
     if split is None:
@@ -111,7 +117,7 @@ def step(
     pos = st["position"]
     if pos:
         side = pos["side"]
-        reason = update_and_check(pos, price, cfg.trail)
+        reason = update_and_check(pos, trail_price, cfg.trail)
         if not reason:
             d = 1 if side == "long" else -1
             if tr.direction not in (d, FLAT):
@@ -121,7 +127,7 @@ def step(
             ev.update(
                 event="exit",
                 side=side,
-                price=price,
+                price=trail_price,
                 reason=reason,
                 ts=ts,
                 peak_pnl_pct=pos.get("peak_pnl_pct"),
