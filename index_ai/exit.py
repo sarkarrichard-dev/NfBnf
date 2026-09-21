@@ -172,6 +172,7 @@ def close_open_trade(
     reason: str,
     exit_ltp: float | None = None,
     index_price: float | None = None,
+    skip_broker_exit: bool = False,
 ) -> dict[str, Any]:
     """Exit an open trade (paper journal or live opposite MARKET order).
 
@@ -180,6 +181,13 @@ def close_open_trade(
     trailing-stop sweep, a double-click — can't both pass the "already
     closed?" check before either commits, which for a LIVE trade would mean
     two real opposite-side orders.
+
+    ``skip_broker_exit=True`` is for a position Dhan already shows as flat
+    (closed by hand in the Dhan app, hit a hard stop outside our polling,
+    whatever) — sending another opposite-side order there would just fail
+    since there's nothing left to reduce. It journals the real outcome
+    (fetching a live LTP for pricing same as any other close) without
+    touching the broker.
     """
     trade_id = str(trade.get("id") or "")
     if not trade_id:
@@ -192,6 +200,7 @@ def close_open_trade(
             reason=reason,
             exit_ltp=exit_ltp,
             index_price=index_price,
+            skip_broker_exit=skip_broker_exit,
         )
 
 
@@ -203,6 +212,7 @@ def _close_open_trade_locked(
     reason: str,
     exit_ltp: float | None = None,
     index_price: float | None = None,
+    skip_broker_exit: bool = False,
 ) -> dict[str, Any]:
     trade_id = str(trade.get("id") or "")
     if trade.get("pnl") is not None:
@@ -244,7 +254,12 @@ def _close_open_trade_locked(
                 resolved_exit_ltp = None
 
     legs = list(option.get("legs") or [])
-    if mode == "LIVE" and app_settings.risk.trading_mode == "LIVE" and client is not None:
+    if (
+        mode == "LIVE"
+        and app_settings.risk.trading_mode == "LIVE"
+        and client is not None
+        and not skip_broker_exit
+    ):
         from index_ai.dhan_orders import live_orders_enabled, place_live_exit_orders
 
         if live_orders_enabled(app_settings):

@@ -12,7 +12,6 @@ from index_ai.dhan_orders import (
     sync_trade_broker_status,
     _entry_leg_sequence,
     _exit_leg_sequence,
-    _leg_identity,
 )
 
 
@@ -50,7 +49,9 @@ def test_market_order_payload_omits_empty_optionals() -> None:
 
 
 def test_sell_fno_defaults_to_margin_product() -> None:
-    assert order_product_type_for_leg(transaction_type="SELL", exchange_segment="NSE_FNO") == "MARGIN"
+    assert (
+        order_product_type_for_leg(transaction_type="SELL", exchange_segment="NSE_FNO") == "MARGIN"
+    )
     assert order_product_type_for_leg(transaction_type="BUY", exchange_segment="NSE_FNO") in {
         "INTRADAY",
         "MARGIN",
@@ -59,12 +60,17 @@ def test_sell_fno_defaults_to_margin_product() -> None:
 
 
 def test_effective_order_status_filled_qty_is_traded() -> None:
-    assert effective_order_status({"orderStatus": "PENDING", "filledQty": 65, "quantity": 65}) == "TRADED"
+    assert (
+        effective_order_status({"orderStatus": "PENDING", "filledQty": 65, "quantity": 65})
+        == "TRADED"
+    )
     assert effective_order_status({"tradedQuantity": 30, "tradedPrice": 44.9}) == "TRADED"
 
 
 def test_effective_order_status_empty_oms_not_rejected() -> None:
-    assert effective_order_status({"orderStatus": "PENDING", "omsErrorDescription": ""}) == "PENDING"
+    assert (
+        effective_order_status({"orderStatus": "PENDING", "omsErrorDescription": ""}) == "PENDING"
+    )
 
 
 def test_effective_order_status_oms_error_is_rejected() -> None:
@@ -120,8 +126,20 @@ def test_verify_trade_rejects_missing_broker_position() -> None:
         "option": {
             "quantity": 30,
             "legs": [
-                {"security_id": 1001, "transaction_type": "BUY", "quantity": 30, "strike": 49100, "option_type": "PUT"},
-                {"security_id": 1002, "transaction_type": "SELL", "quantity": 30, "strike": 52100, "option_type": "PUT"},
+                {
+                    "security_id": 1001,
+                    "transaction_type": "BUY",
+                    "quantity": 30,
+                    "strike": 49100,
+                    "option_type": "PUT",
+                },
+                {
+                    "security_id": 1002,
+                    "transaction_type": "SELL",
+                    "quantity": 30,
+                    "strike": 52100,
+                    "option_type": "PUT",
+                },
             ],
         }
     }
@@ -162,7 +180,9 @@ def test_sync_rejects_live_traded_without_positions(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "index_ai.dhan_orders.build_order_book_index",
-        lambda _c: {"1": {"orderId": "1", "orderStatus": "TRADED", "filledQty": 30, "quantity": 30}},
+        lambda _c: {
+            "1": {"orderId": "1", "orderStatus": "TRADED", "filledQty": 30, "quantity": 30}
+        },
     )
     monkeypatch.setattr(
         "index_ai.dhan_orders.build_trade_fill_index",
@@ -173,6 +193,67 @@ def test_sync_rejects_live_traded_without_positions(monkeypatch) -> None:
     updated = sync_open_live_trades(object())
     assert updated >= 1
     assert rejected and rejected[0][0] == "t-stale"
+
+
+def test_sync_closes_aged_position_gone_from_broker(monkeypatch) -> None:
+    """A trade that's been open well past the grace window and vanished from
+    Dhan's position book is a real external close (manual exit, bracket stop,
+    liquidation) — must go through close_open_trade with skip_broker_exit,
+    never the reject-with-zero-pnl path meant for a fill that never happened."""
+    from index_ai.dhan_orders import sync_open_live_trades
+
+    closed_calls: list[dict] = []
+    rejected: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "index_ai.learning.reject_live_trade",
+        lambda trade_id, reason, *, option=None: rejected.append((trade_id, reason)),
+    )
+    monkeypatch.setattr(
+        "index_ai.learning.live_trades_for_broker_sync",
+        lambda: [
+            {
+                "id": "t-old",
+                "status": "LIVE_TRADED",
+                "pnl": None,
+                "created_at": "2020-01-01T00:00:00+05:30",  # long past the grace window
+                "option": {
+                    "broker_order_ids": ["1"],
+                    "quantity": 30,
+                    "security_id": 999,
+                    "transaction_type": "BUY",
+                    "legs": [
+                        {"security_id": 999, "transaction_type": "BUY", "quantity": 30},
+                    ],
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "index_ai.dhan_orders.build_order_book_index",
+        lambda _c: {
+            "1": {"orderId": "1", "orderStatus": "TRADED", "filledQty": 30, "quantity": 30}
+        },
+    )
+    monkeypatch.setattr(
+        "index_ai.dhan_orders.build_trade_fill_index",
+        lambda _c: {"1": {"orderId": "1", "tradedQuantity": 30, "tradedPrice": 100.0}},
+    )
+    monkeypatch.setattr("index_ai.dhan_orders.build_position_index", lambda _c: {})
+    monkeypatch.setattr("index_ai.config.settings", lambda: object())
+
+    def fake_close(trade, *, client, app_settings, reason, skip_broker_exit=False, **_kw):
+        closed_calls.append(
+            {"trade_id": trade.get("id"), "reason": reason, "skip_broker_exit": skip_broker_exit}
+        )
+        return {"status": "CLOSED", "pnl": 123.45}
+
+    monkeypatch.setattr("index_ai.exit.close_open_trade", fake_close)
+
+    updated = sync_open_live_trades(object())
+    assert updated >= 1
+    assert not rejected, "an aged, genuinely-gone position must not be zeroed via reject_live_trade"
+    assert closed_calls and closed_calls[0]["trade_id"] == "t-old"
+    assert closed_calls[0]["skip_broker_exit"] is True
 
 
 def test_resolve_rejects_traded_without_trade_book_fill() -> None:
