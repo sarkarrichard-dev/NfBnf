@@ -29,7 +29,7 @@ type Status = {
 }
 
 const inputCls =
-  'w-full rounded-lg border border-[var(--hair)] bg-black/30 px-3 py-2 font-mono text-xs ' +
+  'w-full rounded-md border border-[var(--hair)] bg-black/30 px-3 py-2 font-mono text-xs ' +
   'text-slate-100 outline-none focus:border-[var(--acc)]'
 
 function px(v: number | null | undefined) {
@@ -135,7 +135,7 @@ export function CryptoSetupPanel() {
 
       {/* errors */}
       {h?.errors?.length ? (
-        <ul className="space-y-1 rounded-lg border border-[var(--warn)]/30 bg-[var(--warn)]/10 p-3 text-xs text-[var(--warn)]">
+        <ul className="space-y-1 rounded-md border border-[var(--warn)]/30 bg-[var(--warn)]/10 p-3 text-xs text-[var(--warn)]">
           {h.errors.map((e) => (
             <li key={e}>{e}</li>
           ))}

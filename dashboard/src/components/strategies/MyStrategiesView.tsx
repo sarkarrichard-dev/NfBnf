@@ -57,7 +57,7 @@ function Detail({
       <p className="text-xs leading-relaxed text-slate-400">{showInternals ? def.blurb : def.teaser}</p>
 
       {showInternals ? (
-        <div className="rounded-lg border border-[var(--hair-soft)] bg-white/[0.015] p-3">
+        <div className="rounded-md border border-[var(--hair-soft)] bg-white/[0.015] p-3">
           <p className={fx.cardLabel}>Reads</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-200">{renderReads(def.reads, defaults)}</p>
         </div>
@@ -143,7 +143,7 @@ export function MyStrategiesView({
                 type="button"
                 onClick={() => onSeed(s.id)}
                 className={cn(
-                  'w-full rounded-lg border px-3 py-2.5 text-left transition-colors',
+                  'w-full rounded-sm border px-3 py-2.5 text-left transition-colors',
                   s.id === active.id
                     ? 'border-[var(--acc)] bg-[var(--acc-soft)]'
                     : 'border-[var(--hair-soft)] hover:border-[var(--hair)] hover:bg-white/[0.02]',

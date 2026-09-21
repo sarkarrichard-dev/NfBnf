@@ -31,7 +31,7 @@ function Field({ p, value, onChange }: { p: ParamDef; value: number | boolean | 
         <select
           value={String(value)}
           onChange={(e) => onChange(e.target.value)}
-          className="rounded-lg border border-[var(--hair)] bg-black/30 px-2 py-1 font-mono text-xs text-slate-100"
+          className="rounded-md border border-[var(--hair)] bg-black/30 px-2 py-1 font-mono text-xs text-slate-100"
         >
           {(p.options ?? []).map((o) => (
             <option key={o} value={o}>{o}</option>
@@ -52,7 +52,7 @@ function Field({ p, value, onChange }: { p: ParamDef; value: number | boolean | 
           max={p.max}
           step={p.step ?? (p.type === 'int' ? 1 : 0.1)}
           onChange={(e) => onChange(p.type === 'int' ? Math.round(+e.target.value) : +e.target.value)}
-          className="w-20 rounded-lg border border-[var(--hair)] bg-black/30 px-2 py-1 text-right font-mono text-xs tabular-nums text-slate-100"
+          className="w-20 rounded-md border border-[var(--hair)] bg-black/30 px-2 py-1 text-right font-mono text-xs tabular-nums text-slate-100"
         />
       </div>
       {p.min != null && p.max != null ? (
@@ -66,7 +66,7 @@ function Field({ p, value, onChange }: { p: ParamDef; value: number | boolean | 
           className="mt-1 w-full accent-[var(--acc)]"
         />
       ) : null}
-      {p.hint ? <p className="mt-0.5 text-[10.5px] text-slate-600">{p.hint}</p> : null}
+      {p.hint ? <p className="mt-0.5 text-[10.5px] text-slate-500">{p.hint}</p> : null}
     </div>
   )
 }
@@ -117,7 +117,7 @@ export function BuilderView({ seedId }: { seedId: string }) {
           <select
             value={baseId}
             onChange={(e) => setBaseId(e.target.value)}
-            className="rounded-lg border border-[var(--hair)] bg-black/30 px-2 py-1 text-xs text-slate-100"
+            className="rounded-md border border-[var(--hair)] bg-black/30 px-2 py-1 text-xs text-slate-100"
           >
             {BUILDABLE.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
@@ -128,7 +128,7 @@ export function BuilderView({ seedId }: { seedId: string }) {
           </span>
         </div>
 
-        <div className="rounded-lg border border-[var(--hair-soft)] bg-white/[0.015] p-3">
+        <div className="rounded-md border border-[var(--hair-soft)] bg-white/[0.015] p-3">
           <p className={fx.cardLabel}>Reads</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-200">{renderReads(base.reads, values)}</p>
         </div>
@@ -140,7 +140,7 @@ export function BuilderView({ seedId }: { seedId: string }) {
           return (
             <section key={step.id} className={cn(fx.panel, 'p-4')}>
               <h3 className="text-sm font-bold text-slate-100">{step.label}</h3>
-              <p className="mt-0.5 mb-2 text-[10.5px] text-slate-600">{step.blurb}</p>
+              <p className="mt-0.5 mb-2 text-[10.5px] text-slate-500">{step.blurb}</p>
               {rows.length ? (
                 <div className="divide-y divide-[var(--hair-soft)]">
                   {rows.map((p) => (
@@ -148,7 +148,7 @@ export function BuilderView({ seedId }: { seedId: string }) {
                   ))}
                 </div>
               ) : (
-                <p className="text-[11px] text-slate-600">Nothing to configure for this template.</p>
+                <p className="text-[11px] text-slate-500">Nothing to configure for this template.</p>
               )}
             </section>
           )
@@ -185,10 +185,10 @@ export function BuilderView({ seedId }: { seedId: string }) {
             Deploy
           </Button>
         </div>
-        <pre className="overflow-x-auto rounded-lg border border-[var(--hair-soft)] bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
+        <pre className="overflow-x-auto rounded-md border border-[var(--hair-soft)] bg-black/30 p-3 font-mono text-[11px] leading-relaxed text-slate-300">
 {JSON.stringify(config, null, 2)}
         </pre>
-        <p className="text-[11px] text-slate-600">
+        <p className="text-[11px] text-slate-500">
           Read-only for now — deploy writes to <span className="text-slate-400">memory/crypto_strategy_params.json</span> and
           the paper scan once the per-user credential store ships.
         </p>

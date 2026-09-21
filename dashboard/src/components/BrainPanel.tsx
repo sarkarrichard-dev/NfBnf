@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { api } from '../lib/api'
 import { usePollMs } from '../hooks/usePageVisible'
 import { Button } from './ui/Button'
+import { StatTile } from './ui/StatTile'
 
 type BrainStatus = {
   enabled?: boolean
@@ -98,7 +99,7 @@ export function BrainPanel() {
       </div>
 
       {!armed ? (
-        <p className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-400">
+        <p className="rounded-md border border-slate-800 bg-slate-900/40 p-3 text-sm text-slate-400">
           The gate arms only when testing on trades it hasn't seen before shows it beats trading
           every setup, measured in rupees. Right now it does not{delta != null ? ` (${rupees(delta)} on that held-back test)` : ''},
           so every setup passes and only the regime filter is active.
@@ -116,10 +117,7 @@ export function BrainPanel() {
           ['Last trained', data?.trained_at_ist ? data.trained_at_ist.slice(0, 16).replace('T', ' ') : '—'],
           ['Gate enabled', data?.enabled ? 'Yes' : 'No'],
         ].map(([label, val]) => (
-          <article key={String(label)} className="rounded-lg border border-slate-800 p-3">
-            <span className="text-xs text-slate-500">{label}</span>
-            <p className="font-semibold text-slate-200">{String(val)}</p>
-          </article>
+          <StatTile key={String(label)} label={String(label)} value={String(val)} />
         ))}
       </div>
 
@@ -148,7 +146,7 @@ export function BrainPanel() {
       ) : null}
 
       {commentary.data?.text ? (
-        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+        <div className="rounded-md border border-slate-800 bg-slate-900/40 p-3">
           <div className="mb-1 flex items-center gap-2">
             <h4 className="text-xs uppercase tracking-wide text-slate-500">AI brief</h4>
             <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">

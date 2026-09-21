@@ -82,7 +82,7 @@ export function DhanAuthPanel() {
           TOTP login
         </Button>
       </div>
-      <pre className="max-h-48 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 text-[11px] text-slate-400">
+      <pre className="max-h-48 overflow-auto rounded-md border border-slate-800 bg-slate-950 p-3 text-[11px] text-slate-400">
         {output}
       </pre>
     </div>

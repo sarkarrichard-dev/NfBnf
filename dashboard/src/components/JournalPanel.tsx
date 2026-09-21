@@ -153,7 +153,7 @@ export function JournalPanel({ logRows, trades, period, range, mtmUpdatedAt }: P
             <div className="flex flex-wrap items-center gap-4 text-sm">
               <div className="text-right">
                 <span className="block text-xs text-cyan-200/45">P&amp;L</span>
-                <strong className={cn('text-lg tabular-nums', pnlClass(openTotalPnl))}>
+                <strong className={cn('font-mono text-lg tabular-nums', pnlClass(openTotalPnl))}>
                   {money(openTotalPnl)}
                 </strong>
               </div>

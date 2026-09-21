@@ -78,7 +78,7 @@ export const OperationsPanel = memo(function OperationsPanel() {
         </div>
         <div
           className={cn(
-            'rounded-lg border px-3 py-1.5 text-sm font-semibold',
+            'rounded-md border px-3 py-1.5 text-sm font-semibold',
             canEnter
               ? 'border-[var(--up)]/40 bg-[var(--up)]/10 text-[var(--up)]'
               : 'border-[var(--down)]/40 bg-[var(--down)]/10 text-[var(--down)]',
@@ -105,7 +105,7 @@ export const OperationsPanel = memo(function OperationsPanel() {
         {(data?.ok ?? []).map((item) => (
           <div
             key={item.code || item.title}
-            className="rounded-lg border border-[var(--up)]/25 bg-[var(--up)]/10 px-2.5 py-2 text-xs"
+            className="rounded-md border border-[var(--up)]/25 bg-[var(--up)]/10 px-2.5 py-2 text-xs"
           >
             <p className="font-medium text-[var(--up)]">{item.title}</p>
             <p className="mt-0.5 text-[var(--up)]/70">{item.detail}</p>
@@ -114,7 +114,7 @@ export const OperationsPanel = memo(function OperationsPanel() {
         {(data?.warnings ?? []).map((item) => (
           <div
             key={item.code || item.title}
-            className="rounded-lg border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-2.5 py-2 text-xs"
+            className="rounded-md border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-2.5 py-2 text-xs"
           >
             <p className="font-medium text-[var(--warn)]">{item.title}</p>
             <p className="mt-0.5 text-[var(--warn)]/80">{item.detail}</p>
@@ -167,7 +167,7 @@ export const OperationsPanel = memo(function OperationsPanel() {
         </pre>
       ) : null}
 
-      <details open className="mb-2 rounded-lg border border-slate-700/80">
+      <details open className="mb-2 rounded-md border border-slate-700/80">
         <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-300">
           Scanner events ({data?.events?.length ?? 0})
         </summary>
@@ -176,7 +176,7 @@ export const OperationsPanel = memo(function OperationsPanel() {
         </pre>
       </details>
 
-      <details className="rounded-lg border border-slate-700/80">
+      <details className="rounded-md border border-slate-700/80">
         <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-300">
           Server log tail ({data?.log_tail?.length ?? 0} lines)
         </summary>

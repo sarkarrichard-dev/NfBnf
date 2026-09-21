@@ -25,7 +25,7 @@ function Pill({
     <span
       title={title}
       className={cn(
-        'hidden items-center rounded-lg border px-2.5 py-1 text-[11px] font-medium sm:inline-flex',
+        'hidden items-center rounded-full border px-2.5 py-1 text-[11px] font-medium sm:inline-flex',
         tone === 'good' &&
           'border-[var(--up)]/30 bg-[var(--up)]/10 text-[var(--up)]',
         tone === 'warn' &&

@@ -84,7 +84,7 @@ export function CryptoDayReviewPanel() {
         <div className="mb-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
           <div>
             <span className="block text-xs text-slate-400">Net P&amp;L</span>
-            <strong className={cn('text-lg tabular-nums', pnlCls(s?.net_usd ?? 0))}>
+            <strong className={cn('font-mono text-lg tabular-nums', pnlCls(s?.net_usd ?? 0))}>
               {usd(s?.net_usd ?? 0)}{' '}
               <span className="text-xs text-slate-500">{inr(s?.net_inr ?? 0)}</span>
             </strong>
@@ -109,7 +109,7 @@ export function CryptoDayReviewPanel() {
         </div>
 
         {r?.narrative ? (
-          <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+          <div className="rounded-md border border-white/[0.06] bg-white/[0.02] p-3">
             <div className="mb-1 flex items-center gap-2">
               <h4 className="text-xs uppercase tracking-wide text-slate-500">How today went</h4>
               <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
@@ -121,7 +121,7 @@ export function CryptoDayReviewPanel() {
         ) : null}
 
         {r?.watch?.length ? (
-          <div className="mt-3 rounded-lg border border-[var(--warn)]/20 bg-[var(--warn)]/[0.04] p-3">
+          <div className="mt-3 rounded-md border border-[var(--warn)]/20 bg-[var(--warn)]/[0.04] p-3">
             <h4 className="mb-1.5 text-xs uppercase tracking-wide text-[var(--warn)]/80">
               Watch next
             </h4>
@@ -148,13 +148,13 @@ export function CryptoDayReviewPanel() {
               return (
                 <article
                   key={name}
-                  className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3"
+                  className="rounded-md border border-white/[0.06] bg-white/[0.02] p-3"
                 >
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <strong className="text-sm text-slate-100">
                       {GROUP_LABEL[name] ?? name}
                     </strong>
-                    <div className="flex items-center gap-3 text-xs tabular-nums">
+                    <div className="flex items-center gap-3 font-mono text-xs tabular-nums">
                       <span className="text-slate-400">
                         {g.trades} {g.trades === 1 ? 'trade' : 'trades'} · {g.wins}W / {g.losses}L
                       </span>

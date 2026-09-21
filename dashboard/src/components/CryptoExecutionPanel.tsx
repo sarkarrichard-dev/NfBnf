@@ -213,7 +213,7 @@ export function CryptoExecutionPanel() {
                 if (e.key === 'Enter') e.currentTarget.blur()
               }}
               className={cn(
-                'w-20 rounded-md border border-[var(--hair)] bg-black/30 px-1 py-0.5 text-center text-lg font-semibold tabular-nums text-slate-50 outline-none focus:border-[var(--acc)]',
+                'w-20 rounded-md border border-[var(--hair)] bg-black/30 px-1 py-0.5 text-center font-mono text-lg font-semibold tabular-nums text-slate-50 outline-none focus:border-[var(--acc)]',
                 adjustMargin.isPending && 'animate-pulse text-[var(--acc)]',
               )}
             />
@@ -230,7 +230,7 @@ export function CryptoExecutionPanel() {
       {isLive ? (
         <div
           className={cn(
-            'mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3',
+            'mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border p-3',
             armed
               ? 'border-[var(--armed)]/60 bg-[var(--armed)]/10'
               : 'border-[var(--warn)]/50 bg-[var(--warn)]/10',
@@ -253,7 +253,7 @@ export function CryptoExecutionPanel() {
             <div className="flex flex-wrap items-center gap-2">
               <input
                 autoFocus
-                className="w-52 rounded-lg border border-[var(--hair)] bg-black/30 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-[var(--armed)]"
+                className="w-52 rounded-md border border-[var(--hair)] bg-black/30 px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-[var(--armed)]"
                 placeholder={s?.arm_phrase}
                 value={phrase}
                 onChange={(e) => setPhrase(e.target.value)}
