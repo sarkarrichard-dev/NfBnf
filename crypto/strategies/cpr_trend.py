@@ -89,6 +89,7 @@ def step(
     state: dict[str, Any] | None,
     cfg: CprTrendConfig,
     live_price: float | None = None,
+    live_range: tuple[float, float] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     st = {**_blank_state(), **(state or {})}
     ev: dict[str, Any] = {"strategy": "cpr_trend", "asset": symbol, "event": "none"}
@@ -104,6 +105,9 @@ def step(
     # noticed up to 5 minutes late (2026-09-21: SOL gave back +18%/+37% peak
     # P&L before the candle-close check even saw it move).
     trail_price = live_price if live_price is not None else price
+    # and the candle's real low/high (2026-09-22) catches a spike-and-reverse
+    # that happened between two scans — a single live price can still miss it.
+    trail_low, trail_high = live_range if live_range is not None else (trail_price, trail_price)
 
     split = _last_two_days(c15)
     if split is None:
@@ -117,7 +121,7 @@ def step(
     pos = st["position"]
     if pos:
         side = pos["side"]
-        reason = update_and_check(pos, trail_price, cfg.trail)
+        reason = update_and_check(pos, trail_price, cfg.trail, low=trail_low, high=trail_high)
         if not reason:
             d = 1 if side == "long" else -1
             if tr.direction not in (d, FLAT):
@@ -127,7 +131,7 @@ def step(
             ev.update(
                 event="exit",
                 side=side,
-                price=trail_price,
+                price=pos.get("trail_exit_price", trail_price),
                 reason=reason,
                 ts=ts,
                 peak_pnl_pct=pos.get("peak_pnl_pct"),

@@ -187,12 +187,21 @@ def crypto_settings() -> CryptoSettings:
         nbreak_allround=_b("CRYPTO_NBREAK_ALLROUND", False),
         ichimoku_tf=os.getenv("CRYPTO_ICHIMOKU_TF", "1h").strip(),
         # P&L-% of margin. At the 20x default these are, in price terms: stop
-        # ~1.2%, ratchet steps ~0.5%, profit floor ~2.25%, peak trail ~0.3% —
-        # a real swing stop, not the 0.1% wiggle the old 100x defaults gave.
-        stop_pnl_pct=max(0.0, _f("CRYPTO_STOP_PNL_PCT", 24.0)),
-        ratchet_step_pnl_pct=max(0.5, _f("CRYPTO_RATCHET_STEP_PNL_PCT", 10.0)),
-        tp_trigger_pnl_pct=max(1.0, _f("CRYPTO_TP_TRIGGER_PNL_PCT", 45.0)),
-        peak_trail_pnl_pct=max(0.5, _f("CRYPTO_PEAK_TRAIL_PNL_PCT", 6.0)),
+        # ~0.8%, ratchet steps ~0.25%, profit floor ~1.25%, peak trail ~0.2%.
+        # Retuned 2026-09-22 from the 24/10/45/6 defaults: replayed each real
+        # closed trade's recorded peak-vs-exit P&L (crypto_journal.jsonl,
+        # 55 trades with trail data) against a grid of candidate settings —
+        # 24/10/45/6 nets roughly breakeven on that history; this tighter set
+        # sits in the middle of a stable, consistently-better neighborhood
+        # (not the single best grid cell, to avoid overfitting one lucky
+        # combo — the grid search can't see the full price path between a
+        # trade's peak and its exit, only those two points, so it can't rule
+        # out a tighter stop cutting off a trade that would have recovered).
+        # Re-evaluate after enough trades run under this config.
+        stop_pnl_pct=max(0.0, _f("CRYPTO_STOP_PNL_PCT", 16.0)),
+        ratchet_step_pnl_pct=max(0.5, _f("CRYPTO_RATCHET_STEP_PNL_PCT", 5.0)),
+        tp_trigger_pnl_pct=max(1.0, _f("CRYPTO_TP_TRIGGER_PNL_PCT", 25.0)),
+        peak_trail_pnl_pct=max(0.5, _f("CRYPTO_PEAK_TRAIL_PNL_PCT", 4.0)),
         trading_mode=_mode("CRYPTO_TRADING_MODE"),
         live_armed=_b("CRYPTO_ALLOW_LIVE", False),
         max_daily_loss_usd=abs(_f("CRYPTO_MAX_DAILY_LOSS_USD", 50.0)),

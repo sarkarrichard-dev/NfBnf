@@ -271,6 +271,23 @@ def _live_mark(sym: str, client: DeltaClient) -> float | None:
         return None
 
 
+def _candle_range(raw: pd.DataFrame) -> tuple[float, float] | None:
+    """(low, high) of the still-forming last candle — the exchange keeps
+    updating it live, so this is the real range price touched since the last
+    full close, not just wherever the mark happens to sit at scan time
+    (2026-09-22: a ~60s poll can miss a spike-and-reverse that happens
+    between two checks; the candle's own OHLC already recorded it). Reuses
+    the frame the caller already fetched for signals — no extra API call."""
+    if raw.empty:
+        return None
+    row = raw.iloc[-1]
+    try:
+        lo, hi = float(row["low"]), float(row["high"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (lo, hi) if lo > 0 and hi > 0 else None
+
+
 def _open_counts(state: dict[str, Any]) -> dict[str, int]:
     """Open positions per strategy — each strategy trades its own independent book."""
     out: dict[str, int] = defaultdict(int)
@@ -390,13 +407,17 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 )
                 continue
             try:
-                # only fetch a live mark when there's a position to protect — an
-                # idle strategy/symbol has nothing for it to react to, and this
-                # is an extra API call per (strategy, symbol) every scan.
-                live_px = _live_mark(sym, client) if slot.get("position") else None
+                # only fetch a live mark / range when there's a position to
+                # protect — an idle strategy/symbol has nothing for it to
+                # react to, and this is extra work per (strategy, symbol)
+                # every scan.
+                have_pos = bool(slot.get("position"))
+                live_px = _live_mark(sym, client) if have_pos else None
                 if strat == "ny_n_break":
-                    c5 = _closed(market_data.candles(sym, "5m", days=2, client=client))
+                    raw5 = market_data.candles(sym, "5m", days=2, client=client)
+                    c5 = _closed(raw5)
                     c15 = _closed(market_data.candles(sym, "15m", days=4, client=client))
+                    live_range = _candle_range(raw5) if have_pos else None
                     # all-round: always "in session" (setup traded 24/7, NY hours
                     # unchanged), and the trade cap resets per UTC day.
                     nb_session = True if s.nbreak_allround else in_ny
@@ -410,18 +431,28 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         in_session=nb_session,
                         session_date=nb_date,
                         live_price=live_px,
+                        live_range=live_range,
                     )
                     day, frame = nb_date, c5
                 elif strat == "ichimoku":
                     days = _ICHI_DAYS.get(s.ichimoku_tf, 15)
-                    ch = _closed(market_data.candles(sym, s.ichimoku_tf, days=days, client=client))
+                    raw = market_data.candles(sym, s.ichimoku_tf, days=days, client=client)
+                    ch = _closed(raw)
+                    live_range = _candle_range(raw) if have_pos else None
                     new_state, ev = ichi.step(
-                        sym, ch, state=slot.get("strategy"), cfg=_ichi_cfg(s), live_price=live_px
+                        sym,
+                        ch,
+                        state=slot.get("strategy"),
+                        cfg=_ichi_cfg(s),
+                        live_price=live_px,
+                        live_range=live_range,
                     )
                     day, frame = crypto_day(now_utc), ch
                 elif strat == "cpr_trend":
-                    c5 = _closed(market_data.candles(sym, "5m", days=2, client=client))
+                    raw5 = market_data.candles(sym, "5m", days=2, client=client)
+                    c5 = _closed(raw5)
                     c15 = _closed(market_data.candles(sym, "15m", days=4, client=client))
+                    live_range = _candle_range(raw5) if have_pos else None
                     new_state, ev = cpr_trend.step(
                         sym,
                         c5,
@@ -429,16 +460,22 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         state=slot.get("strategy"),
                         cfg=_cpr_trend_cfg(s),
                         live_price=live_px,
+                        live_range=live_range,
                     )
                     day, frame = crypto_day(now_utc), c5
                 else:
                     mod, tf, days_n, cfg = _SIMPLE[strat](s)
-                    fr = _closed(market_data.candles(sym, tf, days=days_n, client=client))
-                    # ak_roxx_pro's own exit is its channel band, not the shared
-                    # P&L trail (see its cfg.trail docstring) — its step()
-                    # doesn't take live_price.
-                    kwargs = {} if strat == "ak_roxx_pro" else {"live_price": live_px}
-                    new_state, ev = mod.step(sym, fr, state=slot.get("strategy"), cfg=cfg, **kwargs)
+                    raw = market_data.candles(sym, tf, days=days_n, client=client)
+                    fr = _closed(raw)
+                    live_range = _candle_range(raw) if have_pos else None
+                    new_state, ev = mod.step(
+                        sym,
+                        fr,
+                        state=slot.get("strategy"),
+                        cfg=cfg,
+                        live_price=live_px,
+                        live_range=live_range,
+                    )
                     day, frame = crypto_day(now_utc), fr
 
                 slot["strategy"] = new_state
