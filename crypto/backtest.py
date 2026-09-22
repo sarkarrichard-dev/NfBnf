@@ -61,7 +61,7 @@ _SIMPLE = {
     "ak_roxx_pro": (
         ak_roxx_pro,
         lambda s: ak_roxx_pro.AkRoxxConfig().timeframe,
-        lambda s, **kw: ak_roxx_pro.AkRoxxConfig(trail=_trail(s), **kw),
+        lambda s, **kw: ak_roxx_pro.AkRoxxConfig(trail=_ak_roxx_trail(s), **kw),
     ),
     "tma_phoenix": (
         tma_phoenix,
@@ -81,6 +81,19 @@ _WIN_N = {
     "rsi_adx_trend": 60,
 }  # ak_roxx: 34 EMA + prior hour
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
+
+
+def _ak_roxx_trail(s) -> TrailConfig:
+    """Mirrors crypto/lanes.py::_ak_roxx_trail — ak_roxx_pro's own, much wider
+    trail, so a backtest measures the same exit behavior it actually runs
+    live with, not the shared (tight) config."""
+    return TrailConfig(
+        leverage=s.leverage,
+        stop_pnl_pct=55.0,
+        ratchet_step_pnl_pct=15.0,
+        tp_trigger_pnl_pct=100.0,
+        peak_trail_pnl_pct=15.0,
+    )
 
 
 def _trail(s) -> TrailConfig:
