@@ -237,13 +237,25 @@ def test_position_closed_on_exchange_is_reaped(live_lane):
     assert pos["mode"] == "live"
 
     # bracket stop filled — Delta now shows flat, strategy still says "hold".
-    # Mark price stays at the entry level so the lane's own live trailing
-    # check (crypto/strategies/trailing.py, live-priced since 2026-09-21)
-    # doesn't independently exit too — this test isolates the exchange-side
-    # reap path specifically.
+    # Mark price AND the candle's own low/high stay at the entry level so the
+    # lane's own live trailing check (crypto/strategies/trailing.py — live
+    # price since 2026-09-21, candle range since 2026-09-22) doesn't
+    # independently exit too — this test isolates the exchange-side reap
+    # path specifically.
     live_lane.setattr(lanes.executor, "position_state", lambda c, sym: "flat")
     live_lane.setattr(
         lanes.market_data, "ticker", lambda sym, **k: {"mark_price": pos["entry_price"]}
+    )
+    flat_at_entry = _nbreak_frame()
+    flat_at_entry.loc[flat_at_entry.index[-1], ["open", "high", "low", "close"]] = pos[
+        "entry_price"
+    ]
+    live_lane.setattr(
+        lanes.market_data,
+        "candles",
+        lambda sym, res, **k: (
+            flat_at_entry if (sym == "BTCUSD" and res == "5m") else _nbreak_frame()
+        ),
     )
     events = lanes.scan_crypto_paper()
     assert any(e.get("event") == "reaped" for e in events)

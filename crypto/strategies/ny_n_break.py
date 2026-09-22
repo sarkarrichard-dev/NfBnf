@@ -85,6 +85,7 @@ def step(
     in_session: bool,
     session_date: str,
     live_price: float | None = None,
+    live_range: tuple[float, float] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     st = {**_blank_state(), **(state or {})}
     ev: dict[str, Any] = {"strategy": "ny_n_break", "asset": symbol, "event": "none"}
@@ -111,6 +112,9 @@ def step(
     # trailing stop/target reacts to the live mark, not just the last closed
     # 5m candle — see crypto/strategies/cpr_trend.py for why.
     trail_price = live_price if live_price is not None else price
+    # and the candle's real low/high (2026-09-22) catches a spike-and-reverse
+    # that happened between two scans — a single live price can still miss it.
+    trail_low, trail_high = live_range if live_range is not None else (trail_price, trail_price)
     ema_v = ema(close5, cfg.ema_len)
     vwap_v = anchored_vwap(c5)
 
@@ -146,7 +150,9 @@ def step(
         reason = None
         if not in_session:
             reason = "session end"
-        elif trail_reason := update_and_check(pos, trail_price, cfg.trail):
+        elif trail_reason := update_and_check(
+            pos, trail_price, cfg.trail, low=trail_low, high=trail_high
+        ):
             reason = trail_reason
         else:
             sh15 = (
@@ -175,7 +181,7 @@ def step(
             ev.update(
                 event="exit",
                 side=side,
-                price=trail_price,
+                price=pos.get("trail_exit_price", trail_price),
                 reason=reason,
                 ts=ts,
                 peak_pnl_pct=pos.get("peak_pnl_pct"),

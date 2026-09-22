@@ -46,29 +46,31 @@ import numpy as np
 import pandas as pd
 
 from crypto.strategies.indicators import ema, supertrend_dir
-from crypto.strategies.trailing import TrailConfig
+from crypto.strategies.trailing import TrailConfig, update_and_check
 
 
 @dataclass(frozen=True)
 class AkRoxxConfig:
-    upper_len: int = 8               # AK Channel — SMA of highs
-    lower_len: int = 8               # AK Channel — SMA of lows
+    upper_len: int = 8  # AK Channel — SMA of highs
+    lower_len: int = 8  # AK Channel — SMA of lows
     ema_short: int = 7
     ema_long: int = 14
-    pema_fast: int = 13              # PEMA ribbon on hlc3
+    pema_fast: int = 13  # PEMA ribbon on hlc3
     pema_mid: int = 21
     pema_slow: int = 34
-    slope_lookback: int = 1          # bars back for every "rising / falling" check
-    timeframe: str = "1h"            # the channel-break exit is a proper swing stop
-                                     #  on 1h (8h of lows); on 5m it's a 40-min leash
-                                     #  and gets chopped out — 2026-09-11 backtest.
+    slope_lookback: int = 1  # bars back for every "rising / falling" check
+    timeframe: str = "1h"  # the channel-break exit is a proper swing stop
+    #  on 1h (8h of lows); on 5m it's a 40-min leash
+    #  and gets chopped out — 2026-09-11 backtest.
     require_beyond_cpr: bool = True  # condition 7 — outside the previous 1H CPR
     require_alpha2_agree: bool = False  # extra filter: Alpha 2 must point the same way
     a2_chan_len: int = 15
     a2_chop_max: float = 38.2
     a2_st_period: int = 10
     a2_st_mult: float = 3.0
-    trail: TrailConfig = field(default_factory=TrailConfig)  # lane bracket-SL only; exit is the channel
+    trail: TrailConfig = field(
+        default_factory=TrailConfig
+    )  # lane bracket-SL only; exit is the channel
 
 
 def _blank_state() -> dict[str, Any]:
@@ -142,14 +144,24 @@ def _alpha1_dir(c5: pd.DataFrame, cfg: AkRoxxConfig, cpr: tuple[float, float] | 
     cpr_sell = (not cfg.require_beyond_cpr) or cpr is None or price < cpr[0]
 
     long_ok = (
-        mac_up and price > float(up_ch.iloc[-1]) and price > prev_close
-        and float(e_s.iloc[-1]) > float(e_l.iloc[-1]) and _rising(e_s, lb) and _rising(e_l, lb)
-        and cpr_buy and pema_bull
+        mac_up
+        and price > float(up_ch.iloc[-1])
+        and price > prev_close
+        and float(e_s.iloc[-1]) > float(e_l.iloc[-1])
+        and _rising(e_s, lb)
+        and _rising(e_l, lb)
+        and cpr_buy
+        and pema_bull
     )
     short_ok = (
-        mac_dn and price < float(lo_ch.iloc[-1]) and price < prev_close
-        and float(e_s.iloc[-1]) < float(e_l.iloc[-1]) and _falling(e_s, lb) and _falling(e_l, lb)
-        and cpr_sell and pema_bear
+        mac_dn
+        and price < float(lo_ch.iloc[-1])
+        and price < prev_close
+        and float(e_s.iloc[-1]) < float(e_l.iloc[-1])
+        and _falling(e_s, lb)
+        and _falling(e_l, lb)
+        and cpr_sell
+        and pema_bear
     )
     return 1 if long_ok else -1 if short_ok else 0
 
@@ -169,7 +181,8 @@ def _alpha2_dir(c5: pd.DataFrame, cfg: AkRoxxConfig, cpr: tuple[float, float] | 
             return (
                 float(up_ch.iloc[i]) > float(up_ch.iloc[i - lb])
                 and float(lo_ch.iloc[i]) > float(lo_ch.iloc[i - lb])
-                and px > float(up_ch.iloc[i]) and px > pxp
+                and px > float(up_ch.iloc[i])
+                and px > pxp
                 and float(e_s.iloc[i]) > float(e_l.iloc[i])
                 and float(e_s.iloc[i]) > float(e_s.iloc[i - lb])
                 and float(e_l.iloc[i]) > float(e_l.iloc[i - lb])
@@ -177,7 +190,8 @@ def _alpha2_dir(c5: pd.DataFrame, cfg: AkRoxxConfig, cpr: tuple[float, float] | 
         return (
             float(up_ch.iloc[i]) < float(up_ch.iloc[i - lb])
             and float(lo_ch.iloc[i]) < float(lo_ch.iloc[i - lb])
-            and px < float(lo_ch.iloc[i]) and px < pxp
+            and px < float(lo_ch.iloc[i])
+            and px < pxp
             and float(e_s.iloc[i]) < float(e_l.iloc[i])
             and float(e_s.iloc[i]) < float(e_s.iloc[i - lb])
             and float(e_l.iloc[i]) < float(e_l.iloc[i - lb])
@@ -187,9 +201,19 @@ def _alpha2_dir(c5: pd.DataFrame, cfg: AkRoxxConfig, cpr: tuple[float, float] | 
     if _choppiness(c5, 14) >= cfg.a2_chop_max:
         return 0
     st = supertrend_dir(c5, cfg.a2_st_period, cfg.a2_st_mult)
-    if _brk(len(c5) - 1, 1) and not _brk(len(c5) - 2, 1) and st == 1 and (cpr is None or price > cpr[1]):
+    if (
+        _brk(len(c5) - 1, 1)
+        and not _brk(len(c5) - 2, 1)
+        and st == 1
+        and (cpr is None or price > cpr[1])
+    ):
         return 1
-    if _brk(len(c5) - 1, -1) and not _brk(len(c5) - 2, -1) and st == -1 and (cpr is None or price < cpr[0]):
+    if (
+        _brk(len(c5) - 1, -1)
+        and not _brk(len(c5) - 2, -1)
+        and st == -1
+        and (cpr is None or price < cpr[0])
+    ):
         return -1
     return 0
 
@@ -200,6 +224,8 @@ def step(
     *,
     state: dict[str, Any] | None,
     cfg: AkRoxxConfig,
+    live_price: float | None = None,
+    live_range: tuple[float, float] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     st = {**_blank_state(), **(state or {})}
     ev: dict[str, Any] = {"strategy": "ak_roxx_pro", "asset": symbol, "event": "none"}
@@ -213,19 +239,40 @@ def step(
     close = c5["close"].astype(float)
     price = float(close.iloc[-1])
     ts = str(c5["datetime"].iloc[-1])
+    # trailing stop/target reacts to the live mark, not just the last closed
+    # candle — see crypto/strategies/cpr_trend.py for why.
+    trail_price = live_price if live_price is not None else price
+    # and the candle's real low/high (2026-09-22) catches a spike-and-reverse
+    # that happened between two scans — a single live price can still miss it.
+    trail_low, trail_high = live_range if live_range is not None else (trail_price, trail_price)
     pos = st["position"]
 
-    # ---- exit: close back through the far channel band ----
+    # ---- exit: the shared P&L trail (Richard, 2026-09-22: a backstop under
+    # every strategy, this one included) fires first; the channel band —
+    # this strategy's own, faithful-to-the-real-indicator exit — otherwise ----
     if pos:
         long = pos["side"] == "long"
-        band = float(_sma(c5, cfg.lower_len if long else cfg.upper_len,
-                          "low" if long else "high").iloc[-1])
+        band = float(
+            _sma(c5, cfg.lower_len if long else cfg.upper_len, "low" if long else "high").iloc[-1]
+        )
         pos["chan_stop"] = band  # for display / the lane
-        if (long and price < band) or (not long and price > band):
+        reason = update_and_check(pos, trail_price, cfg.trail, low=trail_low, high=trail_high)
+        if not reason and ((long and price < band) or (not long and price > band)):
+            reason = (
+                f"close {price:.2f} back through SMA{cfg.lower_len if long else cfg.upper_len} "
+                f"{'low' if long else 'high'} band {band:.2f}"
+            )
+        if reason:
             st["position"] = None
-            ev.update(event="exit", side=pos["side"], price=price, ts=ts,
-                      reason=f"close {price:.2f} back through SMA{cfg.lower_len if long else cfg.upper_len} "
-                             f"{'low' if long else 'high'} band {band:.2f}")
+            ev.update(
+                event="exit",
+                side=pos["side"],
+                price=pos.get("trail_exit_price", trail_price),
+                ts=ts,
+                reason=reason,
+                peak_pnl_pct=pos.get("peak_pnl_pct"),
+                trail_stop_pnl_pct=pos.get("trail_stop_pnl_pct"),
+            )
         else:
             ev.update(event="hold", side=pos["side"], price=price)
         return st, ev
@@ -245,13 +292,20 @@ def step(
         return st, ev
 
     want = "long" if d == 1 else "short"
-    band = float(_sma(c5, cfg.lower_len if d == 1 else cfg.upper_len,
-                      "low" if d == 1 else "high").iloc[-1])
+    band = float(
+        _sma(c5, cfg.lower_len if d == 1 else cfg.upper_len, "low" if d == 1 else "high").iloc[-1]
+    )
     st["position"] = {
-        "side": want, "entry_price": price, "entry_time": ts, "chan_stop": band,
+        "side": want,
+        "entry_price": price,
+        "entry_time": ts,
+        "chan_stop": band,
     }
     ev.update(
-        event="enter", side=want, price=price, ts=ts,
+        event="enter",
+        side=want,
+        price=price,
+        ts=ts,
         reason=(
             f"AK Roxx: 8/8 channel + 7/14 EMA + PEMA {cfg.pema_fast}/{cfg.pema_mid}/{cfg.pema_slow} "
             f"stacked {'up' if d == 1 else 'down'}"
@@ -267,19 +321,27 @@ def _demo_frame() -> pd.DataFrame:
     that closes below SMA(low,8) (fires the exit)."""
     seg = [
         100.0 + np.sin(np.linspace(0, 6, 300)) * 1.5,
-        100.0 + np.linspace(0, 60, 240) ** 1.15,     # rally
-        100.0 + np.linspace(60, 60, 3) ** 1.15,      # tiny plateau
+        100.0 + np.linspace(0, 60, 240) ** 1.15,  # rally
+        100.0 + np.linspace(60, 60, 3) ** 1.15,  # tiny plateau
     ]
     px = np.concatenate(seg)
     px = np.concatenate([px, [px[-1] - 40, px[-1] - 55, px[-1] - 55]])  # drop through the low band
     idx = pd.date_range("2026-09-06 00:00", periods=len(px), freq="5min", tz="UTC")
     return pd.DataFrame(
-        {"datetime": idx, "open": px, "high": px + 0.1, "low": px - 0.1, "close": px,
-         "volume": [10.0] * len(px)}
+        {
+            "datetime": idx,
+            "open": px,
+            "high": px + 0.1,
+            "low": px - 0.1,
+            "close": px,
+            "volume": [10.0] * len(px),
+        }
     )
 
 
-if __name__ == "__main__":  # self-check — enter on the rally, exit on the close through the low band
+if (
+    __name__ == "__main__"
+):  # self-check — enter on the rally, exit on the close through the low band
     df = _demo_frame()
     cfg = AkRoxxConfig()
     state, entered, exited = None, None, None
@@ -291,7 +353,11 @@ if __name__ == "__main__":  # self-check — enter on the rally, exit on the clo
             exited = evt
             break
     assert entered and entered["side"] == "long", entered
-    assert exited and "band" in exited["reason"], exited
+    # exit fires from whichever trips first — the shared P&L trail (backstop,
+    # added 2026-09-22) or this strategy's own channel band. The demo rally is
+    # steep enough (it's just testing entry/exit wiring, not signal precision)
+    # that the trail usually wins; either is a correct exit.
+    assert exited and ("band" in exited["reason"] or "trailing" in exited["reason"]), exited
     flat = df.assign(open=100.0, high=100.3, low=99.7, close=100.0)
     _, ev2 = step("BTCUSD", flat, state=None, cfg=cfg)
     assert ev2["event"] == "wait", ev2

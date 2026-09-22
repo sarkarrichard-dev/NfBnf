@@ -131,9 +131,21 @@ comparing. Drawn as a box spanning the current hour.
 `ak_roxx_pro.py` now matches the portal's `computeAlpha1Signals` exactly:
 
 - 8-condition `rawBuy` / `rawSell` (above), fired the first flat bar it's true.
-- **Exit = close back through the far band** (`close < SMA(low,8)` for a long).
-  Nothing else — no target, no P&L trail, no ratchet, no hard floor. The
-  earlier ports had all of those and their −$8k / −$2k backtests are **void**.
+- **Exit = close back through the far band** (`close < SMA(low,8)` for a long),
+  same as the real indicator — no ratchet, no target tied to the signal
+  itself. The earlier ports had a ratchet/target grafted onto the *entry*
+  logic and their −$8k / −$2k backtests are **void**. As of 2026-09-22 the
+  shared crypto P&L trail (`crypto/strategies/trailing.py`, the same backstop
+  every other crypto strategy runs) sits underneath this exit — whichever
+  fires first wins. **Correction (same day, caught in review):** at the
+  current tuned trail settings (~0.8% price move for the initial stop) this
+  strategy's own 1h channel band (an 8-hour swing stop) almost never wins
+  the race — the trail fires first on most real moves, which means this
+  is *not* the rare disaster-only backstop it was meant to be; it's become
+  ak_roxx_pro's de facto primary exit. Open question for Richard: give this
+  strategy its own, much wider trail so the channel band decides again, or
+  drop the trail from it entirely and go back to channel-only. Not yet
+  decided — don't assume either resolution.
 - Optional `require_alpha2_agree` (default off) — extra filter, Alpha 1 itself
   doesn't use Alpha 2.
 - `SEARCH_SPACE["ak_roxx_pro"]` — `require_beyond_cpr`, `require_alpha2_agree`,

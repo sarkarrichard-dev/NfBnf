@@ -55,6 +55,7 @@ def step(
     state: dict[str, Any] | None,
     cfg: RsiAdxTrendConfig,
     live_price: float | None = None,
+    live_range: tuple[float, float] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     st = {**_blank_state(), **(state or {})}
     ev: dict[str, Any] = {"strategy": "rsi_adx_trend", "asset": symbol, "event": "none"}
@@ -75,6 +76,9 @@ def step(
     # trailing stop/target reacts to the live mark, not just the last closed
     # candle — see crypto/strategies/cpr_trend.py for why.
     trail_price = live_price if live_price is not None else price
+    # and the candle's real low/high (2026-09-22) catches a spike-and-reverse
+    # that happened between two scans — a single live price can still miss it.
+    trail_low, trail_high = live_range if live_range is not None else (trail_price, trail_price)
     adx_now = float(a.iloc[-1])
     rsi_up = crossed_over(r, 50.0)
     rsi_dn = crossed_under(r, 50.0)
@@ -85,7 +89,7 @@ def step(
     pos = st["position"]
     if pos:
         side = pos["side"]
-        reason = update_and_check(pos, trail_price, cfg.trail)
+        reason = update_and_check(pos, trail_price, cfg.trail, low=trail_low, high=trail_high)
         if not reason:
             if side == "long" and rsi_dn and ema_dn and trending:
                 reason = "RSI + EMA rolled over with ADX confirming — momentum reversed"
@@ -96,7 +100,7 @@ def step(
             ev.update(
                 event="exit",
                 side=side,
-                price=trail_price,
+                price=pos.get("trail_exit_price", trail_price),
                 reason=reason,
                 ts=ts,
                 peak_pnl_pct=pos.get("peak_pnl_pct"),
