@@ -161,6 +161,29 @@ def _trail_cfg(s) -> TrailConfig:
     )
 
 
+def _ak_roxx_trail(s) -> TrailConfig:
+    """ak_roxx_pro's own, much wider trail (Richard, 2026-09-22) — its channel
+    band is the real exit (a faithful port of a real indicator), the shared
+    trail is only a disaster backstop underneath it, and at the normal shared
+    settings it was firing before the channel band nearly every time. Sized
+    off the real channel-band exit history: replaying 1,320 backtest trades
+    (crypto.backtest.backtest_simple, 7 symbols, 180 days), losing exits were
+    a median -11% P&L, 5th percentile -35%, 1st percentile -57% — so -55%
+    sits clear of ~98%+ of ordinary channel exits and only catches the true
+    tail (the worst recorded were -66% to -95%)."""
+    return TrailConfig(
+        leverage=s.leverage,
+        stop_pnl_pct=55.0,
+        ratchet_step_pnl_pct=15.0,
+        tp_trigger_pnl_pct=100.0,
+        peak_trail_pnl_pct=15.0,
+    )
+
+
+def _trail_cfg_for(strat: str, s) -> TrailConfig:
+    return _ak_roxx_trail(s) if strat == "ak_roxx_pro" else _trail_cfg(s)
+
+
 def _nb_cfg(s) -> nb.NBreakConfig:
     # around-the-clock covers more hours than the 5h NY window, so the per-period
     # cap gets more room (still tunable via the env var).
@@ -220,7 +243,7 @@ def _ak_roxx_cfg(s):
 
     tuned = _tuned("ak_roxx_pro")
     tf = os.getenv("CRYPTO_AK_ROXX_TF", tuned.get("timeframe", "1h")).strip()
-    return AkRoxxConfig(**{**tuned, "timeframe": tf}, trail=_trail_cfg(s))
+    return AkRoxxConfig(**{**tuned, "timeframe": tf}, trail=_ak_roxx_trail(s))
 
 
 # name -> builder returning (module, timeframe, days-of-history, cfg)
@@ -742,7 +765,7 @@ def _apply_entry(
                 side,
                 sr.size,
                 leverage=sr.leverage,
-                sl_price=bracket_stop_price(entry_px, side, _trail_cfg(s)),
+                sl_price=bracket_stop_price(entry_px, side, _trail_cfg_for(strat, s)),
                 client_order_id=f"{strat}-{sym}-{ev.get('ts')}",
             )
         except Exception as exc:
@@ -781,7 +804,7 @@ def _apply_entry(
         "leverage": sr.leverage,
         "margin_total_usd": sr.margin_total_usd,
         "notional_usd": round(fill_size * contract.contract_value * entry_px, 2),
-        "stop_price": bracket_stop_price(entry_px, side, _trail_cfg(s)),
+        "stop_price": bracket_stop_price(entry_px, side, _trail_cfg_for(strat, s)),
         "opened_at": now_utc.isoformat(),
         "order_id": order_id,
         "entry_reason": ev.get("reason"),

@@ -131,9 +131,23 @@ comparing. Drawn as a box spanning the current hour.
 `ak_roxx_pro.py` now matches the portal's `computeAlpha1Signals` exactly:
 
 - 8-condition `rawBuy` / `rawSell` (above), fired the first flat bar it's true.
-- **Exit = close back through the far band** (`close < SMA(low,8)` for a long).
-  Nothing else — no target, no P&L trail, no ratchet, no hard floor. The
-  earlier ports had all of those and their −$8k / −$2k backtests are **void**.
+- **Exit = close back through the far band** (`close < SMA(low,8)` for a long),
+  same as the real indicator. The earlier ports had a ratchet/target grafted
+  onto the *entry* logic and their −$8k / −$2k backtests are **void**.
+- **Disaster backstop, 2026-09-22:** the shared crypto P&L trail
+  (`crypto/strategies/trailing.py`) sits underneath the channel exit —
+  whichever fires first wins. At the *shared* trail's normal settings this
+  fired before the channel band on almost every real move (caught in
+  review), turning it into a de facto primary exit rather than a rare
+  disaster catch. Fixed by giving `ak_roxx_pro` its **own**, much wider trail
+  (`crypto/lanes.py::_ak_roxx_trail`, also used by `crypto/backtest.py` so
+  backtests match live behavior): stop −55% P&L, 15% ratchet steps, 100%
+  profit-trigger, 15% peak trail. Sized off the real channel-band exit
+  history — replaying 1,320 backtest trades (7 symbols, 180 days) with the
+  trail disabled, losing channel-band exits were a median −11% P&L, 5th
+  percentile −35%, 1st percentile −57% (worst recorded: −66% to −95%) — so
+  −55% sits clear of ~98%+ of ordinary channel exits and only engages for
+  the genuine tail.
 - Optional `require_alpha2_agree` (default off) — extra filter, Alpha 1 itself
   doesn't use Alpha 2.
 - `SEARCH_SPACE["ak_roxx_pro"]` — `require_beyond_cpr`, `require_alpha2_agree`,
