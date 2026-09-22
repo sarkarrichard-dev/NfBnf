@@ -65,6 +65,27 @@ def crypto_day(now: datetime | None = None) -> str:
     return now.astimezone(timezone.utc).date().isoformat()
 
 
+def parse_hhmm(raw: str, default: dtime = dtime(0, 0)) -> dtime:
+    """Public form of the HH:MM parser the other session helpers use internally."""
+    return _hhmm(raw, default)
+
+
+def session_date_for(anchor: str, now: datetime | None = None) -> str:
+    """The IST date that owns the 24h window starting at ``anchor`` — a single
+    reset time rather than a start/end pair (e.g. crypto's ORB lane, whose
+    'day' rolls over once at the opening-range anchor, not at a window's
+    close). Before ``anchor`` on the clock, still belongs to the prior date's
+    window."""
+    now = (now or now_ist()).astimezone(IST)
+    start = _hhmm(anchor, dtime(0, 0))
+    d = now.date()
+    if now.time() < start:
+        from datetime import timedelta
+
+        d -= timedelta(days=1)
+    return d.isoformat()
+
+
 if __name__ == "__main__":  # self-check
     noon = datetime(2026, 9, 7, 12, 0, tzinfo=IST)
     seven_pm = datetime(2026, 9, 7, 19, 0, tzinfo=IST)
@@ -76,4 +97,10 @@ if __name__ == "__main__":  # self-check
     assert ny_session_date("18:00", "23:00", seven_pm) == "2026-09-07"
     assert abs(seconds_to_ny_end("23:00", seven_pm) - 4 * 3600) < 1
     assert crypto_day(datetime(2026, 9, 7, 2, 0, tzinfo=IST)) == "2026-09-06"  # 20:30 UTC prev day
+
+    assert session_date_for("18:00", seven_pm) == "2026-09-07"  # at/after anchor -> today
+    assert (
+        session_date_for("18:00", noon) == "2026-09-06"
+    )  # before anchor -> still yesterday's window
+    assert parse_hhmm("18:00") == dtime(18, 0)
     print("crypto.session self-check ok")
