@@ -1,3 +1,4 @@
+import calendar
 import math
 from datetime import datetime, timedelta
 
@@ -129,11 +130,16 @@ def test_api_serves_the_lab(db):
 def _ticks(spots, start="09:15", step_s=30):
     """Index ticks every 30s following ``spots`` with a small zig-zag."""
     t0 = datetime.fromisoformat(f"{SESSION}T{start}:00+05:30")
-    rows = [((t0 + timedelta(seconds=step_s * i)).isoformat(), SESSION, "NIFTY", 13, "ticker",
-             spot + (3 if i % 2 else -3)) for i, spot in enumerate(spots)]
+    # Dhan's ltt: IST wall-clock seconds stored as an epoch
+    ist_epoch = lambda t: calendar.timegm(t.timetuple())  # wall clock read as UTC  # noqa: E731
+    rows = []
+    for i, spot in enumerate(spots):
+        t = t0 + timedelta(seconds=step_s * i)
+        rows.append((t.isoformat(), SESSION, "NIFTY", 13, "ticker", spot + (3 if i % 2 else -3),
+                     ist_epoch(t)))
     with market_log.connect() as con:
-        con.executemany("INSERT INTO ticks (ts, session, instrument, security_id, kind, ltp)"
-                        " VALUES (?,?,?,?,?,?)", rows)
+        con.executemany("INSERT INTO ticks (ts, session, instrument, security_id, kind, ltp, ltt)"
+                        " VALUES (?,?,?,?,?,?,?)", rows)
 
 
 def test_structure_reads_only_todays_completed_candles(db):
@@ -216,3 +222,19 @@ def test_normal_premium_stays_on_near_expiry(db):
     _day(spots, start="09:15", expiry="2026-10-01")
     got = strategy_lab.run_session("pa_structure_next_spread", "NIFTY", SESSION)
     assert got and got[0]["expiry"] == "near"
+
+
+def test_candles_use_exchange_time_not_late_arrival(db):
+    """A tick that arrives 7 minutes late (2026-09-16) must land in the candle
+    of when it traded, not when it reached us."""
+    _ticks([23400.0] * 40)                                   # 09:15-09:35, flat
+    late_trade = datetime.fromisoformat(f"{SESSION}T09:16:00+05:30")
+    with market_log.connect() as con:
+        con.execute("INSERT INTO ticks (ts, session, instrument, security_id, kind, ltp, ltt)"
+                    " VALUES (?,?,?,?,?,?,?)",
+                    ((late_trade + timedelta(minutes=7)).isoformat(), SESSION, "NIFTY", 13,
+                     "ticker", 23500.0,
+                     calendar.timegm(late_trade.timetuple())))
+    bars = strategy_lab._bars_5m("NIFTY", SESSION)
+    assert bars["high"].iloc[0] == 23500.0                   # 09:15 candle, when it traded
+    assert bars["high"].iloc[1] < 23500.0                    # not the 09:20 candle it arrived in
