@@ -136,3 +136,47 @@ def test_tick_batch_is_noop_when_logging_disabled(db, monkeypatch):
 
 def test_tick_batch_skips_packets_without_a_security_id(db):
     assert market_log.record_tick_batch([{"type": "ticker", "ltp": 1.0}]) == 0
+
+
+def test_scanner_skip_and_entry_events_land_in_decisions(db, monkeypatch):
+    from index_ai import scanner
+
+    monkeypatch.setattr(market_log, "in_background", lambda fn, *a, **k: fn(*a, **k))
+    scanner._log("skip_entry_guard", instrument="BANKNIFTY", action="SELL_CE",
+                 lane="sell", reason="tape fights direction")
+    scanner._log("no_trade", instrument="NIFTY", buy_reason="no pattern",
+                 sell_reason="inside CPR")
+    scanner._log("executed", instrument="SENSEX", lane="buy", trade_id=7)
+    scanner._log("scan", instrument="NIFTY")          # routine, not a decision
+    scanner._log("skip_cooldown", action="BUY_CE")    # no instrument, not recorded
+
+    with market_log.connect() as con:
+        rows = [dict(r) for r in con.execute(
+            "SELECT instrument, lane, event, traded, reason FROM decisions ORDER BY id")]
+    assert rows == [
+        {"instrument": "BANKNIFTY", "lane": "sell", "event": "skip_entry_guard",
+         "traded": 0, "reason": "tape fights direction"},
+        {"instrument": "NIFTY", "lane": "both", "event": "no_trade",
+         "traded": 0, "reason": "buy: no pattern · sell: inside CPR"},
+        {"instrument": "SENSEX", "lane": "buy", "event": "executed",
+         "traded": 1, "reason": None},
+    ]
+
+
+def test_chain_snapshot_keeps_nearest_strikes_and_throttles(db, monkeypatch):
+    monkeypatch.setattr(market_log, "_last_chain_at", {})
+    oc = {f"{24000 + 50 * i}.000000": {
+        "ce": {"last_price": 100, "top_bid_price": 99, "top_ask_price": 101, "oi": 10,
+               "greeks": {"delta": 0.5}},
+        "pe": {"last_price": 90, "oi": 20}} for i in range(-40, 41)}
+    chain = {"data": {"oc": oc}}
+    assert market_log.record_chain_snapshot("NIFTY", "2026-09-29", 24010, chain) == 62
+    assert market_log.record_chain_snapshot("NIFTY", "2026-09-29", 24010, chain) == 0
+    assert market_log.record_chain_snapshot("BANKNIFTY", "2026-09-29", 24010, chain) == 62
+    with market_log.connect() as con:
+        lo, hi = con.execute(
+            "SELECT MIN(strike), MAX(strike) FROM chain WHERE instrument='NIFTY'").fetchone()
+        ce = con.execute("SELECT bid, ask, delta FROM chain WHERE strike=24000 "
+                         "AND opt_type='CE' AND instrument='NIFTY'").fetchone()
+    assert (lo, hi) == (23250, 24750)
+    assert tuple(ce) == (99, 101, 0.5)

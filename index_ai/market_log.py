@@ -22,6 +22,13 @@ Two resolutions, deliberately: ``observations`` is one row per instrument per
 scan cycle and always available; ``ticks`` is per exchange update and only when
 the websocket is running. ``stats()["resolution"]`` reports which you actually
 have, so nothing infers tick data that was never collected.
+
+  ``chain``         real option-chain snapshots — per strike, CE and PE: last
+                    price, best bid/ask, OI, volume, IV and greeks — saved from
+                    the chain the planner already downloads (no extra Dhan call),
+                    at most once a minute per index. This is the real-price
+                    record new option strategies get tested against, instead of
+                    a Black-Scholes guess (there is no historical option chain).
 """
 
 from __future__ import annotations
@@ -29,6 +36,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -119,6 +128,32 @@ def _migrate(db: sqlite3.Connection) -> None:
             close REAL
         )
     """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS chain (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            session TEXT NOT NULL,
+            instrument TEXT NOT NULL,
+            expiry TEXT,
+            spot REAL,
+            strike REAL NOT NULL,
+            opt_type TEXT NOT NULL,
+            security_id INTEGER,
+            ltp REAL,
+            bid REAL,
+            ask REAL,
+            bid_qty REAL,
+            ask_qty REAL,
+            oi REAL,
+            prev_oi REAL,
+            volume REAL,
+            iv REAL,
+            delta REAL,
+            gamma REAL,
+            theta REAL,
+            vega REAL
+        )
+    """)
     for stmt in (
         "CREATE INDEX IF NOT EXISTS idx_obs_session ON observations(session, instrument)",
         "CREATE INDEX IF NOT EXISTS idx_obs_ts ON observations(ts)",
@@ -126,6 +161,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_dec_traded ON decisions(traded, session)",
         "CREATE INDEX IF NOT EXISTS idx_tick_session ON ticks(session, instrument)",
         "CREATE INDEX IF NOT EXISTS idx_tick_ltt ON ticks(security_id, ltt)",
+        "CREATE INDEX IF NOT EXISTS idx_chain_session ON chain(session, instrument, ts)",
     ):
         db.execute(stmt)
 
@@ -182,6 +218,68 @@ def record_decision(instrument: str, lane: str, event: str, *, traded: bool,
             )
     except Exception:
         pass
+
+
+def in_background(fn, *args: Any, **kwargs: Any) -> None:
+    """Run a recorder off the caller's thread. The scanner calls these from
+    inside the asyncio loop, and a sync SQLite write there stalls every
+    dashboard poll. Recorders never raise, so fire-and-forget is safe."""
+    threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True).start()
+
+
+CHAIN_STRIKES_EACH_SIDE = 15   # ±15 strikes around spot, CE + PE = 62 rows a snapshot
+CHAIN_MIN_GAP_SECONDS = 55     # scanner fetches every 90s; dashboard calls must not add duplicates
+_last_chain_at: dict[str, float] = {}
+_CHAIN_COLS = ("security_id", "ltp", "bid", "ask", "bid_qty", "ask_qty", "oi",
+               "prev_oi", "volume", "iv", "delta", "gamma", "theta", "vega")
+
+
+def _chain_leg(leg: dict[str, Any]) -> tuple:
+    g = leg.get("greeks") or {}
+    return (
+        _f(leg.get("security_id")), _f(leg.get("last_price")),
+        _f(leg.get("top_bid_price")), _f(leg.get("top_ask_price")),
+        _f(leg.get("top_bid_quantity")), _f(leg.get("top_ask_quantity")),
+        _f(leg.get("oi")), _f(leg.get("previous_oi")), _f(leg.get("volume")),
+        _f(leg.get("implied_volatility")),
+        _f(g.get("delta")), _f(g.get("gamma")), _f(g.get("theta")), _f(g.get("vega")),
+    )
+
+
+def record_chain_snapshot(instrument: str, expiry: str | None, spot: float,
+                          chain: dict[str, Any]) -> int:
+    """Save the strikes nearest spot from one Dhan option-chain response.
+    Throttled per index; returns rows written. Never raises."""
+    if not enabled():
+        return 0
+    key = str(instrument).upper()
+    now = time.monotonic()
+    if now - _last_chain_at.get(key, -1e9) < CHAIN_MIN_GAP_SECONDS:
+        return 0
+    _last_chain_at[key] = now
+    try:
+        oc = (chain.get("data") or {}).get("oc") or {}
+        strikes = sorted((float(k), v) for k, v in oc.items() if _f(k) is not None)
+        strikes.sort(key=lambda kv: abs(kv[0] - float(spot)))
+        ts, session = now_ist().isoformat(timespec="seconds"), today_ist_date()
+        rows = [
+            (ts, session, key, expiry, _f(spot), strike, side.upper(), *_chain_leg(leg))
+            for strike, row in strikes[: 2 * CHAIN_STRIKES_EACH_SIDE + 1]
+            for side in ("ce", "pe")
+            if isinstance(leg := (row or {}).get(side), dict) and leg
+        ]
+        if not rows:
+            return 0
+        with connect() as db:
+            db.executemany(
+                f"""INSERT INTO chain (ts, session, instrument, expiry, spot, strike,
+                    opt_type, {", ".join(_CHAIN_COLS)})
+                    VALUES ({",".join("?" * (7 + len(_CHAIN_COLS)))})""",
+                rows,
+            )
+        return len(rows)
+    except Exception:
+        return 0
 
 
 _TICK_COLS = ("kind", "ltp", "ltq", "ltt", "atp", "volume",
@@ -287,6 +385,7 @@ def stats() -> dict[str, Any]:
             obs = db.execute("SELECT COUNT(*) c, MIN(session) a, MAX(session) b FROM observations").fetchone()
             dec = db.execute("SELECT COUNT(*) c, SUM(traded) t FROM decisions").fetchone()
             tk = db.execute("SELECT COUNT(*) c, MAX(session) s FROM ticks").fetchone()
+            ch = db.execute("SELECT COUNT(*) c, MIN(session) a, MAX(session) b FROM chain").fetchone()
             size = DB_PATH.stat().st_size if DB_PATH.is_file() else 0
             return {
                 "enabled": enabled(),
@@ -294,6 +393,8 @@ def stats() -> dict[str, Any]:
                 "decisions": dec["c"], "traded": dec["t"] or 0,
                 "skipped": (dec["c"] or 0) - (dec["t"] or 0),
                 "ticks": tk["c"], "last_tick_session": tk["s"],
+                "chain_rows": ch["c"], "chain_first_session": ch["a"],
+                "chain_last_session": ch["b"],
                 "db_mb": round(size / 1e6, 2),
                 "resolution": (
                     "exchange ticks (websocket) + scan-cycle observations"
@@ -312,7 +413,7 @@ def prune(days: int = RETENTION_DAYS) -> int:
     removed = 0
     try:
         with connect() as db:
-            for table in ("observations", "decisions", "ticks"):
+            for table in ("observations", "decisions", "ticks", "chain"):
                 cur = db.execute(f"DELETE FROM {table} WHERE session < ?", (cutoff,))
                 removed += cur.rowcount or 0
     except Exception:
@@ -355,4 +456,19 @@ if __name__ == "__main__":  # ponytail self-check
         os.environ["ENABLE_MARKET_LOG"] = "true"
         record_observation("NIFTY", spot="not-a-number")   # coerces to NULL, no raise
         assert stats()["observations"] == 2
+
+        # chain snapshot: nearest strikes only, both sides, throttled per index
+        oc = {f"{24000 + 50 * i}.000000": {
+            "ce": {"last_price": 100 - i, "top_bid_price": 99, "top_ask_price": 101,
+                   "oi": 1000, "security_id": 5000 + i, "greeks": {"delta": 0.5}},
+            "pe": {"last_price": 90 + i, "oi": 2000}} for i in range(-40, 41)}
+        assert record_chain_snapshot("NIFTY", "2026-09-29", 24010, {"data": {"oc": oc}}) == 62
+        assert record_chain_snapshot("NIFTY", "2026-09-29", 24010, {"data": {"oc": oc}}) == 0
+        assert record_chain_snapshot("SENSEX", None, 1, {"data": {}}) == 0
+        with connect() as db:
+            r = db.execute("SELECT MIN(strike) lo, MAX(strike) hi FROM chain").fetchone()
+            ce = db.execute("SELECT * FROM chain WHERE strike=24000 AND opt_type='CE'").fetchone()
+        assert (r["lo"], r["hi"]) == (23250, 24750)
+        assert ce["bid"] == 99 and ce["delta"] == 0.5 and ce["security_id"] == 5000
+        assert stats()["chain_rows"] == 62
         print("market_log.py self-check ok")

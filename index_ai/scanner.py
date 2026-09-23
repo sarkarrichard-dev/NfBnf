@@ -102,9 +102,32 @@ def _without_event(payload: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in payload.items() if k != "event"}
 
 
+# Per-index entry outcomes worth keeping past the 80-item in-memory deque:
+# the skips (and why) are what later tells us whether a filter blocks winners.
+_DECISION_EVENTS = frozenset({
+    "no_trade", "plan_blocked", "skip_entry_window", "skip_open_position",
+    "skip_cooldown", "skip_entry_guard", "executed", "execute_blocked",
+})
+
+
+def _record_decision(event: str, fields: dict[str, Any]) -> None:
+    from index_ai.market_log import in_background, record_decision
+
+    reason = fields.get("reason") or " · ".join(
+        f"{k.split('_')[0]}: {fields[k]}" for k in ("buy_reason", "sell_reason") if fields.get(k)
+    )
+    extra = {k: v for k, v in fields.items() if k not in ("instrument", "lane", "reason")}
+    in_background(
+        record_decision, fields["instrument"], str(fields.get("lane") or "both"), event,
+        traded=event == "executed", reason=reason or None, **extra,
+    )
+
+
 def _log(event: str, **fields: Any) -> None:
     entry = {"at": now_ist_iso(), "at_ist": market_status()["now_ist"], "event": event, **fields}
     _state.events.appendleft(entry)
+    if event in _DECISION_EVENTS and fields.get("instrument"):
+        _record_decision(event, fields)
     if fields:
         _log_py.info("%s | %s", event, " · ".join(f"{k}={v}" for k, v in fields.items()))
     else:
