@@ -26,9 +26,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import pandas as pd
+
+from index_ai import market_log
 from index_ai.charges import leg_charge_rupees
 from index_ai.instruments import market_lot_size
 from index_ai.strategies import oi_signals
+from index_ai.strategies.candlestick_sr import intraday_candle_trend
 
 ENTRY_FROM, ENTRY_UNTIL, SQUARE_OFF = "09:30", "14:30", "15:10"
 MAX_TRADES_PER_DAY = 2
@@ -36,6 +40,7 @@ HEDGE_STRIKES = 4  # long leg sits 4 strikes beyond the short one
 SPREAD_TARGET, SPREAD_STOP = 0.5, 1.0  # keep 50% of the credit / lose 1x the credit
 BUY_TARGET, BUY_STOP = 0.30, 0.20  # +30% / -20% of premium paid
 MIN_TRADES, MIN_DAYS = 30, 14
+PA_BARS = 6        # today's own 5m candles the structure read looks at (30 min)
 
 Direction = Callable[[dict[str, Any]], int]  # signal read -> +1 up, -1 down, 0 none
 
@@ -49,6 +54,14 @@ def _writing(sig: dict[str, Any]) -> int:
     return v["writing"] if v["writing"] and v["walls"] != -v["writing"] else 0
 
 
+def _structure(sig: dict[str, Any]) -> int:
+    return {"UP": 1, "DOWN": -1}.get(sig.get("structure"), 0)
+
+
+def _fade(sig: dict[str, Any]) -> int:
+    return -_structure(sig)
+
+
 # name -> (lane, direction rule, plain description)
 CANDIDATES: dict[str, tuple[str, Direction, str]] = {
     "oi_bias_spread": ("sell", _bias, "Credit spread in the direction of the combined OI bias"),
@@ -58,6 +71,20 @@ CANDIDATES: dict[str, tuple[str, Direction, str]] = {
         "Credit spread with the side option writers are adding to",
     ),
     "oi_bias_buy": ("buy", _bias, "Buy the at-the-money option in the direction of the OI bias"),
+    # Price action from TODAY's own candles only -- the live sell lane's 5m
+    # tape spans yesterday's bars until ~10:30. Two opposite readings, because
+    # the first 30 live sells hinted that selling *against* the structure did
+    # better than with it; the lab decides, not a 30-trade hunch.
+    "pa_structure_spread": (
+        "sell",
+        _structure,
+        "Credit spread with today's 5m price structure (higher highs/lows = bull put); none = no trade",
+    ),
+    "pa_fade_spread": (
+        "sell",
+        _fade,
+        "Credit spread against today's 5m price structure (sell into the move); none = no trade",
+    ),
 }
 
 
@@ -136,6 +163,37 @@ def _hit(lane: str, pos: _Pos, pts: float) -> str | None:
     return None
 
 
+def _bars_5m(instrument: str, session: str) -> pd.DataFrame:
+    """Today's 5m OHLC for the index from the real recorded ticks (09:15 on)."""
+    with market_log.connect() as db:
+        rows = db.execute(
+            "SELECT ts, ltp FROM ticks WHERE session=? AND instrument=? AND ltp > 0 "
+            "AND substr(ts, 12, 5) >= '09:15' AND substr(ts, 12, 5) < '15:30'",
+            (session, instrument.upper()),
+        ).fetchall()
+    if not rows:
+        return pd.DataFrame(columns=["high", "low", "end"])
+    px = pd.Series([r[1] for r in rows], index=pd.to_datetime([r[0] for r in rows]))
+    bars = px.resample("5min", origin="start_day", offset="15min").agg(["max", "min"]).dropna()
+    bars.columns = ["high", "low"]
+    bars["end"] = bars.index + pd.Timedelta(minutes=5)
+    return bars
+
+
+def signals(instrument: str, session: str,
+            snaps: list[tuple[str, oi_signals.Snapshot]]) -> list[dict[str, Any] | None]:
+    """OI read per snapshot, plus ``structure``: UP/DOWN/RANGE from today's
+    completed 5m candles up to that moment (no peeking at the bar in progress)."""
+    bars = _bars_5m(instrument, session)
+    out: list[dict[str, Any] | None] = [None]
+    for ts, snap in snaps[1:]:
+        sig = oi_signals.read(snaps[0][1], snap, session)
+        done = bars[bars["end"] <= pd.Timestamp(ts)] if len(bars) else bars
+        sig["structure"] = intraday_candle_trend(done, lookback=PA_BARS)
+        out.append(sig)
+    return out
+
+
 def run_session(
     name: str,
     instrument: str,
@@ -149,7 +207,7 @@ def run_session(
     if len(snaps) < 2:
         return []
     if sigs is None:
-        sigs = [None] + [oi_signals.read(snaps[0][1], s, session) for _, s in snaps[1:]]
+        sigs = signals(instrument, session, snaps)
     lot = market_lot_size(instrument)
     exchange = "BSE" if instrument.upper() == "SENSEX" else "NSE"
     cost = lambda price, side: leg_charge_rupees(price, lot, side, exchange=exchange)  # noqa: E731
@@ -227,7 +285,7 @@ def run(instruments: list[str], sessions: list[str]) -> dict[str, Any]:
             snaps = oi_signals.load_session(inst, session)
             if len(snaps) < 2:
                 continue
-            sigs = [None] + [oi_signals.read(snaps[0][1], s, session) for _, s in snaps[1:]]
+            sigs = signals(inst, session, snaps)
             for name in CANDIDATES:
                 trades += run_session(name, inst, session, snaps, sigs)
 

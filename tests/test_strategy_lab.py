@@ -124,3 +124,37 @@ def test_api_serves_the_lab(db):
     nifty = [r for r in body["rows"] if r["instrument"] == "NIFTY"]
     assert {r["strategy"] for r in nifty} == set(strategy_lab.CANDIDATES)
     assert body["recent_trades"]
+
+
+def _ticks(spots, start="09:15", step_s=30):
+    """Index ticks every 30s following ``spots`` with a small zig-zag."""
+    t0 = datetime.fromisoformat(f"{SESSION}T{start}:00+05:30")
+    rows = [((t0 + timedelta(seconds=step_s * i)).isoformat(), SESSION, "NIFTY", 13, "ticker",
+             spot + (3 if i % 2 else -3)) for i, spot in enumerate(spots)]
+    with market_log.connect() as con:
+        con.executemany("INSERT INTO ticks (ts, session, instrument, security_id, kind, ltp)"
+                        " VALUES (?,?,?,?,?,?)", rows)
+
+
+def test_structure_reads_only_todays_completed_candles(db):
+    _ticks([23400 + 0.5 * i for i in range(200)])       # steady climb from 09:15
+    _day([23500 + 5 * i for i in range(60)], start="09:15")
+    snaps = strategy_lab.oi_signals.load_session("NIFTY", SESSION)
+    sigs = strategy_lab.signals("NIFTY", SESSION, snaps)
+    by_time = {snaps[i][0][11:16]: sigs[i]["structure"] for i in range(1, len(snaps))}
+    assert by_time["09:30"] == "RANGE"                   # 3 candles: not enough of today yet
+    assert by_time["10:30"] == "UP"
+
+
+def test_price_action_candidates_trade_with_and_against_the_structure(db):
+    _ticks([23400 + 0.5 * i for i in range(400)])
+    _day([23500 + 5 * i for i in range(60)], start="09:15")
+    with_ = strategy_lab.run_session("pa_structure_spread", "NIFTY", SESSION)
+    fade = strategy_lab.run_session("pa_fade_spread", "NIFTY", SESSION)
+    assert with_ and with_[0]["legs"][0].endswith("PE") and with_[0]["entered"][11:16] >= "09:50"
+    assert fade and fade[0]["legs"][0].endswith("CE")
+
+
+def test_no_recorded_ticks_means_no_price_action_trade(db):
+    _day([23500 + 5 * i for i in range(60)])
+    assert strategy_lab.run_session("pa_structure_spread", "NIFTY", SESSION) == []
