@@ -377,7 +377,7 @@ function StrategyLabPanel() {
       <p className="border-b border-[var(--hair)] px-4 py-2 text-[12px] leading-relaxed text-slate-400">
         New ideas tested on real recorded option prices — bought at the ask, sold at the bid,
         with Dhan&rsquo;s real charges on every order, 1 lot. A verdict needs{' '}
-        {d.bar.min_trades}+ trades over {d.bar.min_days}+ days. Nothing here places an order.
+        {d.bar.min_trades}+ trades over {d.bar.min_days}+ days; buy ideas must also win 65%+ of the time. Nothing here places an order.
       </p>
       {d.sessions === 0 ? (
         <p className="px-4 py-6 text-sm text-slate-500">

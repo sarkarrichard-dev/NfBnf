@@ -44,6 +44,7 @@ HEDGE_STRIKES = 4  # long leg sits 4 strikes beyond the short one
 SPREAD_TARGET, SPREAD_STOP = 0.5, 1.0  # keep 50% of the credit / lose 1x the credit
 BUY_TARGET, BUY_STOP = 0.30, 0.20  # +30% / -20% of premium paid
 MIN_TRADES, MIN_DAYS = 30, 14
+BUY_MIN_WIN_RATE = 0.65   # Richard's bar for option buying, on top of net > 0
 PA_BARS = 6        # today's own 5m candles the structure read looks at (30 min)
 # "Options are expensive": at-the-money implied vol (what option prices assume
 # the index will move, annualised %) vs the move the index is actually making
@@ -80,6 +81,14 @@ def _structure(sig: dict[str, Any]) -> int:
 
 def _fade(sig: dict[str, Any]) -> int:
     return -_structure(sig)
+
+
+def _pullback(sig: dict[str, Any]) -> int:
+    return sig.get("pullback") or 0
+
+
+def _wall_bounce(sig: dict[str, Any]) -> int:
+    return sig.get("wall_bounce") or 0
 
 
 def _rich(rule: Direction) -> Direction:
@@ -121,6 +130,21 @@ CANDIDATES: dict[str, tuple[str, Direction, str]] = {
         "sell",
         _rich(_bias),
         "oi_bias_spread, only when implied vol is 1.2x+ today's actual move",
+    ),
+    # Option BUYING without chasing (2026-09-24). 14 of the 15 live buys since
+    # 2026-09-10 were entered after the index had already run the trade's way
+    # for 30 min (-₹5,981); direction 15 min later was right 8/15. These
+    # enter on the pause inside a move instead. Judged on win rate too --
+    # Richard's bar for buying is 65%.
+    "pa_pullback_buy": (
+        "buy",
+        _pullback,
+        "Buy ATM option when today's 5m structure resumes after a one-candle dip",
+    ),
+    "oi_wall_bounce_buy": (
+        "buy",
+        _wall_bounce,
+        "Buy ATM call when the index taps the biggest put-OI strike and closes back above (puts mirrored)",
     ),
     "pa_structure_next_spread": (
         "sell",
@@ -218,19 +242,49 @@ def _bars_5m(instrument: str, session: str) -> pd.DataFrame:
             (session, instrument.upper()),
         ).fetchall()
     if not rows:
-        return pd.DataFrame(columns=["high", "low", "close", "end"])
+        return pd.DataFrame(columns=["open", "high", "low", "close", "end"])
     idx = pd.to_datetime([r[0] for r in rows], unit="s").tz_localize("Asia/Kolkata")
     px = pd.Series([r[1] for r in rows], index=idx).sort_index()
     day = pd.Timestamp(session, tz="Asia/Kolkata")
     px = px[(px.index >= day + pd.Timedelta(hours=9, minutes=15))
             & (px.index < day + pd.Timedelta(hours=15, minutes=30))]
     if px.empty:
-        return pd.DataFrame(columns=["high", "low", "close", "end"])
+        return pd.DataFrame(columns=["open", "high", "low", "close", "end"])
     bars = px.resample("5min", origin="start_day", offset="15min").agg(
-        ["max", "min", "last"]).dropna()
-    bars.columns = ["high", "low", "close"]
+        ["first", "max", "min", "last"]).dropna()
+    bars.columns = ["open", "high", "low", "close"]
     bars["end"] = bars.index + pd.Timedelta(minutes=5)
     return bars
+
+
+def _pullback_read(structure: str, done: pd.DataFrame) -> int:
+    """+1 / -1 when the last completed 5m candle resumes today's structure
+    after a one-candle dip: structure UP, the previous candle closed down, and
+    the last one closed green above that dip candle's high (puts mirrored)."""
+    if structure not in ("UP", "DOWN") or len(done) < 2:
+        return 0
+    prev, last = done.iloc[-2], done.iloc[-1]
+    if structure == "UP" and prev["close"] < prev["open"] and last["close"] > last["open"]             and last["close"] > prev["high"]:
+        return 1
+    if structure == "DOWN" and prev["close"] > prev["open"] and last["close"] < last["open"]             and last["close"] < prev["low"]:
+        return -1
+    return 0
+
+
+def _wall_bounce_read(snap: oi_signals.Snapshot, done: pd.DataFrame, sig: dict[str, Any]) -> int:
+    """+1 when the last completed 5m candle dipped to the max put-OI strike
+    (support) and closed back above it; -1 mirrored at the max call-OI
+    strike (resistance). Not against a clear opposite structure."""
+    if not len(done):
+        return 0
+    side = oi_signals._oi_by_side(snap)
+    sup, res = oi_signals._wall(side["PE"]), oi_signals._wall(side["CE"])
+    last = done.iloc[-1]
+    if sup and last["low"] <= sup < last["close"] and sig.get("structure") != "DOWN":
+        return 1
+    if res and last["high"] >= res > last["close"] and sig.get("structure") != "UP":
+        return -1
+    return 0
 
 
 def _iv_rv(snap: oi_signals.Snapshot, done: pd.DataFrame) -> float | None:
@@ -259,6 +313,8 @@ def signals(instrument: str, session: str,
         done = bars[bars["end"] <= pd.Timestamp(ts)] if len(bars) else bars
         sig["structure"] = intraday_candle_trend(done, lookback=PA_BARS)
         sig["iv_rv"] = _iv_rv(snap, done)
+        sig["pullback"] = _pullback_read(sig["structure"], done)
+        sig["wall_bounce"] = _wall_bounce_read(snap, done, sig)
         out.append(sig)
     return out
 
@@ -390,13 +446,13 @@ def run(instruments: list[str], sessions: list[str]) -> dict[str, Any]:
             mine = [t for t in trades if t["strategy"] == name and t["instrument"] == inst.upper()]
             n, days = len(mine), len({t["session"] for t in mine})
             net = round(sum(t["net"] for t in mine), 2)
-            verdict = (
-                "COLLECTING"
-                if n < MIN_TRADES or days < MIN_DAYS
-                else "PASSING"
-                if net > 0
-                else "DROPPED"
-            )
+            win = sum(t["net"] > 0 for t in mine) / n if n else 0.0
+            if n < MIN_TRADES or days < MIN_DAYS:
+                verdict = "COLLECTING"
+            elif net > 0 and (lane != "buy" or win >= BUY_MIN_WIN_RATE):
+                verdict = "PASSING"
+            else:
+                verdict = "DROPPED"
             rows.append(
                 {
                     "strategy": name,

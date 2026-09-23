@@ -238,3 +238,47 @@ def test_candles_use_exchange_time_not_late_arrival(db):
     bars = strategy_lab._bars_5m("NIFTY", SESSION)
     assert bars["high"].iloc[0] == 23500.0                   # 09:15 candle, when it traded
     assert bars["high"].iloc[1] < 23500.0                    # not the 09:20 candle it arrived in
+
+
+def _candles(ohlc):
+    import pandas as pd
+    return pd.DataFrame(ohlc, columns=["open", "high", "low", "close"])
+
+
+def test_pullback_buy_waits_for_the_dip_then_the_resume():
+    dip_then_resume = _candles([(100, 106, 99, 105), (105, 106, 101, 102), (102, 109, 101, 108)])
+    assert strategy_lab._pullback_read("UP", dip_then_resume) == 1
+    chasing = _candles([(100, 106, 99, 105), (105, 111, 104, 110), (110, 116, 109, 115)])
+    assert strategy_lab._pullback_read("UP", chasing) == 0          # no dip: that's chasing
+    no_resume = _candles([(100, 106, 99, 105), (105, 106, 101, 102), (102, 105, 100, 104)])
+    assert strategy_lab._pullback_read("UP", no_resume) == 0        # didn't clear the dip high
+    assert strategy_lab._pullback_read("RANGE", dip_then_resume) == 0
+    mirrored = _candles([(110, 111, 104, 105), (105, 109, 104, 108), (108, 109, 100, 101)])
+    assert strategy_lab._pullback_read("DOWN", mirrored) == -1
+
+
+def test_wall_bounce_reads_the_oi_walls():
+    snap = [{"strike": s, "opt_type": t, "oi": (9e6 if (s, t) in {(23300.0, "PE"), (23700.0, "CE")} else 1e6)}
+            for s in (23300.0, 23500.0, 23700.0) for t in ("CE", "PE")]
+    tapped_support = _candles([(23320, 23330, 23290, 23315)])
+    assert strategy_lab._wall_bounce_read(snap, tapped_support, {"structure": "RANGE"}) == 1
+    assert strategy_lab._wall_bounce_read(snap, tapped_support, {"structure": "DOWN"}) == 0
+    tapped_resistance = _candles([(23690, 23710, 23670, 23680)])
+    assert strategy_lab._wall_bounce_read(snap, tapped_resistance, {"structure": "RANGE"}) == -1
+    broke_through = _candles([(23320, 23330, 23270, 23280)])      # closed below support
+    assert strategy_lab._wall_bounce_read(snap, broke_through, {"structure": "RANGE"}) == 0
+
+
+def test_buy_candidates_also_need_a_65_percent_win_rate(db, monkeypatch):
+    _day([23500 + 5 * i for i in range(60)])
+    monkeypatch.setattr(strategy_lab, "MIN_TRADES", 1)
+    monkeypatch.setattr(strategy_lab, "MIN_DAYS", 1)
+
+    def fake(name, inst, session, *a, **k):   # 3 small losers + 1 big winner = net +, 25% win
+        nets = [-100, -100, -100, 1000] if name in ("oi_bias_buy", "oi_bias_spread") else []
+        return [{"strategy": name, "instrument": inst, "session": session, "net": n, "gross": n,
+                 "charges": 0, "exited": f"{session}T10:0{i}"} for i, n in enumerate(nets)]
+    monkeypatch.setattr(strategy_lab, "run_session", fake)
+    rows = {r["strategy"]: r for r in strategy_lab.run(["NIFTY"], [SESSION])["rows"]}
+    assert rows["oi_bias_spread"]["verdict"] == "PASSING"    # selling: net > 0 is enough
+    assert rows["oi_bias_buy"]["verdict"] == "DROPPED"       # buying: 25% < 65% bar
