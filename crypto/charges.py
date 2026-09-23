@@ -232,7 +232,10 @@ def funding_cost_usd(
         rate = _funding_rate_near(symbol, ts.timestamp())
         if rate is None:
             continue
-        total += rate * float(notional_usd) * direction
+        # Delta's ticker funding_rate is in PERCENT per 8h (BTC's base 0.01
+        # means 0.01%). It was multiplied as a fraction until 2026-09-23,
+        # overstating every funding charge 100x (~$152 recorded vs ~$1.52).
+        total += rate / 100.0 * float(notional_usd) * direction
     return round(total, 6)
 
 
