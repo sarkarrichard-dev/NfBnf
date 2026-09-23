@@ -29,10 +29,12 @@ def test_pivot_arm_cannot_book_a_loss_on_a_whipsaw():
 
 
 def test_bad_index_tick_never_arms():
-    m = _short_meta(300, 52000.0)
-    m, _, _ = update_premium_trail(m, 240, "BANKNIFTY", index_price=0.0, pivot_target=51800)
+    # 40 pts in profit on 1000: past the 35-pt trail, short of the 5% (50 pt) target,
+    # so only the pivot could arm it -- and a bad index tick must not
+    m = _short_meta(1000, 52000.0)
+    m, _, _ = update_premium_trail(m, 960, "BANKNIFTY", index_price=0.0, pivot_target=51800)
     assert not m["pt_target_hit"]
-    m, _, _ = update_premium_trail(m, 240, "BANKNIFTY", index_price=999999.0, pivot_target=51800)
+    m, _, _ = update_premium_trail(m, 960, "BANKNIFTY", index_price=999999.0, pivot_target=51800)
     assert not m["pt_target_hit"]
 
 
@@ -46,8 +48,21 @@ def test_no_pivot_target_is_unchanged_behaviour():
 
 def test_pivot_arm_direction_respects_bearish_trade():
     # short a call: favourable index move is DOWN, pivot target below entry
-    m = _short_meta(400, 52000.0)
-    m, _, _ = update_premium_trail(m, 350, "BANKNIFTY", index_price=51900, pivot_target=51800)
+    m = _short_meta(1000, 52000.0)
+    m, _, _ = update_premium_trail(m, 960, "BANKNIFTY", index_price=51900, pivot_target=51800)
     assert not m["pt_target_hit"]  # index not yet at the pivot
-    m, _, _ = update_premium_trail(m, 350, "BANKNIFTY", index_price=51790, pivot_target=51800)
+    m, _, _ = update_premium_trail(m, 960, "BANKNIFTY", index_price=51790, pivot_target=51800)
     assert m["pt_target_hit"]
+
+
+def test_trail_arms_at_five_percent_and_protects_the_gain():
+    """2026-09-17 BANKNIFTY: short at 384, best 339 (12% in profit, under the old
+    25% target), then the hard stop took -₹2,979. At 5% it arms and exits on the
+    35-pt bounce off the best premium instead."""
+    m = init_premium_trail(entry_premium=384.15, direction=-1)
+    m, ex, _ = update_premium_trail(m, 370, "BANKNIFTY")      # 3.7% -- not yet
+    assert not ex and not m["pt_target_hit"]
+    m, ex, _ = update_premium_trail(m, 339.2, "BANKNIFTY")    # 11.7% -- armed
+    assert not ex and m["pt_target_hit"]
+    m, ex, r = update_premium_trail(m, 375, "BANKNIFTY")      # bounced 35.8 off best
+    assert ex and "Trailing exit" in r

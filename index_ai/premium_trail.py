@@ -14,7 +14,12 @@ more SENSEX trades accumulate — this is a reasoned starting point, not
 Richard's own spec the way the other two are.
 
   * Flat hard stop until the first target is hit.
-  * First target = a quarter of the entry premium moved in your favour.
+  * First target = 5% of the entry premium moved in your favour (Richard,
+    2026-09-23 -- was 25%). At 25% the trail almost never armed: every one of
+    the 13 trades whose trail armed since 2026-09-10 closed green, every loser
+    had an unarmed trail, and winners like +₹1,014 rode to the full hard stop
+    (-₹2,979). Replaying the 37 real recorded MTM paths: 25% -> -₹6,914,
+    7% -> -₹3,313, 5% -> -₹2,225 (gross). Re-check once 40+ trades exist.
   * After the target, a trailing stop follows the best premium seen and exits on
     a fixed bounce off it. The hard stop no longer applies once the trail arms —
     by then the position is in profit and the trail is always the tighter line.
@@ -33,9 +38,9 @@ from typing import Any
 # Only indices with measured params belong here — anything absent keeps the
 # legacy rupee %-of-max exit logic (see premium_trail_enabled).
 _CFG: dict[str, dict[str, float]] = {
-    "NIFTY": {"hard_stop_pts": 11.0, "first_target_pct": 0.25, "trail_pts": 5.0},
-    "BANKNIFTY": {"hard_stop_pts": 100.0, "first_target_pct": 0.25, "trail_pts": 35.0},
-    "SENSEX": {"hard_stop_pts": 39.0, "first_target_pct": 0.25, "trail_pts": 16.0},
+    "NIFTY": {"hard_stop_pts": 11.0, "first_target_pct": 0.05, "trail_pts": 5.0},
+    "BANKNIFTY": {"hard_stop_pts": 100.0, "first_target_pct": 0.05, "trail_pts": 35.0},
+    "SENSEX": {"hard_stop_pts": 39.0, "first_target_pct": 0.05, "trail_pts": 16.0},
 }
 
 
