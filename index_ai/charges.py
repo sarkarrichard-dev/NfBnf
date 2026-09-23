@@ -18,6 +18,7 @@ entry gate (so the system refuses trades that cannot clear their own costs).
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Literal
@@ -289,15 +290,52 @@ def half_spread_points(instrument_key: str) -> float:
     return _DEFAULT_HALF_SPREAD_POINTS.get(key, _FALLBACK_HALF_SPREAD_POINTS)
 
 
+_MEASURED_TTL_S = 300.0
+_measured_cache: dict[str, tuple[float, tuple[float, float]]] = {}
+
+
+def _measured_half_spreads(instrument_key: str) -> tuple[float, float]:
+    """(near-ATM, wing) half-spread in points from the real recorded quotes
+    (market_context.spread_calib), falling back to the fixed defaults until
+    enough samples exist. Cached 5 min -- the scorecard prices every trade.
+
+    Until 2026-09-24 slippage used only the fixed defaults (NIFTY 0.75,
+    BANKNIFTY 2.0, SENSEX 3.0 pts) while ~4,300 real near-ATM quotes per index
+    measured 0.125 / 0.725 / 0.40 -- a 3-7x overstatement that added ~₹100-200
+    of imaginary cost per India trade and made the cost gate block 24 NIFTY
+    credit spreads (est. ₹291 vs ~₹125 real)."""
+    key = str(instrument_key or "").upper()
+    now = time.monotonic()
+    hit = _measured_cache.get(key)
+    if hit and now - hit[0] < _MEASURED_TTL_S:
+        return hit[1]
+    try:
+        from index_ai.market_context.spread_calib import bucket_half_spreads
+
+        val = bucket_half_spreads(key)
+    except Exception:
+        d = half_spread_points(key)
+        val = (d, d)
+    _measured_cache[key] = (now, val)
+    return val
+
+
 def round_trip_slippage_rupees(
     option: dict[str, Any],
     qty: int,
     instrument_key: str,
 ) -> float:
-    """Half-spread paid on entry and on exit, for every leg."""
+    """Half-spread paid on entry and on exit, for every leg: the near-ATM
+    measured spread for the leg you trade for its premium (a naked buy, or a
+    spread's short leg), the wing spread for a spread's bought hedge."""
     legs = _structural_legs(option)
-    hs = half_spread_points(instrument_key)
-    return round(hs * max(0, int(qty)) * len(legs) * 2, 2)
+    near, wing = _measured_half_spreads(instrument_key)
+    spread = len(legs) > 1
+    per_leg = [
+        wing if spread and str(leg.get("transaction_type", "BUY")).upper() == "BUY" else near
+        for leg in legs
+    ]
+    return round(sum(per_leg) * max(0, int(qty)) * 2, 2)
 
 
 @dataclass(frozen=True)
