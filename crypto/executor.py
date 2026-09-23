@@ -42,6 +42,11 @@ def _today_live_rows() -> list[dict[str, Any]]:
 def kill_switch(settings: CryptoSettings | None = None) -> tuple[bool, str]:
     """(tripped, reason). Reads today's *live* closed trades from the journal."""
     s = settings or crypto_settings()
+    from index_ai.risk_manager import stopped as account_stopped
+
+    hit, why = account_stopped()   # India + crypto live losses, one ₹ budget
+    if hit:
+        return True, why
     rows = _today_live_rows()
     if not rows:
         return False, ""

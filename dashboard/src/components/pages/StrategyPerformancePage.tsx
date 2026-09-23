@@ -9,6 +9,7 @@ import {
 } from '../../hooks/useStrategyPerformance'
 import { useStrategyLearning, type LearnRow } from '../../hooks/useStrategyLearning'
 import { useStrategyLab, type LabRow } from '../../hooks/useStrategyLab'
+import { useRiskManager, type SizeSuggestion } from '../../hooks/useRiskManager'
 
 const STATE_STYLE: Record<string, string> = {
   watching: 'bg-white/[0.05] text-slate-400',
@@ -283,6 +284,83 @@ const VERDICT_STYLE: Record<LabRow['verdict'], string> = {
   DROPPED: 'bg-[var(--down)]/15 text-[var(--down)]',
 }
 
+const DAY_STYLE = {
+  NORMAL: 'text-[var(--up)]',
+  TIGHTENED: 'text-[var(--warn)]',
+  STOPPED: 'text-[var(--down)]',
+} as const
+
+const SUGGEST_STYLE: Record<SizeSuggestion['suggestion'], string> = {
+  'cut to smallest size': 'bg-[var(--down)]/15 text-[var(--down)]',
+  'eligible for more — your call': 'bg-[var(--up)]/15 text-[var(--up)]',
+  keep: 'bg-white/[0.05] text-slate-300',
+  collecting: 'bg-white/[0.04] text-slate-500',
+}
+
+function RiskManagerPanel() {
+  const q = useRiskManager(true)
+  const d = q.data
+  if (!d) return null
+  const day = d.day
+  const bar = Math.min(100, day.used_pct)
+  const shown = d.suggestions.filter((s) => s.suggestion !== 'collecting')
+
+  return (
+    <section className={cn(fx.panel, 'p-4')}>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-bold text-slate-100">Today&rsquo;s loss budget · real money</h3>
+        <span className={cn('font-mono text-[11px] font-semibold', DAY_STYLE[day.state])}>
+          {day.state.toLowerCase()}
+        </span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+        <div
+          className={cn(
+            'h-full rounded-full',
+            day.state === 'STOPPED' ? 'bg-[var(--down)]' : day.state === 'TIGHTENED' ? 'bg-[var(--warn)]' : 'bg-[var(--up)]',
+          )}
+          style={{ width: `${bar}%` }}
+        />
+      </div>
+      <p className="mt-2 font-mono text-[11.5px] tabular-nums text-slate-400">
+        lost {fmt(day.lost_rupees, 'INR')} of {fmt(day.limit_rupees, 'INR')} · India{' '}
+        {fmt(day.india_live_rupees, 'INR', true)} · crypto {fmt(day.crypto_live_usd, 'USD', true)} (
+        {fmt(day.crypto_live_rupees, 'INR', true)})
+      </p>
+      <p className="mt-1 text-[12px] text-slate-400">
+        {day.message} Half the budget gone → new India trades drop to 1 lot. All of it → no new
+        entries in India or crypto until tomorrow.
+      </p>
+
+      <h4 className="mb-1.5 mt-4 text-[12.5px] font-semibold text-slate-200">Size suggestions</h4>
+      {shown.length === 0 ? (
+        <p className="text-[12px] text-slate-500">
+          No strategy has 15+ trades yet — suggestions start there.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {shown.map((s) => (
+            <li key={`${s.venue}-${s.strategy}-${s.instrument}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
+              <span className="text-slate-200">
+                {s.strategy} · {s.instrument}
+              </span>
+              <span className={cn('rounded px-1.5 py-0.5 font-mono text-[10px]', SUGGEST_STYLE[s.suggestion])}>
+                {s.suggestion}
+              </span>
+              <span className="text-[11.5px] text-slate-500">
+                {s.why} · net <span className={pnlClass(s.net)}>{fmt(s.net, s.currency, true)}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-3 border-t border-[var(--hair)] pt-2 text-[11px] text-slate-500">
+        Suggestions only — nothing changes a size by itself. Adding money to a strategy is always your call.
+      </p>
+    </section>
+  )
+}
+
 function StrategyLabPanel() {
   const q = useStrategyLab(true)
   const d = q.data
@@ -388,6 +466,8 @@ export function StrategyPerformancePage() {
           {q.error instanceof Error ? q.error.message : 'Failed to load'}
         </p>
       ) : null}
+
+      <RiskManagerPanel />
 
       <LearningPanel />
 

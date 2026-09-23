@@ -32,8 +32,13 @@ def kill_switch_state(risk: RiskSettings) -> dict[str, Any]:
     streak_limit = int(limits["max_consecutive_losing_trades"] or risk.max_losing_trades_per_day)
     loss_budget_hit = realized <= -loss_limit
     loss_streak_hit = streak >= streak_limit
-    triggered = loss_budget_hit or loss_streak_hit
+    from index_ai.risk_manager import stopped as account_stopped
+
+    account_hit, account_why = account_stopped()   # India + crypto live, one ₹ budget
+    triggered = loss_budget_hit or loss_streak_hit or account_hit
     reasons: list[str] = []
+    if account_hit and not loss_budget_hit:
+        reasons.append(account_why)
     if loss_budget_hit:
         reasons.append(
             f"Daily loss ₹{abs(realized):,.0f} reached limit ₹{loss_limit:,.0f} "

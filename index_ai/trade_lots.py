@@ -88,7 +88,12 @@ def adjust_lots_per_trade(delta: int) -> dict[str, Any]:
 
 
 def order_quantity(instrument: IndexInstrument) -> int:
-    return int(instrument.lot_size) * get_lots_per_trade()
+    """Units for a NEW order. Plan stamping and the pre-order quantity check
+    both read this, so they always agree; the account risk manager drops it
+    to 1 lot once half the day's live loss budget is gone."""
+    from index_ai.risk_manager import india_lots
+
+    return int(instrument.lot_size) * india_lots(get_lots_per_trade())
 
 
 def stamp_option_quantities(option: dict[str, Any], instrument: IndexInstrument) -> dict[str, Any]:
