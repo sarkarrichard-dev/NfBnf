@@ -31,6 +31,12 @@ class NBreakConfig:
     exit_swing_left: int = 5
     exit_swing_right: int = 2
     max_trades_per_session: int = 3
+    # Signal exits OFF (Richard, 2026-09-23): replaying this strategy's real
+    # entries on real 5m Delta prices, letting only the P&L stop/trail and the
+    # lane's 1-day max hold close trades beat its own exit signals in both
+    # weeks (ny_n_break -$50 -> -$31, rsi_adx_trend -$25 -> +$7). Its signal
+    # exits fired after the move had already turned (8% win across strategies).
+    signal_exits: bool = False
     trail: TrailConfig = field(default_factory=TrailConfig)
 
 
@@ -144,11 +150,11 @@ def step(
     if pos:
         side = pos["side"]
         reason = None
-        if not in_session:
+        if cfg.signal_exits and not in_session:
             reason = "session end"
         elif trail_reason := update_and_check(pos, trail_price, cfg.trail):
             reason = trail_reason
-        else:
+        elif cfg.signal_exits:
             sh15 = (
                 _last_confirmed(
                     pivot_high(

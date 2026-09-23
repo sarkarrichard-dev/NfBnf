@@ -41,6 +41,12 @@ class RsiAdxTrendConfig:
     ema_slow: int = 10
     adx_period: int = 14
     adx_min: float = 25.0  # below this the market is chopping, not trending — HLHB's own filter
+    # Signal exits OFF (Richard, 2026-09-23): replaying this strategy's real
+    # entries on real 5m Delta prices, letting only the P&L stop/trail and the
+    # lane's 1-day max hold close trades beat its own exit signals in both
+    # weeks (ny_n_break -$50 -> -$31, rsi_adx_trend -$25 -> +$7). Its signal
+    # exits fired after the move had already turned (8% win across strategies).
+    signal_exits: bool = False
     trail: TrailConfig = field(default_factory=TrailConfig)
 
 
@@ -86,7 +92,7 @@ def step(
     if pos:
         side = pos["side"]
         reason = update_and_check(pos, trail_price, cfg.trail)
-        if not reason:
+        if not reason and cfg.signal_exits:
             if side == "long" and rsi_dn and ema_dn and trending:
                 reason = "RSI + EMA rolled over with ADX confirming — momentum reversed"
             elif side == "short" and rsi_up and ema_up and trending:
