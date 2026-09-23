@@ -114,13 +114,19 @@ def test_ny_n_break_enters_on_the_rebreak():
             fired = ev
             break
     assert fired and fired["side"] == "long"
-    # session end forces the exit
+    # default (2026-09-23): session end no longer closes it -- stop/trail/max-hold do
+    kept, ev = nb.step(
+        "BTCUSD", df5, df15, state=dict(state), cfg=nb.NBreakConfig(),
+        in_session=False, session_date="2026-09-07",
+    )
+    assert ev["event"] != "exit" and kept["position"]
+    # with signal exits switched back on, session end forces the exit
     state, ev = nb.step(
         "BTCUSD",
         df5,
         df15,
         state=state,
-        cfg=nb.NBreakConfig(),
+        cfg=nb.NBreakConfig(signal_exits=True),
         in_session=False,
         session_date="2026-09-07",
     )
@@ -166,6 +172,12 @@ def test_journal_roundtrip(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def paper_env(tmp_path, monkeypatch):
+    # lane tests close positions via NY session end, a signal exit that is
+    # off by default since 2026-09-23 -- switch it back on for them
+    import dataclasses
+
+    _orig_nb = lanes._nb_cfg
+    monkeypatch.setattr(lanes, "_nb_cfg", lambda st: dataclasses.replace(_orig_nb(st), signal_exits=True))
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
     monkeypatch.setenv("CRYPTO_NBREAK_ALLROUND", "false")  # these tests exercise the NY-window gate
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")

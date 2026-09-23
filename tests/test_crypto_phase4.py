@@ -203,6 +203,11 @@ def live_lane(tmp_path, monkeypatch):
     monkeypatch.setattr(lanes.executor, "position_state", lambda c, sym: "open")
     monkeypatch.setattr(lanes.executor, "fill_report", lambda c, oid: (None, 0.0))
     monkeypatch.setattr(lanes.executor, "fill_price", lambda c, oid: None)
+    # these tests close positions via NY session end, a signal exit
+    import dataclasses
+
+    _orig_nb = lanes._nb_cfg
+    monkeypatch.setattr(lanes, "_nb_cfg", lambda st: dataclasses.replace(_orig_nb(st), signal_exits=True))
     # only pairs that cleared the readiness bar trade real money once armed
     monkeypatch.setattr(
         "index_ai.strategy_performance.crypto_live_pairs", lambda: {("ny_n_break", "BTCUSD")}
