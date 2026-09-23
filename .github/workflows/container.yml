@@ -1,0 +1,38 @@
+# Builds the QuantHawk image and checks it boots in cloud mode with the
+# password gate on. No secrets, no registry push, no broker calls.
+name: container
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t quanthawk:ci .
+      - name: Refuses to start in cloud mode without a password
+        run: |
+          touch ci.env
+          if docker run --rm -e PUBLIC_DEPLOY=true -v "$PWD/ci.env:/app/.env" quanthawk:ci \
+               timeout 60 python -c "import index_ai.server"; then
+            echo "started without a password"; exit 1
+          fi
+      - name: Boots with a password; health open, API locked
+        run: |
+          printf 'DASHBOARD_PASSWORD=ci-password-123456\n' > ci.env
+          docker run -d --name qh -p 8000:8000 -e PUBLIC_DEPLOY=true \
+            -e ALLOWED_HOSTS=localhost,127.0.0.1 -v "$PWD/ci.env:/app/.env" quanthawk:ci
+          for i in $(seq 1 60); do
+            curl -fs http://127.0.0.1:8000/api/health && break; sleep 2
+          done
+          curl -fs http://127.0.0.1:8000/api/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/status)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -u x:ci-password-123456 http://127.0.0.1:8000/)" = 200
+      - name: Server log
+        if: always()
+        run: docker logs qh 2>&1 | tail -80 || true

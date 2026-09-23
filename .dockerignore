@@ -1,0 +1,20 @@
+# Only code goes into the image. Secrets (.env) and trading data (memory/) are
+# mounted at run time, never baked in.
+.git
+.github
+.env
+.env.*
+memory/
+reference/
+graphify-out/
+research/
+tests/
+guides/
+DESIGN-IS-*/
+**/__pycache__
+**/*.pyc
+.venv*/
+dashboard/node_modules
+dashboard/dist
+*.sqlite*
+*.log
