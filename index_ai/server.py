@@ -1730,7 +1730,9 @@ async def live_plan(payload: dict[str, Any] = Body(default_factory=dict)) -> dic
             "error": _dhan_setup_message(),
         }
     try:
-        return plan_instrument(
+        # several blocking Dhan calls -- off the event loop
+        return await asyncio.to_thread(
+            plan_instrument,
             client=DhanClient(cfg.dhan),
             app_settings=cfg,
             instrument_key=instrument_key,

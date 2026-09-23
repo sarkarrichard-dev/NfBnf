@@ -19,7 +19,7 @@ def _price(spot, k, side):
     return intrinsic + 60 * math.exp(-abs(spot - k) / 200)
 
 
-def _day(spots, quotes=True, start="09:30"):
+def _day(spots, quotes=True, start="09:30", expiry="2026-09-29"):
     """One snapshot every 90s; OI tilts bullish (walls up + puts written)."""
     t0 = datetime.fromisoformat(f"{SESSION}T{start}:00+05:30")
     rows = []
@@ -39,7 +39,7 @@ def _day(spots, quotes=True, start="09:30"):
                         ts,
                         SESSION,
                         "NIFTY",
-                        "2026-09-29",
+                        expiry,
                         spot,
                         float(k),
                         side,
@@ -181,3 +181,38 @@ def test_no_recorded_iv_means_no_gated_trade(db):
     _ticks([23400 + 0.5 * i for i in range(600)])
     _day([23500 + 5 * i for i in range(120)], start="09:15")
     assert strategy_lab.run_session("vrp_bias_spread", "NIFTY", SESSION) == []
+
+
+def _scale_near(f, expiry="2026-09-24"):
+    with market_log.connect() as con:
+        con.execute("UPDATE chain SET ltp=ltp*?, bid=bid*?, ask=ask*? WHERE expiry=?",
+                    (f, f, f, expiry))
+
+
+def test_thin_near_premium_switches_to_next_expiry(db):
+    _ticks([23400 + 0.5 * i for i in range(400)])
+    spots = [23500 + 5 * i for i in range(60)]
+    _day(spots, start="09:15", expiry="2026-09-24")       # near: expiry day
+    _scale_near(0.3)                                     # ATM ~₹18 < ₹40: thin
+    _day(spots, start="09:15", expiry="2026-10-01")       # next week, full premium
+    near = strategy_lab.run_session("pa_structure_spread", "NIFTY", SESSION)
+    switched = strategy_lab.run_session("pa_structure_next_spread", "NIFTY", SESSION)
+    assert near and all(t["expiry"] == "near" for t in near)
+    assert switched and switched[0]["expiry"] == "next"
+    assert switched[0]["basis_points"] > near[0]["basis_points"]   # more credit on next week
+
+
+def test_thin_premium_without_next_quotes_means_no_trade(db):
+    _ticks([23400 + 0.5 * i for i in range(400)])
+    _day([23500 + 5 * i for i in range(60)], start="09:15", expiry="2026-09-24")
+    _scale_near(0.3)
+    assert strategy_lab.run_session("pa_structure_next_spread", "NIFTY", SESSION) == []
+
+
+def test_normal_premium_stays_on_near_expiry(db):
+    _ticks([23400 + 0.5 * i for i in range(400)])
+    spots = [23500 + 5 * i for i in range(60)]
+    _day(spots, start="09:15", expiry="2026-09-24")
+    _day(spots, start="09:15", expiry="2026-10-01")
+    got = strategy_lab.run_session("pa_structure_next_spread", "NIFTY", SESSION)
+    assert got and got[0]["expiry"] == "near"

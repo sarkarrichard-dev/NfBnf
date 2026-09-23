@@ -229,7 +229,7 @@ def in_background(fn, *args: Any, **kwargs: Any) -> None:
 
 CHAIN_STRIKES_EACH_SIDE = 15   # ±15 strikes around spot, CE + PE = 62 rows a snapshot
 CHAIN_MIN_GAP_SECONDS = 55     # scanner fetches every 90s; dashboard calls must not add duplicates
-_last_chain_at: dict[str, float] = {}
+_last_chain_at: dict[tuple[str, str | None], float] = {}
 _CHAIN_COLS = ("security_id", "ltp", "bid", "ask", "bid_qty", "ask_qty", "oi",
                "prev_oi", "volume", "iv", "delta", "gamma", "theta", "vega")
 
@@ -246,17 +246,21 @@ def _chain_leg(leg: dict[str, Any]) -> tuple:
     )
 
 
+def chain_due(instrument: str, expiry: str | None) -> bool:
+    """Would a snapshot for this index + expiry be saved now? Lets a caller
+    skip an extra Dhan request whose answer would be thrown away."""
+    key = (str(instrument).upper(), expiry)
+    return enabled() and time.monotonic() - _last_chain_at.get(key, -1e9) >= CHAIN_MIN_GAP_SECONDS
+
+
 def record_chain_snapshot(instrument: str, expiry: str | None, spot: float,
                           chain: dict[str, Any]) -> int:
     """Save the strikes nearest spot from one Dhan option-chain response.
-    Throttled per index; returns rows written. Never raises."""
-    if not enabled():
+    Throttled per (index, expiry); returns rows written. Never raises."""
+    if not chain_due(instrument, expiry):
         return 0
     key = str(instrument).upper()
-    now = time.monotonic()
-    if now - _last_chain_at.get(key, -1e9) < CHAIN_MIN_GAP_SECONDS:
-        return 0
-    _last_chain_at[key] = now
+    _last_chain_at[(key, expiry)] = time.monotonic()
     try:
         oc = (chain.get("data") or {}).get("oc") or {}
         strikes = sorted((float(k), v) for k, v in oc.items() if _f(k) is not None)

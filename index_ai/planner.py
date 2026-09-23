@@ -51,6 +51,29 @@ def _pivot_target(
     return round(v, 2), f"{k} {v:,.0f}"
 
 
+def _record_next_expiry(client, instrument, instrument_key, expiries, expiry, spot) -> None:
+    """One extra option-chain call per index per minute, only when the market
+    log would keep it. Spaced 3.1s after the first chain call -- Dhan allows
+    about one option-chain request every 3s. Failures are ignored: this is
+    data collection, never part of a trading decision."""
+    import time as _time
+
+    from index_ai.market_log import chain_due, in_background, record_chain_snapshot
+    from index_ai.options_expiry import parse_expiry_date
+
+    near = parse_expiry_date(expiry)
+    later = sorted((d, e) for e in expiries if (d := parse_expiry_date(e)) and near and d > near)
+    if not later or not chain_due(instrument_key, later[0][1]):
+        return
+    _time.sleep(3.1)
+    try:
+        nxt_chain = client.option_chain(instrument, later[0][1])
+    except Exception:
+        return
+    if nxt_chain:
+        in_background(record_chain_snapshot, instrument_key, later[0][1], spot, nxt_chain)
+
+
 def plan_instrument(
     *,
     client: DhanClient,
@@ -58,8 +81,13 @@ def plan_instrument(
     instrument_key: str,
     lookback_days: int = 5,
     interval: str | None = None,
+    record_next_expiry: bool = False,
 ) -> dict[str, Any]:
-    """Dual-lane plan: candlestick buy + CPR sell (each with option chain + gates)."""
+    """Dual-lane plan: candlestick buy + CPR sell (each with option chain + gates).
+
+    ``record_next_expiry`` (scanner only): also save the following expiry's
+    chain to the market log, for the lab's "switch expiry when the current
+    premium is thin" test. Never used for trading here."""
     instrument = get_instrument(instrument_key)
     if instrument.underlying_security_id is None:
         return {
@@ -125,6 +153,8 @@ def plan_instrument(
                 from index_ai.market_log import in_background, record_chain_snapshot
 
                 in_background(record_chain_snapshot, instrument_key, expiry, spot_now, chain)
+                if record_next_expiry:
+                    _record_next_expiry(client, instrument, instrument_key, expiries, expiry, spot_now)
     except Exception as exc:
         oi_fetch_error = str(classify_http_error(exc, f"{instrument_key} option chain"))
 

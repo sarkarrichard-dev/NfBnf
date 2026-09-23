@@ -564,7 +564,8 @@ async def _scan_index(
         # plan_instrument makes several blocking Dhan HTTP calls — run it in a thread
         # so the event loop (and every dashboard poll) keeps serving meanwhile.
         result = await asyncio.to_thread(
-            plan_instrument, client=client, app_settings=cfg, instrument_key=instrument_key
+            plan_instrument, client=client, app_settings=cfg, instrument_key=instrument_key,
+            record_next_expiry=True,
         )
     except Exception as exc:
         _note_auth_failure(exc)
