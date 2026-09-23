@@ -1417,11 +1417,39 @@ async def market_log_api(
     """Time-series of what the system saw, plus why lanes did or didn't trade."""
     from index_ai.market_log import observations, skip_reasons, stats
 
-    return {
-        "stats": stats(),
-        "observations": observations(session=session, instrument=instrument, limit=limit),
-        "top_skip_reasons": skip_reasons(session=session),
-    }
+    def _read() -> dict[str, Any]:
+        return {
+            "stats": stats(),   # COUNT(*) over a multi-GB ticks table: seconds, off-loop
+            "observations": observations(session=session, instrument=instrument, limit=limit),
+            "top_skip_reasons": skip_reasons(session=session),
+        }
+
+    return await asyncio.to_thread(_read)
+
+
+@app.get("/api/oi-signals", include_in_schema=False)
+async def oi_signals_api() -> dict[str, Any]:
+    """Option-chain signals: today's reading per index, and each signal's
+    graded record against the real index move 30 minutes later."""
+    from index_ai.instruments import configured_index_keys
+    from index_ai.market_clock import today_ist_date
+    from index_ai.market_log import connect
+    from index_ai.strategies import oi_signals
+
+    def _read() -> dict[str, Any]:
+        with connect() as db:
+            sessions = [r[0] for r in db.execute("SELECT DISTINCT session FROM chain ORDER BY 1")]
+        today = today_ist_date()
+        return {
+            "sessions_recorded": len(sessions),
+            "forward_minutes": oi_signals.FORWARD_MINUTES,
+            "indices": {
+                k: {"today": oi_signals.latest(k, today), "record": oi_signals.grade(k, sessions)}
+                for k in configured_index_keys()
+            },
+        }
+
+    return await asyncio.to_thread(_read)
 
 
 @app.get("/api/daily-report", include_in_schema=False)
