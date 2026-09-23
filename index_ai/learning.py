@@ -263,9 +263,18 @@ def resolve_trade_lot_size(trade: dict[str, Any]) -> tuple[int, int]:
     inst_key = str(trade.get("instrument") or option.get("instrument") or "")
     stored = int(option.get("quantity") or 0)
     try:
-        configured = int(get_instrument(inst_key).lot_size) * int(get_lots_per_trade())
+        lot = int(get_instrument(inst_key).lot_size)
+        configured = lot * int(get_lots_per_trade())
     except ValueError:
-        configured = stored or 1
+        return stored or 1, stored or 1
+    # A quantity that is a whole number of today's lots is what was actually
+    # traded -- keep it. Rewriting it to the *current* lots-per-trade setting
+    # used to resize an open LIVE position's exit order to whatever the lots
+    # dial said now (enter 1 lot, set 3, stop-loss sells 3), and startup
+    # rewrote every closed row the same way. Only a quantity that isn't a
+    # multiple of the lot (a pre-revision 75/35-unit row) is still repaired.
+    if stored > 0 and stored % lot == 0:
+        return configured, stored
     effective = configured if configured else (stored or 1)
     return configured, effective
 
@@ -389,9 +398,12 @@ def option_leg_fields(trade: dict[str, Any]) -> dict[str, Any]:
 
     instrument = str(trade.get("instrument") or option.get("instrument") or "")
     configured_lot, effective_qty = resolve_trade_lot_size(trade)
-    from index_ai.trade_lots import get_lots_per_trade
+    from index_ai.instruments import get_instrument
 
-    lots = int(get_lots_per_trade())
+    try:
+        lots = max(1, effective_qty // int(get_instrument(instrument).lot_size))
+    except ValueError:
+        lots = 1
     lot_label = (
         f"{lots} lot{'s' if lots != 1 else ''} · {effective_qty} qty" if effective_qty else ""
     )
