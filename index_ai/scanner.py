@@ -50,7 +50,9 @@ COOLDOWN_MINUTES = 20
 INDEX_SCAN_GAP_SECONDS = 5
 # Indices scanned concurrently. Dhan rate-limits per second, so keep this small;
 # 2-3 covers the configured universe in one round instead of N serial rounds.
-INDEX_SCAN_CONCURRENCY = int(os.getenv("INDEX_SCAN_CONCURRENCY", "2"))
+# 1 = one index at a time, the same Dhan request pattern as when scans blocked
+# the loop. Dhan throttles the option chain to ~1 request per 3 s; raise with care.
+INDEX_SCAN_CONCURRENCY = int(os.getenv("INDEX_SCAN_CONCURRENCY", "1"))
 TRAIL_INDEX_GAP_SECONDS = 0.8
 BOOT_AUTO_START_DELAY_SECONDS = 1.5
 
@@ -226,7 +228,10 @@ async def _close_trade(
 ) -> None:
     trade_id = str(trade["id"])
     try:
-        result = close_open_trade(
+        # blocking broker + SQLite work: keep it off the event loop. close_open_trade
+        # holds a per-trade lock and re-checks the DB, so a re-close is a no-op.
+        result = await asyncio.to_thread(
+            close_open_trade,
             trade,
             client=client,
             app_settings=cfg,
@@ -258,7 +263,7 @@ async def _fetch_index_prices(
     prices: dict[str, float] = {}
     for key in sorted(keys):
         try:
-            quote = client.index_ltp(get_instrument(key))
+            quote = await asyncio.to_thread(client.index_ltp, get_instrument(key))
             prices[key] = float(quote.get("last_price") or 0)
         except Exception as exc:
             _note_auth_failure(exc)
@@ -392,7 +397,7 @@ async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
     supertrends: dict[str, dict] = {}
     for key in sorted(keys):
         try:
-            supertrends[key] = fetch_supertrend_snapshot(client, key)
+            supertrends[key] = await asyncio.to_thread(fetch_supertrend_snapshot, client, key)
         except Exception as exc:
             _note_auth_failure(exc)
             _log("supertrend_refresh_error", instrument=key, error=_friendly_error(exc))
@@ -406,10 +411,10 @@ async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
         try:
             work = dict(trade)
             if is_credit_option((trade.get("option") or {})):
-                work = enrich_open_trade_mtm(work, client)
+                work = await asyncio.to_thread(enrich_open_trade_mtm, work, client)
             elif work.get("pnl") is None:
                 try:
-                    work = enrich_open_trade_mtm(work, client)
+                    work = await asyncio.to_thread(enrich_open_trade_mtm, work, client)
                 except Exception:
                     pass
             evaluation = evaluate_open_trade(
@@ -518,7 +523,11 @@ async def _scan_index(
     allow_entries: bool = True,
 ) -> None:
     try:
-        result = plan_instrument(client=client, app_settings=cfg, instrument_key=instrument_key)
+        # plan_instrument makes several blocking Dhan HTTP calls — run it in a thread
+        # so the event loop (and every dashboard poll) keeps serving meanwhile.
+        result = await asyncio.to_thread(
+            plan_instrument, client=client, app_settings=cfg, instrument_key=instrument_key
+        )
     except Exception as exc:
         _note_auth_failure(exc)
         _log("scan_error", instrument=instrument_key, error=_friendly_error(exc))
