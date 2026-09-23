@@ -122,6 +122,9 @@ def plan_instrument(
             else:
                 oi = analyze_option_chain(chain, spot=spot_now, instrument=instrument)
                 oi_context = oi.to_dict()
+                from index_ai.market_log import in_background, record_chain_snapshot
+
+                in_background(record_chain_snapshot, instrument_key, expiry, spot_now, chain)
     except Exception as exc:
         oi_fetch_error = str(classify_http_error(exc, f"{instrument_key} option chain"))
 

@@ -36,6 +36,9 @@ def _test_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     db = tmp_path / "trade_memory.sqlite"
     monkeypatch.setattr("index_ai.config.DB_PATH", db)
     monkeypatch.setattr("index_ai.learning.DB_PATH", db)
+    # The scanner and planner write decisions / option-chain snapshots to the
+    # market log; keep test runs out of the real memory/market_log.sqlite.
+    monkeypatch.setattr("index_ai.market_log.DB_PATH", tmp_path / "market_log.sqlite")
 
     import index_ai.learning as learning
 
