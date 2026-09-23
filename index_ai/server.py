@@ -1452,6 +1452,22 @@ async def oi_signals_api() -> dict[str, Any]:
     return await asyncio.to_thread(_read)
 
 
+@app.get("/api/strategy-lab", include_in_schema=False)
+async def strategy_lab_api() -> dict[str, Any]:
+    """Candidate option strategies paper-traded on the real recorded chain,
+    scored per (strategy, index) net of Dhan charges. Places no orders."""
+    from index_ai import strategy_lab
+    from index_ai.instruments import configured_index_keys
+    from index_ai.market_log import connect
+
+    def _read() -> dict[str, Any]:
+        with connect() as db:
+            sessions = [r[0] for r in db.execute("SELECT DISTINCT session FROM chain ORDER BY 1")]
+        return strategy_lab.run(list(configured_index_keys()), sessions)
+
+    return await asyncio.to_thread(_read)
+
+
 @app.get("/api/daily-report", include_in_schema=False)
 async def daily_report_api(run: bool = Query(False)) -> dict[str, Any]:
     """Latest end-of-day report. run=true regenerates it now instead of waiting."""
