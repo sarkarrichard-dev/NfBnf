@@ -26,6 +26,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import math
+
+import numpy as np
 import pandas as pd
 
 from index_ai import market_log
@@ -41,6 +44,13 @@ SPREAD_TARGET, SPREAD_STOP = 0.5, 1.0  # keep 50% of the credit / lose 1x the cr
 BUY_TARGET, BUY_STOP = 0.30, 0.20  # +30% / -20% of premium paid
 MIN_TRADES, MIN_DAYS = 30, 14
 PA_BARS = 6        # today's own 5m candles the structure read looks at (30 min)
+# "Options are expensive": at-the-money implied vol (what option prices assume
+# the index will move, annualised %) vs the move the index is actually making
+# today (5m closes, annualised the same way). Sellers are paid that gap -- the
+# best-documented edge in index options. Needs an hour of today's candles.
+VRP_MIN_RATIO = 1.2
+VRP_MIN_BARS = 12
+_BARS_PER_YEAR = 75 * 252          # 5m bars in a 09:15-15:30 session x trading days
 
 Direction = Callable[[dict[str, Any]], int]  # signal read -> +1 up, -1 down, 0 none
 
@@ -60,6 +70,11 @@ def _structure(sig: dict[str, Any]) -> int:
 
 def _fade(sig: dict[str, Any]) -> int:
     return -_structure(sig)
+
+
+def _rich(rule: Direction) -> Direction:
+    """Same direction rule, but only when options are expensive vs today's move."""
+    return lambda sig: rule(sig) if (sig.get("iv_rv") or 0) >= VRP_MIN_RATIO else 0
 
 
 # name -> (lane, direction rule, plain description)
@@ -84,6 +99,18 @@ CANDIDATES: dict[str, tuple[str, Direction, str]] = {
         "sell",
         _fade,
         "Credit spread against today's 5m price structure (sell into the move); none = no trade",
+    ),
+    # The same two directions gated on "options are expensive". Each sits next
+    # to its ungated twin, so the lab shows whether the gate itself adds money.
+    "vrp_structure_spread": (
+        "sell",
+        _rich(_structure),
+        "pa_structure_spread, only when implied vol is 1.2x+ today's actual move",
+    ),
+    "vrp_bias_spread": (
+        "sell",
+        _rich(_bias),
+        "oi_bias_spread, only when implied vol is 1.2x+ today's actual move",
     ),
 }
 
@@ -172,12 +199,28 @@ def _bars_5m(instrument: str, session: str) -> pd.DataFrame:
             (session, instrument.upper()),
         ).fetchall()
     if not rows:
-        return pd.DataFrame(columns=["high", "low", "end"])
+        return pd.DataFrame(columns=["high", "low", "close", "end"])
     px = pd.Series([r[1] for r in rows], index=pd.to_datetime([r[0] for r in rows]))
-    bars = px.resample("5min", origin="start_day", offset="15min").agg(["max", "min"]).dropna()
-    bars.columns = ["high", "low"]
+    bars = px.resample("5min", origin="start_day", offset="15min").agg(
+        ["max", "min", "last"]).dropna()
+    bars.columns = ["high", "low", "close"]
     bars["end"] = bars.index + pd.Timedelta(minutes=5)
     return bars
+
+
+def _iv_rv(snap: oi_signals.Snapshot, done: pd.DataFrame) -> float | None:
+    """ATM implied vol / today's realised vol, both annualised %. None until
+    there's an hour of candles and a real IV at the strike nearest spot."""
+    if len(done) < VRP_MIN_BARS + 1:
+        return None
+    spot = float(snap[0]["spot"] or 0)
+    atm = min({r["strike"] for r in snap}, key=lambda k: abs(k - spot))
+    ivs = [float(r["iv"]) for r in snap if r["strike"] == atm and r.get("iv")]
+    rets = np.log(done["close"].astype(float)).diff().dropna()
+    rv = float(rets.std()) * math.sqrt(_BARS_PER_YEAR) * 100
+    if not ivs or not rv:
+        return None
+    return round(sum(ivs) / len(ivs) / rv, 3)
 
 
 def signals(instrument: str, session: str,
@@ -190,6 +233,7 @@ def signals(instrument: str, session: str,
         sig = oi_signals.read(snaps[0][1], snap, session)
         done = bars[bars["end"] <= pd.Timestamp(ts)] if len(bars) else bars
         sig["structure"] = intraday_candle_trend(done, lookback=PA_BARS)
+        sig["iv_rv"] = _iv_rv(snap, done)
         out.append(sig)
     return out
 

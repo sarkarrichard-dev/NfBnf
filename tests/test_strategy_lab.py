@@ -158,3 +158,26 @@ def test_price_action_candidates_trade_with_and_against_the_structure(db):
 def test_no_recorded_ticks_means_no_price_action_trade(db):
     _day([23500 + 5 * i for i in range(60)])
     assert strategy_lab.run_session("pa_structure_spread", "NIFTY", SESSION) == []
+
+
+def _set_iv(iv):
+    with market_log.connect() as con:
+        con.execute("UPDATE chain SET iv=?", (iv,))
+
+
+def test_expensive_options_gate(db):
+    _ticks([23400 + 0.5 * i for i in range(600)])        # calm climb: small actual move
+    _day([23500 + 5 * i for i in range(120)], start="09:15")
+    assert strategy_lab.run_session("pa_structure_spread", "NIFTY", SESSION)
+    _set_iv(20.0)                                         # options price in far more than that
+    rich = strategy_lab.run_session("vrp_structure_spread", "NIFTY", SESSION)
+    assert rich and rich[0]["legs"][0].endswith("PE")    # same direction rule: bull put
+    assert rich[0]["entered"][11:16] >= "10:20"           # needs an hour of today's candles
+    _set_iv(0.00001)                                      # options cheap vs the actual move
+    assert strategy_lab.run_session("vrp_structure_spread", "NIFTY", SESSION) == []
+
+
+def test_no_recorded_iv_means_no_gated_trade(db):
+    _ticks([23400 + 0.5 * i for i in range(600)])
+    _day([23500 + 5 * i for i in range(120)], start="09:15")
+    assert strategy_lab.run_session("vrp_bias_spread", "NIFTY", SESSION) == []
