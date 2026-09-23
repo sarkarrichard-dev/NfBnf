@@ -1452,6 +1452,18 @@ async def oi_signals_api() -> dict[str, Any]:
     return await asyncio.to_thread(_read)
 
 
+@app.get("/api/risk-manager", include_in_schema=False)
+async def risk_manager_api() -> dict[str, Any]:
+    """Today's live loss budget across India + crypto, and per-strategy size
+    suggestions (report only)."""
+    from index_ai import risk_manager
+
+    def _read() -> dict[str, Any]:
+        return {"day": risk_manager.account_day(), "suggestions": risk_manager.size_suggestions()}
+
+    return await asyncio.to_thread(_read)
+
+
 @app.get("/api/strategy-lab", include_in_schema=False)
 async def strategy_lab_api() -> dict[str, Any]:
     """Candidate option strategies paper-traded on the real recorded chain,
