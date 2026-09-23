@@ -106,7 +106,8 @@ def test_funding_cost_is_zero_without_a_nearby_sample(tmp_path, monkeypatch):
 
 def test_funding_cost_long_pays_short_receives(tmp_path, monkeypatch):
     monkeypatch.setattr(charges, "_FUNDING_SAMPLES_PATH", tmp_path / "f.jsonl")
-    charges.sample_funding_rate("BTCUSD", 0.01)  # 1% for this settlement
+    # Delta quotes funding in percent: 0.01 = BTC's base 0.01% per 8h
+    charges.sample_funding_rate("BTCUSD", 0.01)
     kwargs = dict(
         symbol="BTCUSD",
         notional_usd=1000,
@@ -115,8 +116,8 @@ def test_funding_cost_long_pays_short_receives(tmp_path, monkeypatch):
     )
     long_cost = charges.funding_cost_usd(side="long", **kwargs)
     short_cost = charges.funding_cost_usd(side="short", **kwargs)
-    assert abs(long_cost - 10.0) < 1e-9  # 1% of $1000, longs pay when rate > 0
-    assert abs(short_cost + 10.0) < 1e-9  # shorts receive the same amount
+    assert abs(long_cost - 0.10) < 1e-9  # 0.01% of $1000, longs pay when rate > 0
+    assert abs(short_cost + 0.10) < 1e-9  # shorts receive the same amount
 
 
 def test_funding_cost_handles_missing_or_malformed_timestamps():
@@ -136,3 +137,15 @@ def test_funding_cost_handles_missing_or_malformed_timestamps():
         )
         == 0.0
     )
+
+
+def test_funding_fix_script_corrects_old_rows_once():
+    from scripts.fix_crypto_funding_units import fix_row
+
+    old = {"funding_usd": 9.7893, "pnl_usd": -5.0, "fx_usdinr": 88.0}
+    assert fix_row(old)
+    assert abs(old["funding_usd"] - 0.097893) < 1e-9
+    assert abs(old["pnl_usd"] - (-5.0 + 9.7893 - 0.097893)) < 1e-4
+    assert old["pnl_inr"] == round(old["pnl_usd"] * 88.0, 2)
+    assert not fix_row(old)                                  # never twice
+    assert not fix_row({"funding_usd": 0.1, "pnl_usd": 1.0, "funding_pct_units": True})

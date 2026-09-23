@@ -919,6 +919,7 @@ def _build_exit_row(ev, slot, strat, sym, fx) -> dict[str, Any] | None:
         "gross_usd": round(gross, 4),
         "fees_usd": round(cost, 4),
         "funding_usd": round(funding, 4),
+        "funding_pct_units": True,  # rate read as percent (see charges.funding_cost_usd)
         "pnl_usd": round(pnl_usd, 4),
         "pnl_inr": round(pnl_usd * fx, 2),
         "fx_usdinr": round(fx, 4),
