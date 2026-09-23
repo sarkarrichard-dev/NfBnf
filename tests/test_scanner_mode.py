@@ -53,3 +53,32 @@ def test_paper_lane_event_dict_does_not_collide_with_log() -> None:
     assert _without_event(payload) == {"instrument": "NIFTY", "strike": 24000}
     # the call that used to blow up
     _log("futures_paper", kind=payload.get("event"), **_without_event(payload))
+
+
+def test_scan_index_runs_plan_off_the_event_loop(monkeypatch) -> None:
+    """plan_instrument makes blocking Dhan HTTP calls; running it on the loop
+    froze every dashboard poll for the length of each index scan."""
+    import asyncio
+    import time
+
+    from index_ai import scanner
+
+    def slow_plan(**_kw):
+        time.sleep(0.3)  # stands in for the Dhan HTTP calls
+        return {"error": "stub"}
+
+    monkeypatch.setattr(scanner, "plan_instrument", slow_plan)
+    ticks: list[float] = []
+
+    async def heartbeat() -> None:
+        while True:
+            ticks.append(time.monotonic())
+            await asyncio.sleep(0.02)
+
+    async def main() -> None:
+        beat = asyncio.create_task(heartbeat())
+        await scanner._scan_index(None, None, "NIFTY")
+        beat.cancel()
+
+    asyncio.run(main())
+    assert len(ticks) >= 5  # the loop kept ticking during the 0.3 s scan
