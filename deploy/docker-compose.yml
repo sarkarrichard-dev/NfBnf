@@ -1,0 +1,32 @@
+# Personal cloud box: QuantHawk behind Caddy (automatic HTTPS).
+# Run from the repo root on the server:
+#   docker compose -f deploy/docker-compose.yml up -d --build
+# Needs deploy/.env.cloud with DOMAIN=... (see README-cloud.md).
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    volumes:
+      - ../.env:/app/.env
+      - ../memory:/app/memory
+    environment:
+      PUBLIC_DEPLOY: "true"            # refuses to start without DASHBOARD_PASSWORD
+      ALLOWED_HOSTS: "${DOMAIN},localhost,127.0.0.1"
+    # no "ports:" -- only Caddy is reachable from outside
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: "${DOMAIN}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - app
+
+volumes:
+  caddy_data:

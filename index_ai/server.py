@@ -438,21 +438,53 @@ app.add_middleware(
     ],
 )
 
-# Optional shared-password gate (HTTP Basic on every route incl. the dashboard).
-# Off unless DASHBOARD_PASSWORD is set. Meant for the tailnet-sharing case: a
-# tester clicking around should not be able to flip Paper→Live, edit lot sizes,
-# or purge test data by accident. Any username; the password is the secret.
+# Shared-password gate (HTTP Basic on every route incl. the dashboard). Off
+# unless DASHBOARD_PASSWORD is set -- today's local use needs none. Any
+# username; the password is the secret. Cloud shape (PUBLIC_DEPLOY=true, see
+# deploy/README-cloud.md): the server refuses to start without a password,
+# because this API can arm live orders; /api/health stays open for the
+# container probe (it returns only the app id/version); and repeated wrong
+# passwords from one address are locked out for 15 minutes.
+from index_ai.config import _load_env  # noqa: E402
+
+_load_env()  # in the container the password lives in the mounted .env, not the process env
 _DASHBOARD_PW = os.getenv("DASHBOARD_PASSWORD", "").strip()
+_PUBLIC = os.getenv("PUBLIC_DEPLOY", "").strip().lower() in {"1", "true", "yes", "on"}
+if _PUBLIC and len(_DASHBOARD_PW) < 12:
+    raise RuntimeError(
+        "PUBLIC_DEPLOY=true needs DASHBOARD_PASSWORD set to 12+ characters -- "
+        "this API can arm live orders and must not be reachable without one."
+    )
+
+_AUTH_OPEN_PATHS = frozenset({"/api/health"})
+_AUTH_MAX_FAILS, _AUTH_WINDOW_S = 10, 15 * 60
+_auth_fails: dict[str, list[float]] = {}
 
 if _DASHBOARD_PW:
     import base64  # noqa: E402
     import secrets  # noqa: E402
+    import time as _time  # noqa: E402
 
     from starlette.requests import Request as _Req  # noqa: E402
     from starlette.responses import PlainTextResponse as _PlainResp  # noqa: E402
 
+    def _client_ip(request: "_Req") -> str:
+        # ponytail: behind our own Caddy (the only published port in the cloud
+        # compose) the first X-Forwarded-For hop is the real client; directly
+        # exposed without that proxy it would be spoofable.
+        fwd = request.headers.get("x-forwarded-for", "") if _PUBLIC else ""
+        return fwd.split(",")[0].strip() or (request.client.host if request.client else "?")
+
     @app.middleware("http")
     async def _basic_auth(request: "_Req", call_next):  # type: ignore[no-untyped-def]
+        if request.url.path in _AUTH_OPEN_PATHS:
+            return await call_next(request)
+        ip, now = _client_ip(request), _time.monotonic()
+        recent = [t for t in _auth_fails.get(ip, []) if now - t < _AUTH_WINDOW_S]
+        if len(recent) >= _AUTH_MAX_FAILS:
+            _auth_fails[ip] = recent
+            return _PlainResp("Too many wrong passwords -- try again in 15 minutes.",
+                              status_code=429)
         hdr = request.headers.get("authorization", "")
         ok = False
         if hdr[:6].lower() == "basic ":  # RFC 7617 — scheme token is case-insensitive
@@ -462,11 +494,14 @@ if _DASHBOARD_PW:
             except Exception:
                 ok = False
         if not ok:
+            if hdr:                       # a browser's first, header-less request isn't a guess
+                _auth_fails[ip] = recent + [now]
             return _PlainResp(
                 "Authentication required.",
                 status_code=401,
                 headers={"WWW-Authenticate": 'Basic realm="QuantHawk"'},
             )
+        _auth_fails.pop(ip, None)
         return await call_next(request)
 
 

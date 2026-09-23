@@ -6,6 +6,14 @@ import pytest
 
 from index_ai.strategies.strategy_params import reload_strategy_params
 
+# Never load the user's real .env into a test run. _load_env() already skips
+# while a test is running, but test modules are imported during collection,
+# before that -- and importing index_ai.server loads .env (so the dashboard
+# password and other real settings would leak into every test).
+import index_ai.config as _config  # noqa: E402
+
+_config.freeze_env()
+
 
 @pytest.fixture(autouse=True)
 def _test_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
