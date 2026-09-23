@@ -20,6 +20,12 @@ def _isolated_cache_root(tmp_path, monkeypatch):
     monkeypatch.setattr(candle_cache, "CACHE_ROOT", tmp_path)
 
 
+def _recent_day() -> str:
+    """A day inside the 10-day window whenever the suite runs (a fixed date
+    silently aged out of it on 2026-09-21 and broke these tests)."""
+    return (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d 00:00")
+
+
 def _hourly_frame(start: str, n: int) -> pd.DataFrame:
     idx = pd.date_range(start, periods=n, freq="1h", tz="UTC")
     return pd.DataFrame(
@@ -100,7 +106,7 @@ def test_cached_candles_only_tops_up_the_gap_on_a_warm_cache(monkeypatch):
 
 
 def test_cached_candles_falls_back_to_cache_when_live_fetch_fails(monkeypatch):
-    candle_cache.save_days("BTCUSD", "1h", _hourly_frame("2026-09-10 00:00", 24))
+    candle_cache.save_days("BTCUSD", "1h", _hourly_frame(_recent_day(), 24))
 
     def failing_candles(*a, **k):
         raise RuntimeError("Delta unreachable")
@@ -112,7 +118,7 @@ def test_cached_candles_falls_back_to_cache_when_live_fetch_fails(monkeypatch):
 
 
 def test_cached_candles_refresh_false_is_cache_only(monkeypatch):
-    candle_cache.save_days("BTCUSD", "1h", _hourly_frame("2026-09-10 00:00", 24))
+    candle_cache.save_days("BTCUSD", "1h", _hourly_frame(_recent_day(), 24))
 
     def unexpected_call(*a, **k):
         raise AssertionError("refresh=False must never call the live API")
