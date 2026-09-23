@@ -58,6 +58,13 @@ def _test_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     # The scanner and planner write decisions / option-chain snapshots to the
     # market log; keep test runs out of the real memory/market_log.sqlite.
     monkeypatch.setattr("index_ai.market_log.DB_PATH", tmp_path / "market_log.sqlite")
+    # the cost model reads measured spreads from memory/ -- tests use the fixed
+    # defaults unless they supply their own samples
+    monkeypatch.setattr("index_ai.market_context.spread_calib.SAMPLES_PATH",
+                        tmp_path / "spread_samples.jsonl")
+    import index_ai.charges as _charges
+
+    _charges._measured_cache.clear()
 
     import index_ai.learning as learning
 
