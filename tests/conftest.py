@@ -33,6 +33,17 @@ def _test_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
 
+    # Endpoint tests (e.g. test_admin_auth POSTing /api/trading/mode PAPER and
+    # arm-live disarm) reach the real config.update_env_values, which rewrote
+    # the user's real .env on every pytest run: TRADING_MODE=PAPER,
+    # ALLOW_LIVE_TRADING=false, crypto likewise -- silently disarming live
+    # trading -- and failed intermittently on Windows when the running server
+    # held .env open. Every write now lands in a throwaway file.
+    env_file = tmp_path / ".env"
+    env_file.touch()
+    monkeypatch.setattr("index_ai.config.ENV_PATH", env_file)
+    monkeypatch.setattr("index_ai.strategies.strategy_params.ENV_PATH", env_file)
+
     db = tmp_path / "trade_memory.sqlite"
     monkeypatch.setattr("index_ai.config.DB_PATH", db)
     monkeypatch.setattr("index_ai.learning.DB_PATH", db)
