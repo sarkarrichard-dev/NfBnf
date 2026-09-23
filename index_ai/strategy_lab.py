@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import math
+from bisect import bisect_right
 
 import numpy as np
 import pandas as pd
@@ -51,6 +52,15 @@ PA_BARS = 6        # today's own 5m candles the structure read looks at (30 min)
 VRP_MIN_RATIO = 1.2
 VRP_MIN_BARS = 12
 _BARS_PER_YEAR = 75 * 252          # 5m bars in a 09:15-15:30 session x trading days
+
+# "Switch to next expiry when the current one's premium is thin" (Richard,
+# 2026-09-23). Thin = at-the-money premium (avg of CE and PE) below this, in
+# rupees per unit -- starting points scaled to each index's size, to be
+# replaced by the recorded distribution once there's data. BANKNIFTY's next
+# expiry is next month (monthly-only), so expect it to behave differently.
+THIN_ATM_PREMIUM = {"NIFTY": 40.0, "BANKNIFTY": 95.0, "SENSEX": 130.0}
+NEXT_EXPIRY_SWITCH = {"pa_structure_next_spread"}
+_NEXT_MAX_AGE_S = 180              # a next-expiry quote older than this isn't used
 
 Direction = Callable[[dict[str, Any]], int]  # signal read -> +1 up, -1 down, 0 none
 
@@ -112,6 +122,11 @@ CANDIDATES: dict[str, tuple[str, Direction, str]] = {
         _rich(_bias),
         "oi_bias_spread, only when implied vol is 1.2x+ today's actual move",
     ),
+    "pa_structure_next_spread": (
+        "sell",
+        _structure,
+        "pa_structure_spread, but sold on next expiry when this expiry's ATM premium is thin",
+    ),
 }
 
 
@@ -122,6 +137,7 @@ class _Pos:
     direction: int
     basis: float  # credit received / premium paid, points
     charges: float = 0.0
+    next_expiry: bool = False
 
 
 def _quotes(snap: oi_signals.Snapshot) -> dict[tuple[float, str], dict[str, Any]]:
@@ -238,6 +254,13 @@ def signals(instrument: str, session: str,
     return out
 
 
+def _thin(instrument: str, snap: oi_signals.Snapshot) -> bool:
+    spot = float(snap[0]["spot"] or 0)
+    atm = min({r["strike"] for r in snap}, key=lambda k: abs(k - spot))
+    prem = [float(r["ltp"]) for r in snap if r["strike"] == atm and r.get("ltp")]
+    return bool(prem) and sum(prem) / len(prem) < THIN_ATM_PREMIUM.get(instrument.upper(), 0)
+
+
 def run_session(
     name: str,
     instrument: str,
@@ -256,6 +279,15 @@ def run_session(
     exchange = "BSE" if instrument.upper() == "SENSEX" else "NSE"
     cost = lambda price, side: leg_charge_rupees(price, lot, side, exchange=exchange)  # noqa: E731
 
+    nxt = oi_signals.load_session(instrument, session, rank=1) if name in NEXT_EXPIRY_SWITCH else []
+    nxt_ts = [t for t, _ in nxt]
+
+    def _next_at(ts: str) -> oi_signals.Snapshot | None:
+        j = bisect_right(nxt_ts, ts) - 1
+        if j < 0 or (pd.Timestamp(ts) - pd.Timestamp(nxt_ts[j])).total_seconds() > _NEXT_MAX_AGE_S:
+            return None
+        return nxt[j][1]
+
     trades: list[dict[str, Any]] = []
     pos: _Pos | None = None
     for i in range(1, len(snaps)):
@@ -263,6 +295,8 @@ def run_session(
         hhmm = ts[11:16]
         q = _quotes(snap)
         closing = hhmm >= SQUARE_OFF
+        if pos and pos.next_expiry:
+            q = _quotes(_next_at(ts) or [])
         if pos:
             prices = _exit_prices(pos, q)
             if prices is None and not closing:
@@ -288,6 +322,7 @@ def run_session(
                         "exited": ts,
                         "direction": pos.direction,
                         "legs": [f"{side} {k:g} {t}" for k, t, side, _ in pos.legs],
+                        "expiry": "next" if pos.next_expiry else "near",
                         "basis_points": round(pos.basis, 2),
                         "exit_reason": why,
                         "gross": gross,
@@ -302,7 +337,13 @@ def run_session(
         direction = rule(sigs[i]) if sigs[i] else 0
         if not direction:
             continue
-        legs = _open(lane, direction, snap)
+        use = snap
+        if name in NEXT_EXPIRY_SWITCH and _thin(instrument, snap):
+            use = _next_at(ts)
+            if use is None:
+                continue          # thin here and no fresh next-expiry quote: no trade
+            q = _quotes(use)
+        legs = _open(lane, direction, use)
         fills = [_fill(q.get((k, t)), side) for k, t, side in legs] if legs else None
         if not fills or None in fills:
             continue
@@ -315,6 +356,7 @@ def run_session(
             direction=direction,
             basis=basis,
             charges=sum(cost(p, side) for (_, _, side), p in zip(legs, fills)),
+            next_expiry=use is not snap,
         )
     # ponytail: a position still open when the day's recording stops (mid-session
     # view, or the server went down before 15:10) is not counted -- no fake exit.

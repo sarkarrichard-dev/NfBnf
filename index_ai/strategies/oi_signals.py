@@ -39,17 +39,25 @@ FORWARD_MINUTES = 30
 Snapshot = list[dict[str, Any]]  # the chain rows of one timestamp
 
 
-def load_session(instrument: str, session: str) -> list[tuple[str, Snapshot]]:
-    """``[(ts, rows), ...]`` in time order for one index and day."""
+def load_session(instrument: str, session: str, *, rank: int = 0
+                 ) -> list[tuple[str, Snapshot]]:
+    """``[(ts, rows), ...]`` in time order for one index, day and expiry.
+    ``rank`` 0 = the nearest expiry recorded that day, 1 = the one after
+    (recorded since 2026-09-24 for the lab's thin-premium switch test)."""
     with market_log.connect() as db:
         rows = db.execute(
             "SELECT ts, expiry, spot, strike, opt_type, oi, ltp, bid, ask, iv FROM chain "
             "WHERE instrument=? AND session=? ORDER BY ts, strike",
             (instrument.upper(), session),
         ).fetchall()
+    expiries = sorted({r["expiry"] for r in rows if r["expiry"] and r["expiry"] >= session})
+    if rank >= len(expiries):
+        return []
+    want = expiries[rank]
     snaps: dict[str, Snapshot] = defaultdict(list)
     for r in rows:
-        snaps[r["ts"]].append(dict(r))
+        if r["expiry"] == want:
+            snaps[r["ts"]].append(dict(r))
     return list(snaps.items())
 
 
