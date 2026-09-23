@@ -44,14 +44,23 @@ def trade_created_ist_date(trade: dict[str, Any]) -> str | None:
     return created.date().isoformat()
 
 
-def is_intraday_stale_open(trade: dict[str, Any]) -> bool:
-    """Open row from a prior IST session (missed EOD square-off)."""
+def is_intraday_stale_open(trade: dict[str, Any], *, now=None) -> bool:
+    """Open index position that missed its 15:10 square-off: from a prior IST
+    day, or from today once the market has closed. Index options are strictly
+    intraday; both cases happened for real (2026-09-21 the internet dropped at
+    15:15, 2026-09-23 the PC stopped at 15:03) and the trades sat open for hours."""
     if trade.get("pnl") is not None:
         return False
     entry_day = trade_created_ist_date(trade)
     if not entry_day:
         return False
-    return entry_day < today_ist_date()
+    dt = now or now_ist()
+    today = dt.date().isoformat()
+    if entry_day < today:
+        return True
+    from index_ai.market_clock import session_times
+
+    return entry_day == today and dt.time() >= session_times()["market_close"]
 
 
 def is_mandatory_square_off_due(trade: dict[str, Any]) -> bool:

@@ -106,10 +106,18 @@ def _without_event(payload: dict[str, Any]) -> dict[str, Any]:
 
 # Per-index entry outcomes worth keeping past the 80-item in-memory deque:
 # the skips (and why) are what later tells us whether a filter blocks winners.
-_DECISION_EVENTS = frozenset({
-    "no_trade", "plan_blocked", "skip_entry_window", "skip_open_position",
-    "skip_cooldown", "skip_entry_guard", "executed", "execute_blocked",
-})
+_DECISION_EVENTS = frozenset(
+    {
+        "no_trade",
+        "plan_blocked",
+        "skip_entry_window",
+        "skip_open_position",
+        "skip_cooldown",
+        "skip_entry_guard",
+        "executed",
+        "execute_blocked",
+    }
+)
 
 
 def _record_decision(event: str, fields: dict[str, Any]) -> None:
@@ -120,8 +128,13 @@ def _record_decision(event: str, fields: dict[str, Any]) -> None:
     )
     extra = {k: v for k, v in fields.items() if k not in ("instrument", "lane", "reason")}
     in_background(
-        record_decision, fields["instrument"], str(fields.get("lane") or "both"), event,
-        traded=event == "executed", reason=reason or None, **extra,
+        record_decision,
+        fields["instrument"],
+        str(fields.get("lane") or "both"),
+        event,
+        traded=event == "executed",
+        reason=reason or None,
+        **extra,
     )
 
 
@@ -273,7 +286,8 @@ async def _fetch_index_prices(
 
 
 async def _close_stale_session_positions(client: DhanClient, cfg: AppSettings) -> None:
-    """Flat positions carried from a prior IST day (missed EOD square-off)."""
+    """Flat positions that missed their 15:10 square-off (prior day, or today
+    after the close)."""
     open_list = open_trades_for_mode(cfg.risk.trading_mode)
     stale = [t for t in open_list if is_intraday_stale_open(t)]
     if not stale:
@@ -285,10 +299,34 @@ async def _close_stale_session_positions(client: DhanClient, cfg: AppSettings) -
             trade,
             client,
             cfg,
-            reason="Prior session still open — flat at scanner (IST)",
+            reason="Missed 15:10 square-off — flat at scanner (IST)",
             index_price=prices.get(key),
         )
         await asyncio.sleep(TRAIL_INDEX_GAP_SECONDS)
+
+
+async def _catch_up_missed_square_off(cfg: AppSettings) -> None:
+    """Market closed but an index position is still open: the 15:10 square-off
+    never ran (PC asleep, network down). PAPER is flattened now at the last
+    price. LIVE can't be ordered out after hours -- Dhan's own intraday
+    auto-square covers MIS positions -- so it alerts instead of pretending."""
+    stale = [t for t in open_trades_for_mode(cfg.risk.trading_mode) if is_intraday_stale_open(t)]
+    if not stale:
+        return
+    if cfg.risk.trading_mode == "LIVE":
+        from index_ai.notify import alert
+
+        names = ", ".join(sorted({str(t.get("instrument")) for t in stale}))
+        alert(
+            f"⚠️ <b>LIVE POSITION STILL OPEN AFTER CLOSE</b> — {names}\n"
+            "The 15:10 square-off didn't run (app was down). Check Dhan: intraday "
+            "positions are normally auto-squared by the broker.",
+            key=f"missed-squareoff:{today_ist_date()}",
+            window_s=6 * 3600.0,
+        )
+        _log("missed_square_off_live", count=len(stale), instruments=names)
+        return
+    await _close_stale_session_positions(DhanClient(cfg.dhan), cfg)
 
 
 async def _apply_strategy_exits_for_index(
@@ -763,6 +801,10 @@ async def _run_loop() -> None:
                 idle = float(backoff)  # still pending — keep the normal cadence
             else:
                 idle = min(1800.0, max(60.0, seconds_to_next_session_open() - 600.0))
+            try:
+                await _catch_up_missed_square_off(cfg)
+            except Exception as exc:
+                _log("stage_error", stage="missed_square_off", error=_friendly_error(exc))
             _log(
                 "paused",
                 reason="market_closed",

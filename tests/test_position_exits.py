@@ -14,11 +14,37 @@ def test_stale_open_from_prior_day() -> None:
     assert is_intraday_stale_open(trade) is True
 
 
-def test_today_open_not_stale() -> None:
-    from index_ai.market_clock import now_ist_iso
+def test_today_open_is_stale_only_after_the_close() -> None:
+    from datetime import datetime
 
-    trade = {"pnl": None, "created_at": now_ist_iso()}
-    assert is_intraday_stale_open(trade) is False
+    trade = {"pnl": None, "created_at": "2026-09-23T11:05:00+05:30"}
+    at = lambda hm: datetime.fromisoformat(f"2026-09-23T{hm}:00+05:30")  # noqa: E731
+    assert is_intraday_stale_open(trade, now=at("14:00")) is False
+    assert is_intraday_stale_open(trade, now=at("15:20")) is False   # square-off window handles it
+    assert is_intraday_stale_open(trade, now=at("18:05")) is True    # missed it (2026-09-23)
+
+
+def test_closed_market_catch_up_flattens_paper_and_alerts_live(monkeypatch) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from index_ai import scanner
+
+    stale = [{"pnl": None, "created_at": "2026-09-01T11:00:00+05:30", "instrument": "NIFTY"}]
+    monkeypatch.setattr(scanner, "open_trades_for_mode", lambda mode: stale)
+    closed, alerts = [], []
+    async def fake_close(client, cfg):
+        closed.append(cfg.risk.trading_mode)
+    monkeypatch.setattr(scanner, "_close_stale_session_positions", fake_close)
+    monkeypatch.setattr(scanner, "DhanClient", lambda dhan: None)
+    monkeypatch.setattr("index_ai.notify.alert", lambda msg, **k: alerts.append(msg))
+
+    cfg = lambda mode: SimpleNamespace(risk=SimpleNamespace(trading_mode=mode), dhan=None)  # noqa: E731
+    asyncio.run(scanner._catch_up_missed_square_off(cfg("PAPER")))
+    assert closed == ["PAPER"] and alerts == []
+    asyncio.run(scanner._catch_up_missed_square_off(cfg("LIVE")))
+    assert closed == ["PAPER"]                        # never tries to order out after hours
+    assert alerts and "NIFTY" in alerts[0]
 
 
 def test_regime_exit_bear_position_in_bull_regime(monkeypatch) -> None:
