@@ -207,16 +207,25 @@ def _hit(lane: str, pos: _Pos, pts: float) -> str | None:
 
 
 def _bars_5m(instrument: str, session: str) -> pd.DataFrame:
-    """Today's 5m OHLC for the index from the real recorded ticks (09:15 on)."""
+    """Today's 5m OHLC for the index from the real recorded ticks, bucketed by
+    the EXCHANGE's own trade time (``ltt``), not when the tick reached us --
+    delivery usually lags 3-10s but spiked to 7 min on 2026-09-16 and 29 min
+    on 2026-09-17, which shifted receive-time candles by that much. Dhan's
+    ltt is IST wall-clock seconds stored as an epoch, so decode it as UTC."""
     with market_log.connect() as db:
         rows = db.execute(
-            "SELECT ts, ltp FROM ticks WHERE session=? AND instrument=? AND ltp > 0 "
-            "AND substr(ts, 12, 5) >= '09:15' AND substr(ts, 12, 5) < '15:30'",
+            "SELECT ltt, ltp FROM ticks WHERE session=? AND instrument=? AND ltp > 0 AND ltt > 0",
             (session, instrument.upper()),
         ).fetchall()
     if not rows:
         return pd.DataFrame(columns=["high", "low", "close", "end"])
-    px = pd.Series([r[1] for r in rows], index=pd.to_datetime([r[0] for r in rows]))
+    idx = pd.to_datetime([r[0] for r in rows], unit="s").tz_localize("Asia/Kolkata")
+    px = pd.Series([r[1] for r in rows], index=idx).sort_index()
+    day = pd.Timestamp(session, tz="Asia/Kolkata")
+    px = px[(px.index >= day + pd.Timedelta(hours=9, minutes=15))
+            & (px.index < day + pd.Timedelta(hours=15, minutes=30))]
+    if px.empty:
+        return pd.DataFrame(columns=["high", "low", "close", "end"])
     bars = px.resample("5min", origin="start_day", offset="15min").agg(
         ["max", "min", "last"]).dropna()
     bars.columns = ["high", "low", "close"]
