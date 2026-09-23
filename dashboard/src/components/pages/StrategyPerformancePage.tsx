@@ -8,6 +8,7 @@ import {
   type PerfTotals,
 } from '../../hooks/useStrategyPerformance'
 import { useStrategyLearning, type LearnRow } from '../../hooks/useStrategyLearning'
+import { useStrategyLab, type LabRow } from '../../hooks/useStrategyLab'
 
 const STATE_STYLE: Record<string, string> = {
   watching: 'bg-white/[0.05] text-slate-400',
@@ -276,6 +277,90 @@ function VenueTable({
   )
 }
 
+const VERDICT_STYLE: Record<LabRow['verdict'], string> = {
+  COLLECTING: 'bg-white/[0.05] text-slate-400',
+  PASSING: 'bg-[var(--up)]/15 text-[var(--up)]',
+  DROPPED: 'bg-[var(--down)]/15 text-[var(--down)]',
+}
+
+function StrategyLabPanel() {
+  const q = useStrategyLab(true)
+  const d = q.data
+  if (!d) return null
+
+  return (
+    <section className={cn(fx.panel, 'overflow-hidden')}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-[var(--hair)] px-4 py-3">
+        <h3 className="text-sm font-bold text-slate-100">Strategy lab</h3>
+        <span className="font-mono text-[11px] text-slate-500">
+          {d.sessions} recorded {d.sessions === 1 ? 'day' : 'days'} · paper only
+        </span>
+      </div>
+      <p className="border-b border-[var(--hair)] px-4 py-2 text-[12px] leading-relaxed text-slate-400">
+        New ideas tested on real recorded option prices — bought at the ask, sold at the bid,
+        with Dhan&rsquo;s real charges on every order, 1 lot. A verdict needs{' '}
+        {d.bar.min_trades}+ trades over {d.bar.min_days}+ days. Nothing here places an order.
+      </p>
+      {d.sessions === 0 ? (
+        <p className="px-4 py-6 text-sm text-slate-500">
+          No option prices recorded yet — they start collecting from the next market open.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-left text-[12.5px]">
+            <thead>
+              <tr className="border-b border-[var(--hair)] font-mono text-[10.5px] uppercase tracking-[0.06em] text-slate-500">
+                {['Strategy', 'Index', 'Trades', 'Win', 'Gross', 'Charges', 'Net', 'Per trade', 'Verdict'].map(
+                  (h) => (
+                    <th
+                      key={h}
+                      className={cn(
+                        'px-3 py-2 font-medium',
+                        !['Strategy', 'Index', 'Verdict'].includes(h) && 'text-right',
+                      )}
+                    >
+                      {h}
+                    </th>
+                  ),
+                )}
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {d.rows.map((r) => (
+                <tr key={`${r.strategy}-${r.instrument}`} className="border-b border-[var(--hair)] text-slate-300 last:border-0">
+                  <Cell className="font-sans">
+                    <span className="text-slate-200" title={r.description}>
+                      {r.strategy}
+                    </span>
+                    <span className="ml-1.5 text-[10.5px] text-slate-500">{r.lane}</span>
+                  </Cell>
+                  <Cell className="font-sans text-slate-200">{r.instrument}</Cell>
+                  <Cell className="text-right">
+                    {r.trades}
+                    <span className="text-slate-500"> · {r.trading_days}d</span>
+                  </Cell>
+                  <Cell className="text-right">{pct(r.win_rate)}</Cell>
+                  <Cell className={cn('text-right', pnlClass(r.gross))}>{fmt(r.gross, 'INR', true)}</Cell>
+                  <Cell className="text-right text-slate-500">{fmt(r.charges, 'INR')}</Cell>
+                  <Cell className={cn('text-right font-semibold', pnlClass(r.net))}>{fmt(r.net, 'INR', true)}</Cell>
+                  <Cell className={cn('text-right', pnlClass(r.per_trade ?? 0))}>
+                    {fmt(r.per_trade, 'INR', true)}
+                  </Cell>
+                  <Cell>
+                    <span className={cn('rounded px-1.5 py-0.5 text-[10px]', VERDICT_STYLE[r.verdict])}>
+                      {r.verdict.toLowerCase()}
+                    </span>
+                  </Cell>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function StrategyPerformancePage() {
   const q = useStrategyPerformance(true)
   const data = q.data
@@ -305,6 +390,8 @@ export function StrategyPerformancePage() {
       ) : null}
 
       <LearningPanel />
+
+      <StrategyLabPanel />
 
       {best && (best.winners.length > 0 || best.losers.length > 0) ? (
         <div className="grid gap-3 sm:grid-cols-2">

@@ -43,7 +43,7 @@ def load_session(instrument: str, session: str) -> list[tuple[str, Snapshot]]:
     """``[(ts, rows), ...]`` in time order for one index and day."""
     with market_log.connect() as db:
         rows = db.execute(
-            "SELECT ts, expiry, spot, strike, opt_type, oi FROM chain "
+            "SELECT ts, expiry, spot, strike, opt_type, oi, ltp, bid, ask FROM chain "
             "WHERE instrument=? AND session=? ORDER BY ts, strike",
             (instrument.upper(), session),
         ).fetchall()
