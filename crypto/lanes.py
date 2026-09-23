@@ -369,6 +369,16 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
 
     live = s.live_orders_enabled
+    # armed != every pair live: only (strategy, coin) pairs that cleared the
+    # readiness bar get real orders; the rest keep paper-trading alongside.
+    live_pairs: set[tuple[str, str]] = set()
+    if live:
+        from index_ai.strategy_performance import crypto_live_pairs
+
+        try:
+            live_pairs = crypto_live_pairs()
+        except Exception:
+            logger.exception("crypto live-pair read failed -- every entry stays paper this scan")
     live_wallet = _live_wallet_usd(client) if live else 0.0
     if live:
         today = now_utc.date().isoformat()
@@ -541,7 +551,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         sum(open_by_strat.values()),
                         frame,
                         client=client,
-                        live=live,
+                        live=live and (strat, sym) in live_pairs,
                         live_wallet=live_wallet,
                     )
                     if slot.get("position"):

@@ -203,6 +203,10 @@ def live_lane(tmp_path, monkeypatch):
     monkeypatch.setattr(lanes.executor, "position_state", lambda c, sym: "open")
     monkeypatch.setattr(lanes.executor, "fill_report", lambda c, oid: (None, 0.0))
     monkeypatch.setattr(lanes.executor, "fill_price", lambda c, oid: None)
+    # only pairs that cleared the readiness bar trade real money once armed
+    monkeypatch.setattr(
+        "index_ai.strategy_performance.crypto_live_pairs", lambda: {("ny_n_break", "BTCUSD")}
+    )
     return monkeypatch
 
 
@@ -322,3 +326,27 @@ def test_live_exit_failure_keeps_position_open(live_lane):
     # exit order failed → still exposed, nothing journalled
     assert journal.load_state()["ny_n_break:BTCUSD"]["position"] is not None
     assert journal.recent() == []
+
+
+def test_armed_but_pair_not_cleared_stays_paper(live_lane):
+    """Arming used to send every enabled strategy on every coin live at once."""
+    live_lane.setattr("index_ai.strategy_performance.crypto_live_pairs", lambda: set())
+
+    def must_not_trade(*a, **k):
+        raise AssertionError("an uncleared pair placed a real order")
+
+    live_lane.setattr(lanes.executor, "place_entry", must_not_trade)
+    lanes.scan_crypto_paper()
+    pos = journal.load_state()["ny_n_break:BTCUSD"]["position"]
+    assert pos and pos["mode"] == "paper"
+
+
+def test_live_pair_read_failure_keeps_everything_paper(live_lane):
+    def boom():
+        raise OSError("journal locked")
+
+    live_lane.setattr("index_ai.strategy_performance.crypto_live_pairs", boom)
+    live_lane.setattr(lanes.executor, "place_entry",
+                      lambda *a, **k: (_ for _ in ()).throw(AssertionError("went live")))
+    lanes.scan_crypto_paper()
+    assert journal.load_state()["ny_n_break:BTCUSD"]["position"]["mode"] == "paper"

@@ -135,6 +135,15 @@ type LiveReadiness = {
   why_not: string | null
 }
 
+type LivePair = {
+  strategy: string
+  coin: string
+  trades: number
+  net_usd: number
+  goes_live: boolean
+  why_not: string | null
+}
+
 /** Cumulative realised USD P&L, in row order, for the equity sparkline. */
 function equityCurve(rows: { pnl_usd: number }[]): number[] {
   const out: number[] = []
@@ -168,7 +177,8 @@ export function CryptoPanel() {
   })
   const readiness = useQuery({
     queryKey: ['crypto', 'live-readiness'],
-    queryFn: () => api<{ strategies: LiveReadiness[] }>('/api/crypto/live-readiness'),
+    queryFn: () =>
+      api<{ strategies: LiveReadiness[]; pairs?: LivePair[] }>('/api/crypto/live-readiness'),
     refetchInterval: 5 * 60_000,
   })
 
@@ -449,7 +459,10 @@ export function CryptoPanel() {
       {s?.ml ? <LearningRow ml={s.ml} /> : null}
 
       {readiness.data?.strategies?.length ? (
-        <LiveReadinessRow strategies={readiness.data.strategies} />
+        <LiveReadinessRow
+          strategies={readiness.data.strategies}
+          pairs={readiness.data.pairs ?? []}
+        />
       ) : null}
 
       <CollapsibleSection title="Day review" summary="AI summary · why each trade" defaultOpen>
@@ -598,7 +611,13 @@ function LearningRow({ ml }: { ml: NonNullable<Status['ml']> }) {
   )
 }
 
-function LiveReadinessRow({ strategies }: { strategies: LiveReadiness[] }) {
+function LiveReadinessRow({
+  strategies,
+  pairs,
+}: {
+  strategies: LiveReadiness[]
+  pairs: LivePair[]
+}) {
   return (
     <div className={cn(fx.card, 'space-y-2 text-xs')}>
       <div className="flex items-baseline justify-between">
@@ -606,7 +625,7 @@ function LiveReadinessRow({ strategies }: { strategies: LiveReadiness[] }) {
           Go-live readiness
         </span>
         <span className="text-slate-600">
-          real-money bar, not a calendar date — enough trades, enough days, net positive
+          real money goes only to coins marked live — each coin needs 5+ trades and a profit
         </span>
       </div>
       <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -637,6 +656,27 @@ function LiveReadinessRow({ strategies }: { strategies: LiveReadiness[] }) {
               {r.instruments_positive}/{r.instruments_total} coins net-positive
               {r.why_not ? ` · ${r.why_not}` : ''}
             </span>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {pairs
+                .filter((p) => p.strategy === r.strategy)
+                .map((p) => (
+                  <span
+                    key={p.coin}
+                    title={p.why_not ?? 'would trade real money once armed'}
+                    className={cn(
+                      'rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums',
+                      p.goes_live
+                        ? 'bg-[var(--up)]/15 text-[var(--up)]'
+                        : p.net_usd < 0
+                          ? 'bg-[var(--down)]/10 text-[var(--down)]'
+                          : 'bg-white/[0.05] text-slate-400',
+                    )}
+                  >
+                    {p.coin.replace(/USD.?$/, '')} {p.trades}t {usd(p.net_usd)}
+                    {p.goes_live ? ' · live' : ''}
+                  </span>
+                ))}
+            </div>
           </div>
         ))}
       </div>

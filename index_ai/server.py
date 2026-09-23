@@ -1515,9 +1515,12 @@ async def strategy_performance_api() -> dict[str, Any]:
 async def crypto_live_readiness_api() -> dict[str, Any]:
     """Per-strategy go-live bar: enough trades, enough days, net positive —
     agreed with Richard 2026-09-17 rather than picking a live date up front."""
-    from index_ai.strategy_performance import crypto_live_readiness
+    from index_ai.strategy_performance import crypto_live_pair_table, crypto_live_readiness
 
-    return {"strategies": await asyncio.to_thread(crypto_live_readiness)}
+    def _read() -> dict[str, Any]:
+        return {"strategies": crypto_live_readiness(), "pairs": crypto_live_pair_table()}
+
+    return await asyncio.to_thread(_read)
 
 
 @app.get("/api/strategy-learning", include_in_schema=False)
