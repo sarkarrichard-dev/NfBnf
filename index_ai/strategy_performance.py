@@ -192,7 +192,7 @@ def _india_rows() -> list[dict[str, Any]]:
     return [_finish(k, v, "INR") for k, v in buckets.items()]
 
 
-def _crypto_rows() -> list[dict[str, Any]]:
+def _crypto_rows(*, keep_days: bool = False) -> list[dict[str, Any]]:
     from crypto.journal import JOURNAL_PATH
 
     epoch = data_epoch()
@@ -221,7 +221,13 @@ def _crypto_rows() -> list[dict[str, Any]]:
         day = str(r.get("day") or r.get("closed_at") or "")[:10]
         if day:
             b["days"].add(day)
-    return [_finish(k, v, "USD") for k, v in buckets.items()]
+    rows = []
+    for k, v in buckets.items():
+        row = _finish(k, v, "USD")
+        if keep_days:
+            row["_days"] = set(v["days"])
+        rows.append(row)
+    return rows
 
 
 def _commodities_rows() -> list[dict[str, Any]]:
@@ -321,22 +327,21 @@ def crypto_live_readiness() -> list[dict[str, Any]]:
     by_strategy: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"trades": 0, "net": 0.0, "days": set(), "instruments": {}}
     )
-    for row in _crypto_rows():
+    for row in _crypto_rows(keep_days=True):
         if row["mode"] != "PAPER":
             continue
         s = by_strategy[row["strategy"]]
         s["trades"] += row["trades"]
         s["net"] += row["net"]
-        if row["first_day"]:
-            s["days"].add(row["first_day"])
-        if row["last_day"]:
-            s["days"].add(row["last_day"])
-        s["instruments"][row["instrument"]] = row["net"]
+        # every day it actually traded -- this used to add only each coin's
+        # first and last day, so "days" undercounted (e.g. 8 for ak_roxx_pro)
+        s["days"] |= row["_days"]
+        s["instruments"][row["instrument"]] = (row["net"], row["trades"])
 
     out = []
     for strat, s in sorted(by_strategy.items()):
         span_days = len(s["days"])
-        insts = s["instruments"]
+        insts = {k: net for k, (net, _) in s["instruments"].items()}
         ready = (
             s["trades"] >= CRYPTO_LIVE_MIN_TRADES
             and span_days >= CRYPTO_LIVE_MIN_DAYS
@@ -364,6 +369,49 @@ def crypto_live_readiness() -> list[dict[str, Any]]:
                 ),
             }
         )
+    return out
+
+
+CRYPTO_PAIR_MIN_TRADES = 5
+
+
+def crypto_live_pairs() -> set[tuple[str, str]]:
+    """(strategy, coin) pairs allowed to trade real money once crypto is armed.
+
+    The strategy must pass the readiness bar above AND that coin must be
+    net-positive for it over at least CRYPTO_PAIR_MIN_TRADES paper trades.
+    Every other pair keeps paper-trading alongside -- arming used to send
+    every enabled strategy on every coin live at once, losers included.
+    """
+    ready = {r["strategy"] for r in crypto_live_readiness() if r["ready"]}
+    return {
+        (row["strategy"], row["instrument"])
+        for row in _crypto_rows()
+        if row["mode"] == "PAPER"
+        and row["strategy"] in ready
+        and row["trades"] >= CRYPTO_PAIR_MIN_TRADES
+        and row["net"] > 0
+    }
+
+
+def crypto_live_pair_table() -> list[dict[str, Any]]:
+    """Every paper (strategy, coin) with whether it would go live, and why not."""
+    ready = {r["strategy"]: r for r in crypto_live_readiness()}
+    allowed = crypto_live_pairs()
+    out = []
+    for row in sorted(_crypto_rows(), key=lambda r: (r["strategy"], -r["net"])):
+        if row["mode"] != "PAPER":
+            continue
+        pair = (row["strategy"], row["instrument"])
+        strat = ready.get(row["strategy"]) or {}
+        why = (None if pair in allowed
+               else f"strategy not ready: {strat.get('why_not')}" if not strat.get("ready")
+               else f"only {row['trades']} trades on this coin (needs {CRYPTO_PAIR_MIN_TRADES})"
+               if row["trades"] < CRYPTO_PAIR_MIN_TRADES
+               else f"losing on this coin (${row['net']:.2f})")
+        out.append({"strategy": row["strategy"], "coin": row["instrument"],
+                    "trades": row["trades"], "net_usd": row["net"],
+                    "goes_live": pair in allowed, "why_not": why})
     return out
 
 
