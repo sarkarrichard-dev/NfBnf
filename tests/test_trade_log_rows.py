@@ -191,4 +191,12 @@ def test_spread_margin_shows_on_the_sell_leg_not_the_hedge() -> None:
     }
     buy, sell = expand_ui_trade_to_leg_rows(ui)
     assert sell["capital_deployed"] == 19399.0 and sell["capital_kind"] == "margin"
-    assert buy["capital_deployed"] is None
+    assert sell["margin_source"] == "estimate"                     # older trade: no Dhan figure
+    assert buy["capital_deployed"] == round(8.15 * 65, 2) and buy["capital_kind"] == "premium"
+
+    # new trades carry Dhan's own margin (real 2026-09-24 NIFTY spread numbers)
+    ui["margin_dhan"] = {"total": 52840.84, "span": 21826.35, "exposure": 30484.74,
+                         "sell_leg_alone": 173861.09}
+    buy, sell = expand_ui_trade_to_leg_rows(ui)
+    assert sell["capital_deployed"] == 52840.84 and sell["margin_source"] == "dhan"
+    assert sell["margin_without_hedge"] == 173861.09

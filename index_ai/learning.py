@@ -487,6 +487,31 @@ def build_legs_ui(option: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _leg_capital(ui: dict[str, Any], leg: dict[str, Any], idx: int, cap_idx: int,
+                 tx: str, qty: int, entry: Any) -> dict[str, Any]:
+    """Money tied up per leg row. Spreads: the bought hedge shows the premium
+    paid; the sold leg shows the margin Dhan blocks for the whole spread (its
+    own calculator, hedge benefit included, captured at entry) -- or the old
+    max-loss estimate for trades from before 2026-09-24. Single-leg rows keep
+    the trade-level figure."""
+    md = ui.get("margin_dhan") or {}
+    if ui.get("capital_kind") == "margin" and len(ui.get("legs_detail") or []) > 1:
+        if tx == "BUY":
+            prem = float(entry) * qty if entry not in (None, "") else None
+            return {"capital_deployed": round(prem, 2) if prem else None,
+                    "capital_kind": "premium" if prem else None}
+        if idx == cap_idx:
+            if md.get("total"):
+                return {"capital_deployed": md["total"], "capital_kind": "margin",
+                        "margin_source": "dhan", "margin_without_hedge": md.get("sell_leg_alone")}
+            return {"capital_deployed": ui.get("capital_deployed"), "capital_kind": "margin",
+                    "margin_source": "estimate"}
+        return {"capital_deployed": None, "capital_kind": None}
+    same = idx == cap_idx
+    return {"capital_deployed": ui.get("capital_deployed") if same else None,
+            "capital_kind": ui.get("capital_kind") if same else None}
+
+
 def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
     """One UI row per option leg (spreads → separate buy/sell lines). Strategy stays off UI."""
     from index_ai.exit import estimate_pnl_rupees
@@ -619,8 +644,7 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
                 "is_live": ui.get("is_live"),
                 "expiry": ui.get("expiry"),
                 "broker_order_id": leg.get("broker_order_id"),
-                "capital_deployed": ui.get("capital_deployed") if idx == cap_idx else None,
-                "capital_kind": ui.get("capital_kind") if idx == cap_idx else None,
+                **_leg_capital(ui, leg, idx, cap_idx, tx, qty, entry),
                 "broker_status_line": ui.get("broker_status_line") if idx == 0 else None,
                 "mtm_updated_at_ist": ui.get("mtm_updated_at_ist") if is_open else None,
                 "entry_session_ok": ui.get("entry_session_ok"),
@@ -832,6 +856,7 @@ def format_trade_for_ui(trade: dict[str, Any]) -> dict[str, Any]:
         "quantity": qty,
         "capital_deployed": _cap_deployed,
         "capital_kind": _cap_kind,
+        "margin_dhan": option.get("margin_dhan"),
         "configured_lot_size": leg.get("configured_lot_size"),
         "lot_label": leg.get("lot_label"),
         "segment": segment,

@@ -271,10 +271,22 @@ function LegRow({ row, cols }: { row: LogRow; cols: ColFlags }) {
       {cols.capital ? (
         <td className="px-2 py-2 text-right tabular-nums text-slate-300">
           {row.capital_deployed != null ? (
-            <span title={row.capital_kind === 'margin' ? 'combined margin at risk (sell + hedge)' : 'premium paid'}>
+            <span
+              title={
+                row.capital_kind !== 'margin'
+                  ? 'premium paid'
+                  : row.margin_source === 'dhan'
+                    ? `margin Dhan blocks for the spread (hedge benefit included)${
+                        row.margin_without_hedge
+                          ? ` — ₹${Math.round(row.margin_without_hedge).toLocaleString('en-IN')} without the hedge`
+                          : ''
+                      }`
+                    : 'estimate (max loss) — older trade, before Dhan margin was recorded'
+              }
+            >
               ₹{Math.round(Number(row.capital_deployed)).toLocaleString('en-IN')}
               <span className="ml-1 text-[9px] uppercase text-slate-500">
-                {row.capital_kind === 'margin' ? 'marg' : 'prem'}
+                {row.capital_kind === 'margin' ? (row.margin_source === 'estimate' ? 'est' : 'marg') : 'prem'}
               </span>
             </span>
           ) : (
