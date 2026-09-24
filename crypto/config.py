@@ -32,14 +32,20 @@ CRYPTO_ALLOWLIST: tuple[str, ...] = (
     "TRXUSD",
     "DOGEUSD",
     "ADAUSD",
-    "PAXGUSD",
-    "XAUTUSD",  # Tether Gold Token perp — second gold-backed instrument alongside PAXG
+    # PAXGUSD / XAUTUSD (gold-backed) removed 2026-09-25: since 2026-09-10 they
+    # lost for almost every strategy (-$62 combined) while every real crypto
+    # coin was net positive -- gold moves slowly and differently, so these
+    # trend strategies kept getting stopped out on it. Richard: trade the most
+    # active, liquid real cryptos instead.
 )
 
 # Default active set. Override at runtime with CRYPTO_SYMBOLS (a comma-separated
 # list, validated against the allowlist). A symbol Delta does not list live is
 # dropped by crypto/delta/products.py, never fabricated.
-PERP_SYMBOLS: tuple[str, ...] = ("BTCUSD", "ETHUSD", "SOLUSD", "PAXGUSD")
+# The most active liquid real-crypto perps on Delta India by 24h turnover and
+# open interest (checked 2026-09-25): BTC, ETH, SOL, XRP, DOGE; BNB is thinner
+# but net positive here, so it stays.
+PERP_SYMBOLS: tuple[str, ...] = ("BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "DOGEUSD", "BNBUSD")
 
 
 def _b(name: str, default: bool) -> bool:
