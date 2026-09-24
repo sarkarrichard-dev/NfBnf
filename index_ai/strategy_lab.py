@@ -41,7 +41,6 @@ from index_ai.strategies.candlestick_sr import intraday_candle_trend
 ENTRY_FROM, ENTRY_UNTIL, SQUARE_OFF = "09:30", "14:30", "15:10"
 MAX_TRADES_PER_DAY = 2
 HEDGE_STRIKES = 4  # long leg sits 4 strikes beyond the short one
-SPREAD_TARGET, SPREAD_STOP = 0.5, 1.0  # keep 50% of the credit / lose 1x the credit
 # Buys are quick scalps (Richard, 2026-09-24): stop starts this many INDEX
 # points from entry and follows 1:1 -- the same rule as the live buy lane
 # (instruments._buy_scalp_trail).
@@ -221,16 +220,9 @@ def _exit_prices(pos: _Pos, q: dict) -> list[float] | None:
     return out
 
 
-def _hit(lane: str, pos: _Pos, pts: float) -> str | None:
-    if lane == "sell":
-        if pts >= SPREAD_TARGET * pos.basis:
-            return "target"
-        if pts <= -SPREAD_STOP * pos.basis:
-            return "stop"
-    return None
 
 
-def _buy_trail_hit(pos: _Pos, path: pd.Series, until: str, dist: float, spot: float) -> bool:
+def _trail_hit(pos: _Pos, path: pd.Series, until: str, dist: float, spot: float) -> bool:
     """Walk the real index ticks since the last check (or just this snapshot's
     spot when no ticks were recorded); move the anchor with each new best
     price and report whether the 1:1 trailing stop was touched."""
@@ -380,8 +372,11 @@ def run_session(
             return None
         return nxt[j][1]
 
-    path = _index_path(instrument, session) if lane == "buy" else pd.Series(dtype=float)
-    buy_dist = BUY_TRAIL_POINTS.get(instrument.upper(), 25.0)
+    path = _index_path(instrument, session)
+    from index_ai.strategies.credit_spread import SELL_TRAIL_POINTS
+
+    trail_dist = (BUY_TRAIL_POINTS if lane == "buy" else SELL_TRAIL_POINTS).get(
+        instrument.upper(), 25.0 if lane == "buy" else 40.0)
     trades: list[dict[str, Any]] = []
     pos: _Pos | None = None
     for i in range(1, len(snaps)):
@@ -403,14 +398,13 @@ def run_session(
             pts = _points(pos, prices)
             if closing:
                 why = "square-off"
-            elif lane == "buy":
-                # exits at this snapshot's real bid once the index touched the
-                # stop since the last one (snapshots ~90s apart -- the live
-                # lane checks every 20s, so this is a little pessimistic)
-                why = ("trail stop" if _buy_trail_hit(pos, path, ts, buy_dist,
-                                                      float(snap[0]["spot"] or 0)) else None)
             else:
-                why = _hit(lane, pos, pts)
+                # Richard's 1:1 index trail, both lanes (live uses the same
+                # numbers). Exits at this snapshot's real quotes once the index
+                # touched the stop since the last one -- snapshots are ~90s
+                # apart and live checks every 20s, so a little pessimistic.
+                why = ("trail stop" if _trail_hit(pos, path, ts, trail_dist,
+                                                  float(snap[0]["spot"] or 0)) else None)
             if why:
                 pos.charges += sum(
                     cost(p, _flip(side)) for (_, _, side, _), p in zip(pos.legs, prices)

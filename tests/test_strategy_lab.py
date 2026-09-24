@@ -58,13 +58,17 @@ def _day(spots, quotes=True, start="09:30", expiry="2026-09-29"):
         )
 
 
+# climbs 195 pts, then turns -- the 1:1 index trail (NIFTY sells 40) closes it
+RISE_THEN_TURN = [23500 + 5 * i for i in range(40)] + [23695 - 10 * i for i in range(1, 20)]
+
+
 def test_bullish_day_sells_a_bull_put_spread_and_books_real_costs(db):
-    _day([23500 + 5 * i for i in range(60)])
+    _day(RISE_THEN_TURN)
     trades = strategy_lab.run_session("oi_bias_spread", "NIFTY", SESSION)
     assert trades, "a bullish read should open a spread"
     t = trades[0]
     assert t["direction"] == 1 and t["legs"][0].startswith("SELL") and t["legs"][0].endswith("PE")
-    assert t["legs"][1].startswith("BUY") and t["exit_reason"] == "target"
+    assert t["legs"][1].startswith("BUY") and t["exit_reason"] == "trail stop"
     assert t["gross"] > 0 and t["charges"] > 40  # ≥ ₹20 x 4 executed orders, plus levies
     assert t["net"] == pytest.approx(t["gross"] - t["charges"])
 
@@ -81,7 +85,7 @@ def test_losing_trade_is_stopped_and_counts_against_the_strategy(db):
     # bullish OI, but the index falls hard -> the bull put spread hits its stop
     _day([23500 + 5 * i for i in range(12)] + [23555 - 25 * i for i in range(1, 40)])
     t = strategy_lab.run_session("oi_bias_spread", "NIFTY", SESSION)[0]
-    assert t["exit_reason"] == "stop" and t["net"] < 0
+    assert t["exit_reason"] == "trail stop" and t["net"] < 0
 
 
 def test_no_real_quotes_means_no_trade(db):
@@ -97,13 +101,13 @@ def test_square_off_closes_at_1510_and_mid_day_positions_are_not_counted(db):
 
 
 def test_verdicts_follow_the_readiness_bar(db, monkeypatch):
-    _day([23500 + 5 * i for i in range(60)])
+    _day(RISE_THEN_TURN)
     rows = {r["strategy"]: r for r in strategy_lab.run(["NIFTY"], [SESSION])["rows"]}
     assert rows["oi_bias_spread"]["verdict"] == "COLLECTING"
     monkeypatch.setattr(strategy_lab, "MIN_TRADES", 1)
     monkeypatch.setattr(strategy_lab, "MIN_DAYS", 1)
     rows = {r["strategy"]: r for r in strategy_lab.run(["NIFTY"], [SESSION])["rows"]}
-    assert rows["oi_bias_spread"]["verdict"] == "PASSING"      # net ≈ +₹937 on this day
+    assert rows["oi_bias_spread"]["verdict"] == "PASSING"
     assert rows["oi_bias_spread"]["charges"] > 80
 
 
@@ -120,7 +124,7 @@ def test_api_serves_the_lab(db):
 
     from index_ai.server import app
 
-    _day([23500 + 5 * i for i in range(60)])
+    _day(RISE_THEN_TURN)
     body = TestClient(app).get("/api/strategy-lab").json()
     assert body["sessions"] == 1
     nifty = [r for r in body["rows"] if r["instrument"] == "NIFTY"]

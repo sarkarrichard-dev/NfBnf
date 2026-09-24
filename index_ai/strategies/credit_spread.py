@@ -340,6 +340,12 @@ def format_legs_summary(legs: list[dict[str, Any]]) -> list[dict[str, str]]:
     return rows
 
 
+# Index points the sell-side stop sits behind the best index price, 1:1
+# (Richard, 2026-09-24: NIFTY 40, BANKNIFTY 100; SENSEX 130 = NIFTY scaled by
+# index size, not his own number).
+SELL_TRAIL_POINTS = {"NIFTY": 40.0, "BANKNIFTY": 100.0, "SENSEX": 130.0}
+
+
 def evaluate_credit_open_trade(
     trade: dict[str, Any],
     current_index_price: float,
@@ -378,42 +384,32 @@ def evaluate_credit_open_trade(
     stop_loss = float(meta.get("stop_loss_rupees") or 0)
     max_loss = float(meta.get("max_loss_rupees") or 0)
 
-    # Premium trail on the *short leg* (NIFTY / BANKNIFTY): quarter-of-premium
-    # target, then a fixed bounce off the best. It replaces the rupee target/stop
-    # for those indices; the rupee max-loss stays as a backstop.
+    # Richard's index trail (2026-09-24), the same rule as option buying with
+    # more room: the stop starts SELL_TRAIL_POINTS from the entry index price
+    # and moves one point for every point the index moves in the spread's
+    # favour. It replaces the short-leg premium trail and the rupee
+    # target/stop; the rupee max-loss, short-strike breach and Supertrend
+    # stay as backstops.
     inst_key = str(trade.get("instrument") or option.get("instrument") or "NIFTY")
-    short_leg = next(
-        (
-            leg
-            for leg in (option.get("legs") or [])
-            if str(leg.get("transaction_type") or "").upper() == "SELL"
-        ),
-        None,
-    )
+    direction = {"SELL_BULL_PUT_SPREAD": 1, "SELL_BEAR_CALL_SPREAD": -1}.get(action.upper(), 0)
     pt_active = False
-    from index_ai.premium_trail import (
-        init_premium_trail,
-        premium_trail_enabled,
-        update_premium_trail,
-    )
-
-    if premium_trail_enabled(inst_key) and short_leg is not None:
-        short_entry = float(short_leg.get("entry_ltp") or short_leg.get("ltp") or 0)
-        short_now = short_leg.get("current_ltp")
-        if short_entry > 0 and short_now is not None:
-            pt_active = True
-            if "pt_entry" not in meta:
-                meta.update(init_premium_trail(entry_premium=short_entry, direction=-1))
-            meta, pt_hit, pt_reason = update_premium_trail(
-                meta,
-                float(short_now),
-                inst_key,
-                index_price=current_index_price,
-                pivot_target=option.get("pivot_target"),
+    entry_idx = float(meta.get("entry_index_price") or signal.get("price") or 0)
+    dist = SELL_TRAIL_POINTS.get(inst_key.upper())
+    if direction and entry_idx > 0 and dist:
+        pt_active = True
+        best = float(meta.get("it_best") or entry_idx)
+        best = max(best, current_index_price) if direction > 0 else min(best, current_index_price)
+        stop = best - dist if direction > 0 else best + dist
+        meta.update(it_best=best, it_stop=stop, it_points=dist)
+        if (direction > 0 and current_index_price <= stop) or (
+            direction < 0 and current_index_price >= stop
+        ):
+            should_exit = True
+            locked = (stop - entry_idx) * direction
+            exit_reason = (
+                f"Index trail: {current_index_price:g} crossed the stop {stop:g} "
+                f"({dist:g} pts behind best {best:g}; {locked:+g} pts from entry)."
             )
-            if pt_hit:
-                should_exit = True
-                exit_reason = pt_reason
 
     if mtm is not None and not should_exit:
         pnl = float(mtm)
