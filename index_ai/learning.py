@@ -525,6 +525,13 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     leg_count = len(legs)
+    # a spread's margin is blocked by the leg you SELL -- show it there, not on
+    # whichever leg happens to be listed first (usually the bought hedge)
+    cap_idx = next(
+        (i for i, lg in enumerate(legs)
+         if str(lg.get("transaction_type") or "").upper() == "SELL"),
+        0,
+    ) if ui.get("capital_kind") == "margin" else 0
     for idx, leg in enumerate(legs):
         tx = str(leg.get("transaction_type") or "BUY").upper()
         side_word = "Sell" if tx == "SELL" else "Buy"
@@ -612,8 +619,8 @@ def expand_ui_trade_to_leg_rows(ui: dict[str, Any]) -> list[dict[str, Any]]:
                 "is_live": ui.get("is_live"),
                 "expiry": ui.get("expiry"),
                 "broker_order_id": leg.get("broker_order_id"),
-                "capital_deployed": ui.get("capital_deployed") if idx == 0 else None,
-                "capital_kind": ui.get("capital_kind") if idx == 0 else None,
+                "capital_deployed": ui.get("capital_deployed") if idx == cap_idx else None,
+                "capital_kind": ui.get("capital_kind") if idx == cap_idx else None,
                 "broker_status_line": ui.get("broker_status_line") if idx == 0 else None,
                 "mtm_updated_at_ist": ui.get("mtm_updated_at_ist") if is_open else None,
                 "entry_session_ok": ui.get("entry_session_ok"),
