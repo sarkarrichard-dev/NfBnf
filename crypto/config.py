@@ -145,6 +145,7 @@ class CryptoSettings:
     ratchet_step_pnl_pct: float
     tp_trigger_pnl_pct: float
     peak_trail_pnl_pct: float
+    point_trail_pct: float  # >0: fixed-points 1:1 trail (see crypto/strategies/trailing.py)
     # live execution (Phase 4) — two independent locks, see crypto/live.py
     trading_mode: str  # PAPER (default) | LIVE
     live_armed: bool  # CRYPTO_ALLOW_LIVE
@@ -199,6 +200,12 @@ def crypto_settings() -> CryptoSettings:
         ratchet_step_pnl_pct=max(0.5, _f("CRYPTO_RATCHET_STEP_PNL_PCT", 10.0)),
         tp_trigger_pnl_pct=max(1.0, _f("CRYPTO_TP_TRIGGER_PNL_PCT", 45.0)),
         peak_trail_pnl_pct=max(0.5, _f("CRYPTO_PEAK_TRAIL_PNL_PCT", 6.0)),
+        # 1.6% of entry price as points (Richard, 2026-09-25). Replaying all 136
+        # real entries on the six coins since 2026-09-10 on real 5m prices:
+        # 0.5% -$12, 1.0% +$6, 1.6% +$518, 2.0% +$834 vs the bot's own exits
+        # -$142 -- but nearly all of it in the trending week (17-24 Sep); the
+        # choppier first week lost at every distance. 0 = old P&L-% trail.
+        point_trail_pct=max(0.0, _f("CRYPTO_POINT_TRAIL_PCT", 1.6)),
         trading_mode=_mode("CRYPTO_TRADING_MODE"),
         live_armed=_b("CRYPTO_ALLOW_LIVE", False),
         max_daily_loss_usd=abs(_f("CRYPTO_MAX_DAILY_LOSS_USD", 50.0)),
