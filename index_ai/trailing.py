@@ -169,6 +169,10 @@ def update_trail(meta: dict[str, Any], current_index_price: float) -> dict[str, 
     }
 
 
+def _is_long_premium(action: str, transaction_type: str) -> bool:
+    return action.upper() in ("BUY_CALL", "BUY_PUT") and transaction_type.upper() == "BUY"
+
+
 def evaluate_open_trade(
     trade: dict[str, Any],
     current_index_price: float,
@@ -226,7 +230,9 @@ def evaluate_open_trade(
     )
 
     pt_evaluated = False
-    if premium_trail_enabled(instrument_key):
+    # Buys scalp on the 1:1 index trail alone (instruments._buy_scalp_trail);
+    # the option-price trail would close them earlier than Richard's rule.
+    if premium_trail_enabled(instrument_key) and not _is_long_premium(action, tx):
         entry_px = float(option.get("ltp") or 0)
         cur_px = option.get("last_option_ltp")
         if entry_px > 0 and cur_px is not None:

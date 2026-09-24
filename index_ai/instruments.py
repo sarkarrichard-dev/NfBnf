@@ -47,6 +47,22 @@ def _int_env(name: str, default: int | None) -> int | None:
         return default
 
 
+def _buy_scalp_trail(points: float) -> dict[str, float]:
+    """Option-buy stop/trail in INDEX points (Richard, 2026-09-24: "options
+    buying is a quick scalping game"). The stop starts ``points`` from the
+    entry and moves up one point for every point the index moves in the
+    trade's favour -- a 1:1 trail from the first tick, no wide initial stop,
+    no waiting to arm. NIFTY 25 and BANKNIFTY 55 are the middle of his 20-30 /
+    50-60 ranges; SENSEX 80 is NIFTY's 25 scaled by index size (~3.2x), not
+    his own number. Only the buy lane reads these (credit spreads have
+    their own premium trail)."""
+    return {
+        "trail_activation_points": 0.0,
+        "trail_distance_points": points,
+        "initial_stop_points": points,
+    }
+
+
 def market_lot_size(index_key: str) -> int:
     """Current NSE lot for index options; .env may override unless it is a known legacy value."""
     key = index_key.strip().upper()
@@ -85,9 +101,7 @@ def instruments() -> dict[str, IndexInstrument]:
             option_segment="NSE_FNO",
             strike_step=50,
             lot_size=market_lot_size("NIFTY"),
-            trail_activation_points=25.0,
-            trail_distance_points=40.0,
-            initial_stop_points=100.0,
+            **_buy_scalp_trail(25.0),
         ),
         "BANKNIFTY": IndexInstrument(
             key="BANKNIFTY",
@@ -98,9 +112,7 @@ def instruments() -> dict[str, IndexInstrument]:
             option_segment="NSE_FNO",
             strike_step=100,
             lot_size=market_lot_size("BANKNIFTY"),
-            trail_activation_points=50.0,
-            trail_distance_points=80.0,
-            initial_stop_points=200.0,
+            **_buy_scalp_trail(55.0),
         ),
         "SENSEX": IndexInstrument(
             key="SENSEX",
@@ -111,9 +123,7 @@ def instruments() -> dict[str, IndexInstrument]:
             option_segment="BSE_FNO",
             strike_step=100,
             lot_size=market_lot_size("SENSEX"),
-            trail_activation_points=50.0,
-            trail_distance_points=80.0,
-            initial_stop_points=200.0,
+            **_buy_scalp_trail(80.0),
         ),
     }
 

@@ -42,7 +42,10 @@ ENTRY_FROM, ENTRY_UNTIL, SQUARE_OFF = "09:30", "14:30", "15:10"
 MAX_TRADES_PER_DAY = 2
 HEDGE_STRIKES = 4  # long leg sits 4 strikes beyond the short one
 SPREAD_TARGET, SPREAD_STOP = 0.5, 1.0  # keep 50% of the credit / lose 1x the credit
-BUY_TARGET, BUY_STOP = 0.30, 0.20  # +30% / -20% of premium paid
+# Buys are quick scalps (Richard, 2026-09-24): stop starts this many INDEX
+# points from entry and follows 1:1 -- the same rule as the live buy lane
+# (instruments._buy_scalp_trail).
+BUY_TRAIL_POINTS = {"NIFTY": 25.0, "BANKNIFTY": 55.0, "SENSEX": 80.0}
 MIN_TRADES, MIN_DAYS = 30, 14
 BUY_MIN_WIN_RATE = 0.65   # Richard's bar for option buying, on top of net > 0
 PA_BARS = 6        # today's own 5m candles the structure read looks at (30 min)
@@ -162,6 +165,8 @@ class _Pos:
     basis: float  # credit received / premium paid, points
     charges: float = 0.0
     next_expiry: bool = False
+    anchor: float = 0.0          # buys: best index price since entry
+    seen_to: str = ""            # buys: index path already walked up to here
 
 
 def _quotes(snap: oi_signals.Snapshot) -> dict[tuple[float, str], dict[str, Any]]:
@@ -222,32 +227,54 @@ def _hit(lane: str, pos: _Pos, pts: float) -> str | None:
             return "target"
         if pts <= -SPREAD_STOP * pos.basis:
             return "stop"
-    else:
-        if pts >= BUY_TARGET * pos.basis:
-            return "target"
-        if pts <= -BUY_STOP * pos.basis:
-            return "stop"
     return None
 
 
-def _bars_5m(instrument: str, session: str) -> pd.DataFrame:
-    """Today's 5m OHLC for the index from the real recorded ticks, bucketed by
-    the EXCHANGE's own trade time (``ltt``), not when the tick reached us --
+def _buy_trail_hit(pos: _Pos, path: pd.Series, until: str, dist: float, spot: float) -> bool:
+    """Walk the real index ticks since the last check (or just this snapshot's
+    spot when no ticks were recorded); move the anchor with each new best
+    price and report whether the 1:1 trailing stop was touched."""
+    if path.empty:
+        prices = [spot]
+    else:
+        seg = path[(path.index > pd.Timestamp(pos.seen_to)) & (path.index <= pd.Timestamp(until))]
+        prices = list(seg.to_numpy()) + [spot]
+    pos.seen_to = until
+    for px in prices:
+        if pos.direction > 0:
+            pos.anchor = max(pos.anchor, px)
+            if px <= pos.anchor - dist:
+                return True
+        else:
+            pos.anchor = min(pos.anchor, px)
+            if px >= pos.anchor + dist:
+                return True
+    return False
+
+
+def _index_path(instrument: str, session: str) -> pd.Series:
+    """The index's real recorded prices for the session, indexed by the
+    EXCHANGE's own trade time (``ltt``), not when the tick reached us --
     delivery usually lags 3-10s but spiked to 7 min on 2026-09-16 and 29 min
-    on 2026-09-17, which shifted receive-time candles by that much. Dhan's
-    ltt is IST wall-clock seconds stored as an epoch, so decode it as UTC."""
+    on 2026-09-17. Dhan's ltt is IST wall-clock seconds stored as an epoch,
+    so decode it as UTC. 09:15-15:30 only."""
     with market_log.connect() as db:
         rows = db.execute(
             "SELECT ltt, ltp FROM ticks WHERE session=? AND instrument=? AND ltp > 0 AND ltt > 0",
             (session, instrument.upper()),
         ).fetchall()
     if not rows:
-        return pd.DataFrame(columns=["open", "high", "low", "close", "end"])
+        return pd.Series(dtype=float)
     idx = pd.to_datetime([r[0] for r in rows], unit="s").tz_localize("Asia/Kolkata")
-    px = pd.Series([r[1] for r in rows], index=idx).sort_index()
+    px = pd.Series([float(r[1]) for r in rows], index=idx).sort_index()
     day = pd.Timestamp(session, tz="Asia/Kolkata")
-    px = px[(px.index >= day + pd.Timedelta(hours=9, minutes=15))
-            & (px.index < day + pd.Timedelta(hours=15, minutes=30))]
+    return px[(px.index >= day + pd.Timedelta(hours=9, minutes=15))
+              & (px.index < day + pd.Timedelta(hours=15, minutes=30))]
+
+
+def _bars_5m(instrument: str, session: str) -> pd.DataFrame:
+    """Today's 5m OHLC for the index, from _index_path (exchange time)."""
+    px = _index_path(instrument, session)
     if px.empty:
         return pd.DataFrame(columns=["open", "high", "low", "close", "end"])
     bars = px.resample("5min", origin="start_day", offset="15min").agg(
@@ -353,6 +380,8 @@ def run_session(
             return None
         return nxt[j][1]
 
+    path = _index_path(instrument, session) if lane == "buy" else pd.Series(dtype=float)
+    buy_dist = BUY_TRAIL_POINTS.get(instrument.upper(), 25.0)
     trades: list[dict[str, Any]] = []
     pos: _Pos | None = None
     for i in range(1, len(snaps)):
@@ -372,7 +401,16 @@ def run_session(
                     for k, t, _, e in pos.legs
                 ]
             pts = _points(pos, prices)
-            why = "square-off" if closing else _hit(lane, pos, pts)
+            if closing:
+                why = "square-off"
+            elif lane == "buy":
+                # exits at this snapshot's real bid once the index touched the
+                # stop since the last one (snapshots ~90s apart -- the live
+                # lane checks every 20s, so this is a little pessimistic)
+                why = ("trail stop" if _buy_trail_hit(pos, path, ts, buy_dist,
+                                                      float(snap[0]["spot"] or 0)) else None)
+            else:
+                why = _hit(lane, pos, pts)
             if why:
                 pos.charges += sum(
                     cost(p, _flip(side)) for (_, _, side, _), p in zip(pos.legs, prices)
@@ -422,6 +460,8 @@ def run_session(
             basis=basis,
             charges=sum(cost(p, side) for (_, _, side), p in zip(legs, fills)),
             next_expiry=use is not snap,
+            anchor=float(use[0]["spot"] or 0),
+            seen_to=ts,
         )
     # ponytail: a position still open when the day's recording stops (mid-session
     # view, or the server went down before 15:10) is not counted -- no fake exit.

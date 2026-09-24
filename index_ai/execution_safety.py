@@ -279,7 +279,11 @@ def _expected_edge_rupees(
         except (TypeError, ValueError):
             return None
     if act in _BUY_ACTIONS:
-        arm = float(getattr(instrument, "trail_activation_points", 0) or 0)
+        # the buy trail now arms at once (activation 0); its distance is the
+        # scale of move a scalp is sized for
+        arm = float(getattr(instrument, "trail_activation_points", 0) or 0) or float(
+            getattr(instrument, "trail_distance_points", 0) or 0
+        )
         if arm <= 0:
             return None
         return arm * 0.5 * max(1, int(qty))

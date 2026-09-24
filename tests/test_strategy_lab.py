@@ -70,10 +70,11 @@ def test_bullish_day_sells_a_bull_put_spread_and_books_real_costs(db):
 
 
 def test_buy_candidate_buys_the_call_on_a_bullish_read(db):
-    _day([23500 + 5 * i for i in range(60)])
+    # climbs 200 pts, then turns: the 25-pt 1:1 trail locks most of the move
+    _day([23500 + 5 * i for i in range(40)] + [23695 - 10 * i for i in range(1, 20)])
     t = strategy_lab.run_session("oi_bias_buy", "NIFTY", SESSION)[0]
     assert t["legs"] == [f"BUY {t['legs'][0].split()[1]} CE"]
-    assert t["gross"] > 0
+    assert t["exit_reason"] == "trail stop" and t["gross"] > 0
 
 
 def test_losing_trade_is_stopped_and_counts_against_the_strategy(db):
