@@ -177,3 +177,18 @@ def test_pnl_index_groups_sum_leg_rows_and_totals() -> None:
     assert nifty["total_pnl"] == 200.0
     assert bank["open_mtm"] == -250.0
     assert bank["total_pnl"] == -250.0
+
+
+def test_spread_margin_shows_on_the_sell_leg_not_the_hedge() -> None:
+    ui = {
+        "id": "t-m", "created_at_ist": "24 Sep 2026, 12:05 PM IST", "instrument": "NIFTY",
+        "is_open": False, "is_paper": True, "pnl": 890.5, "status": "CLOSED", "quantity": 65,
+        "capital_deployed": 19399.0, "capital_kind": "margin",
+        "legs_detail": [
+            {"transaction_type": "BUY", "option_type": "CE", "strike_display": "23700", "entry_ltp": 8.15},
+            {"transaction_type": "SELL", "option_type": "CE", "strike_display": "23350", "entry_ltp": 59.7},
+        ],
+    }
+    buy, sell = expand_ui_trade_to_leg_rows(ui)
+    assert sell["capital_deployed"] == 19399.0 and sell["capital_kind"] == "margin"
+    assert buy["capital_deployed"] is None
