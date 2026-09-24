@@ -54,6 +54,10 @@ INDEX_SCAN_GAP_SECONDS = 5
 # the loop. Dhan throttles the option chain to ~1 request per 3 s; raise with care.
 INDEX_SCAN_CONCURRENCY = int(os.getenv("INDEX_SCAN_CONCURRENCY", "1"))
 TRAIL_INDEX_GAP_SECONDS = 0.8
+# Open positions are re-priced and their stops/trails checked on their own
+# fast loop, not only once per full index scan (which takes ~3 min with all
+# three indices + option chains). Richard, 2026-09-24: must be under 60s.
+TRAIL_FAST_SECONDS = 20
 BOOT_AUTO_START_DELAY_SECONDS = 1.5
 
 
@@ -88,6 +92,7 @@ class ScannerState:
 
 _state = ScannerState()
 _task: asyncio.Task[None] | None = None
+_trail_tasks: list[asyncio.Task[None]] = []
 
 
 def _friendly_error(exc: BaseException) -> str:
@@ -428,12 +433,28 @@ async def _run_reconcile(client: DhanClient, cfg: AppSettings) -> None:
         )
 
 
-async def _check_trails(client: DhanClient, cfg: AppSettings) -> None:
+_trail_lock = asyncio.Lock()
+
+
+async def _check_trails(
+    client: DhanClient, cfg: AppSettings, *, refresh_supertrend: bool = True
+) -> None:
+    # one check at a time: the fast loop and the scan cycle's stage must never
+    # both decide to close the same position
+    async with _trail_lock:
+        await _check_trails_locked(client, cfg, refresh_supertrend=refresh_supertrend)
+
+
+async def _check_trails_locked(
+    client: DhanClient, cfg: AppSettings, *, refresh_supertrend: bool
+) -> None:
     open_list = open_trades_for_mode(cfg.risk.trading_mode)
+    if not open_list:
+        return
     prices = await _fetch_index_prices(client, open_list=open_list)
     keys = {str(t.get("instrument") or "") for t in open_list if t.get("instrument")}
     supertrends: dict[str, dict] = {}
-    for key in sorted(keys):
+    for key in sorted(keys) if refresh_supertrend else ():
         try:
             supertrends[key] = await asyncio.to_thread(fetch_supertrend_snapshot, client, key)
         except Exception as exc:
@@ -909,6 +930,22 @@ async def _run_loop() -> None:
         await asyncio.sleep(backoff if rate_limited else SCAN_INTERVAL_SECONDS)
 
 
+async def _fast_trail_loop() -> None:
+    """Re-price open positions and run their stop/trail every
+    TRAIL_FAST_SECONDS while the market is open. The heavier Supertrend
+    refresh stays on the full scan cycle."""
+    while _state.running:
+        try:
+            cfg = settings()
+            if cfg.dhan.ready and not _state.auth_blocked and is_market_open():
+                await _check_trails(DhanClient(cfg.dhan), cfg, refresh_supertrend=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log("stage_error", stage="fast_trails", error=_friendly_error(exc))
+        await asyncio.sleep(TRAIL_FAST_SECONDS)
+
+
 async def start_scanner() -> dict[str, Any]:
     global _task, _state
     if _state.running:
@@ -920,6 +957,7 @@ async def start_scanner() -> dict[str, Any]:
     _state.running = True
     _state.started_at = now_ist_iso()
     _task = asyncio.create_task(_run_loop())
+    _trail_tasks.append(asyncio.create_task(_fast_trail_loop()))
     return scanner_status()
 
 
@@ -1002,5 +1040,12 @@ async def stop_scanner() -> dict[str, Any]:
         except asyncio.CancelledError:
             pass
         _task = None
+    while _trail_tasks:
+        t = _trail_tasks.pop()
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
     _log("scanner_stopped")
     return scanner_status()
