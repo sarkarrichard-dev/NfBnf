@@ -20,7 +20,7 @@ import pandas as pd
 from crypto import charges, executor, journal
 from index_ai import notify
 from crypto.charges import round_trip_cost_usd
-from crypto.config import crypto_settings
+from crypto.config import CRYPTO_ALLOWLIST, crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient
 from crypto.ml import gate as ml_gate
@@ -389,6 +389,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
 
     strategies = _enabled_strategies(s)
     _prune_removed_strategies(st, strategies, client, fx, now_utc, events)
+    _prune_removed_coins(st, client, fx, now_utc, events)
     open_by_strat = _open_counts(st)  # after prune — pruned positions must not count
 
     for strat in strategies:
@@ -836,6 +837,28 @@ def _known_strategies() -> set[str]:
     return {"ny_n_break", "ichimoku", "cpr_trend"} | set(_SIMPLE)
 
 
+def _close_slot_at_mark(st, key, client, fx, now_utc, events, reason) -> None:
+    """Journal a slot's PAPER position closed at the current mark and drop the
+    slot. Used when its strategy or its coin was removed from the code."""
+    strat, sym = key.split(":", 1)
+    slot = st.get(key) or {}
+    pos = slot.get("position")
+    if pos:
+        try:
+            mark = float(market_data.ticker(sym, client=client).get("mark_price") or 0)
+        except Exception:
+            mark = 0.0
+        mark = mark or float(pos.get("entry_price") or 0)
+        row = _build_exit_row(
+            {"price": mark, "reason": reason, "ts": now_utc.isoformat()}, slot, strat, sym, fx
+        )
+        if row and not _already_journalled(row["exit_id"]):
+            journal.journal(row)
+            notify.crypto_closed(row)
+            events.append({"strategy": strat, "asset": sym, "event": "exit", "reason": reason})
+    st.pop(key, None)
+
+
 def _prune_removed_strategies(st, enabled, client, fx, now_utc, events) -> None:
     """Drop state slots for strategies that no longer exist in the code. If such
     a slot still holds a paper position, journal it closed at the current mark
@@ -843,31 +866,27 @@ def _prune_removed_strategies(st, enabled, client, fx, now_utc, events) -> None:
     known = _known_strategies()
     changed = False
     for key in [k for k in list(st) if ":" in k and k.split(":", 1)[0] not in enabled]:
-        strat, sym = key.split(":", 1)
-        if strat in known:
+        if key.split(":", 1)[0] in known:
             continue  # merely disabled, not removed — leave it
-        slot = st.get(key) or {}
-        pos = slot.get("position")
-        if pos:
-            try:
-                mark = float(market_data.ticker(sym, client=client).get("mark_price") or 0)
-            except Exception:
-                mark = 0.0
-            mark = mark or float(pos.get("entry_price") or 0)
-            row = _build_exit_row(
-                {"price": mark, "reason": "strategy removed", "ts": now_utc.isoformat()},
-                slot,
-                strat,
-                sym,
-                fx,
-            )
-            if row and not _already_journalled(row["exit_id"]):
-                journal.journal(row)
-                notify.crypto_closed(row)
-                events.append(
-                    {"strategy": strat, "asset": sym, "event": "exit", "reason": "strategy removed"}
-                )
-        st.pop(key, None)
+        _close_slot_at_mark(st, key, client, fx, now_utc, events, "strategy removed")
+        changed = True
+    if changed:
+        journal.save_state(st)
+
+
+def _prune_removed_coins(st, client, fx, now_utc, events) -> None:
+    """A coin taken off CRYPTO_ALLOWLIST (e.g. gold, 2026-09-25) is never
+    scanned again, so its open PAPER positions would sit open forever: close
+    them at the mark ('coin removed'). A LIVE position is never closed
+    silently -- it stays for a manual close and is logged every scan."""
+    allowed = set(CRYPTO_ALLOWLIST)
+    changed = False
+    for key in [k for k in list(st) if ":" in k and k.split(":", 1)[1] not in allowed]:
+        pos = (st.get(key) or {}).get("position") or {}
+        if pos.get("mode") == "live":
+            logger.warning("crypto: live position on removed coin %s -- close it manually", key)
+            continue
+        _close_slot_at_mark(st, key, client, fx, now_utc, events, "coin removed")
         changed = True
     if changed:
         journal.save_state(st)
