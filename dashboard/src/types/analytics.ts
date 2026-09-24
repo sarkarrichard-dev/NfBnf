@@ -38,6 +38,8 @@ export type LogRow = {
   /** ₹ committed to the whole trade — premium paid (buy) or combined margin at
    *  risk (sell + hedge). Trade-level: set on leg 0 only. */
   capital_deployed?: number | null
+  margin_source?: 'dhan' | 'estimate' | null
+  margin_without_hedge?: number | null
   capital_kind?: 'premium' | 'margin' | string
   is_open?: boolean
   status?: string

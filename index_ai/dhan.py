@@ -206,6 +206,44 @@ class DhanClient:
         data = self._request("GET", "/orders", context="order book")
         return unwrap_dhan_record_list(data)
 
+    def basket_margin(self, legs: list[dict[str, Any]], quantity: int) -> dict[str, float]:
+        """Dhan's own margin for a set of option legs placed together
+        (POST /v2/margincalculator/multi), hedge benefit included. Only this
+        basket is priced -- open positions and pending orders are excluded.
+        Request/response shape per reference/openalgo broker/dhan margin_api.
+        Returns total / span / exposure in rupees."""
+        cid = str(self.settings.client_id)
+        scrips = [
+            {
+                "dhanClientId": cid,
+                "exchangeSegment": str(leg.get("segment") or "NSE_FNO"),
+                "transactionType": str(leg.get("transaction_type") or "BUY").upper(),
+                "quantity": int(leg.get("quantity") or quantity),
+                "productType": "INTRADAY",
+                "securityId": str(leg["security_id"]),
+                "price": float(leg.get("ltp") or 0),
+            }
+            for leg in legs
+        ]
+        data = self._post(
+            "/margincalculator/multi",
+            {"dhanClientId": cid, "includePosition": False, "includeOrder": False,
+             "scripList": scrips},
+            context="basket margin",
+        )
+
+        def pick(*keys: str) -> float:
+            for k in keys:
+                if isinstance(data, dict) and data.get(k) not in (None, ""):
+                    return float(data[k])
+            return 0.0
+
+        return {
+            "total": pick("total_margin", "totalMargin"),
+            "span": pick("span_margin", "spanMargin"),
+            "exposure": pick("exposure_margin", "exposureMargin", "exposure"),
+        }
+
     def get_fund_limits(self) -> dict[str, Any]:
         """Available balance, utilized margin, withdrawable (GET /fundlimit)."""
         return self._request("GET", "/fundlimit", context="fund limits")

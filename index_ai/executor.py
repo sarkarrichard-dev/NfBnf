@@ -280,6 +280,21 @@ def execute_plan(
             plan.signal, option_payload, inst.key
         )
         if is_credit_option(option_payload):
+            # Dhan's own margin for this spread (hedge benefit included) and for
+            # the sold leg alone, saved for the trade log. Best effort: a failed
+            # margin lookup never blocks or delays the entry decision.
+            try:
+                sells = [
+                    lg for lg in option_payload.get("legs") or []
+                    if str(lg.get("transaction_type") or "").upper() == "SELL"
+                ]
+                qty_m = int(option_payload.get("quantity") or inst.lot_size)
+                option_payload["margin_dhan"] = {
+                    **client.basket_margin(option_payload["legs"], qty_m),
+                    "sell_leg_alone": client.basket_margin(sells, qty_m)["total"],
+                }
+            except Exception:
+                pass
             credit_params = get_strategy_params()
             if plan.signal.get(TIGHTEN_SELL_STOP_KEY):
                 # HIGH_VOL day (big prior-day range or opening gap) — still sell,
