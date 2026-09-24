@@ -158,6 +158,7 @@ def _trail_cfg(s) -> TrailConfig:
         ratchet_step_pnl_pct=s.ratchet_step_pnl_pct,
         tp_trigger_pnl_pct=s.tp_trigger_pnl_pct,
         peak_trail_pnl_pct=s.peak_trail_pnl_pct,
+        point_trail_pct=getattr(s, "point_trail_pct", 0.0),
     )
 
 

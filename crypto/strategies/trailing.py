@@ -33,6 +33,12 @@ class TrailConfig:
     ratchet_step_pnl_pct: float = 10.0
     tp_trigger_pnl_pct: float = 45.0
     peak_trail_pnl_pct: float = 6.0
+    # Richard (2026-09-25): "instead of percentage lets use pips". When > 0 the
+    # stop is a fixed PRICE distance -- this % of the entry price, i.e. a fixed
+    # number of points for the trade (BTC ~84,000 -> ~1,350 pts at 1.6) --
+    # and moves one point for every point the price moves in the trade's
+    # favour, like the India trails. It replaces the P&L-% stop/ratchet/floor.
+    point_trail_pct: float = 0.0
 
 
 def pnl_pct(entry: float, price: float, side: str, leverage: float) -> float:
@@ -51,7 +57,27 @@ def stop_level(peak: float, cfg: TrailConfig) -> float:
     return max(cfg.tp_trigger_pnl_pct, peak - cfg.peak_trail_pnl_pct)
 
 
+def _point_trail(pos: dict, price: float, cfg: TrailConfig) -> str | None:
+    entry, price = float(pos["entry_price"]), float(price)
+    long = pos["side"] == "long"
+    dist = entry * cfg.point_trail_pct / 100.0
+    best = float(pos.get("best_price") or entry)
+    best = max(best, price) if long else min(best, price)
+    stop = best - dist if long else best + dist
+    pos["best_price"], pos["trail_stop_price"] = best, stop
+    # keep the P&L-% fields the dashboard and journal already show
+    pos["peak_pnl_pct"] = round(max(0.0, pnl_pct(entry, best, pos["side"], cfg.leverage)), 2)
+    pos["trail_stop_pnl_pct"] = round(pnl_pct(entry, stop, pos["side"], cfg.leverage), 2)
+    if (long and price <= stop) or (not long and price >= stop):
+        locked = (stop - entry) if long else (entry - stop)
+        return (f"point trail: {dist:,.6g} pts behind best {best:,.6g} "
+                f"(stop {stop:,.6g}, {locked:+,.6g} pts from entry)")
+    return None
+
+
 def update_and_check(pos: dict, price: float, cfg: TrailConfig) -> str | None:
+    if cfg.point_trail_pct > 0:
+        return _point_trail(pos, price, cfg)
     cur = pnl_pct(float(pos["entry_price"]), float(price), pos["side"], cfg.leverage)
     peak = max(float(pos.get("peak_pnl_pct", 0.0)), cur, 0.0)
     pos["peak_pnl_pct"] = round(peak, 2)
@@ -68,7 +94,8 @@ def bracket_stop_price(entry: float, side: str, cfg: TrailConfig) -> float | Non
     a server-down backstop at the same place the engine's initial stop sits."""
     if entry <= 0 or cfg.leverage <= 0:
         return None
-    frac = cfg.stop_pnl_pct / (100.0 * cfg.leverage)
+    frac = (cfg.point_trail_pct / 100.0 if cfg.point_trail_pct > 0
+            else cfg.stop_pnl_pct / (100.0 * cfg.leverage))
     return round(entry * (1 - frac) if side == "long" else entry * (1 + frac), 2)
 
 
