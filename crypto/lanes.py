@@ -20,7 +20,7 @@ import pandas as pd
 from crypto import charges, executor, journal
 from index_ai import notify
 from crypto.charges import round_trip_cost_usd
-from crypto.config import CRYPTO_ALLOWLIST, crypto_settings
+from crypto.config import crypto_settings
 from crypto.delta import market_data, products
 from crypto.delta.client import DeltaClient
 from crypto.ml import gate as ml_gate
@@ -390,7 +390,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
 
     strategies = _enabled_strategies(s)
     _prune_removed_strategies(st, strategies, client, fx, now_utc, events)
-    _prune_removed_coins(st, client, fx, now_utc, events)
+    _prune_removed_coins(st, s, client, fx, now_utc, events)
     open_by_strat = _open_counts(st)  # after prune — pruned positions must not count
 
     for strat in strategies:
@@ -878,14 +878,21 @@ def _prune_removed_strategies(st, enabled, client, fx, now_utc, events) -> None:
         journal.save_state(st)
 
 
-def _prune_removed_coins(st, client, fx, now_utc, events) -> None:
-    """A coin taken off CRYPTO_ALLOWLIST (e.g. gold, 2026-09-25) is never
-    scanned again, so its open PAPER positions would sit open forever: close
-    them at the mark ('coin removed'). A LIVE position is never closed
-    silently -- it stays for a manual close and is logged every scan."""
-    allowed = set(CRYPTO_ALLOWLIST)
+def _prune_removed_coins(st, s, client, fx, now_utc, events) -> None:
+    """A coin no longer in the active set -- taken off CRYPTO_ALLOWLIST
+    entirely (e.g. gold, 2026-09-25), or just unticked from CRYPTO_SYMBOLS in
+    the dashboard's day-to-day coin list -- drops out of `_symbols_for` and is
+    never scanned again, so its open PAPER positions would sit open forever
+    with no more stop/trail checks: close them at the mark ('coin removed').
+    Found the hard way 2026-09-28: unticking ADA/TRX left an open ADA short
+    unmanaged until it was closed by hand. Checking against `s.symbols` (the
+    live active set) rather than the allowlist catches both cases -- symbols
+    is always a subset of the allowlist (config._symbols filters against it).
+    A LIVE position is never closed silently -- it stays for a manual close
+    and is logged every scan."""
+    active = set(s.symbols)
     changed = False
-    for key in [k for k in list(st) if ":" in k and k.split(":", 1)[1] not in allowed]:
+    for key in [k for k in list(st) if ":" in k and k.split(":", 1)[1] not in active]:
         pos = (st.get(key) or {}).get("position") or {}
         if pos.get("mode") == "live":
             logger.warning("crypto: live position on removed coin %s -- close it manually", key)
