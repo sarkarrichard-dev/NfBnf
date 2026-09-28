@@ -162,6 +162,68 @@ def evaluate_entry(
     return None, "no CPR breakout with EMA + volume confirmation"
 
 
+def add_pema(df: pd.DataFrame, cfg: OptionsCprConfig) -> pd.DataFrame:
+    """Three EMAs of typical price (PivotBoss PEMA ribbon) for the pullback-
+    rejection entry mode. Default lengths (21/34/55) and construction match
+    the public "PivotBoss PEMA Method" script studied live off Richard's own
+    TradingView chart (author Nanda86) — not reverse-engineered."""
+    out = df.copy()
+    hlc3 = (out["high"] + out["low"] + out["close"]) / 3.0
+    out["pema_fast"] = hlc3.ewm(span=cfg.pema_fast, adjust=False).mean()
+    out["pema_mid"] = hlc3.ewm(span=cfg.pema_mid, adjust=False).mean()
+    out["pema_slow"] = hlc3.ewm(span=cfg.pema_slow, adjust=False).mean()
+    return out
+
+
+def evaluate_entry_pema_pullback(
+    df: pd.DataFrame, i: int, cpr: CprContext, cfg: OptionsCprConfig
+) -> tuple[str | None, str]:
+    """PivotBoss PEMA method: stacked + sloping ribbon = trend; entry only on a
+    pullback to the fast PEMA line followed by a same-bar rejection close back
+    in the trend direction (the author's own description of the method, not a
+    breakout). ``df`` must already carry ``pema_fast/mid/slow`` (``add_pema``).
+    Opposite entry style from ``evaluate_entry``: patience for a pullback
+    instead of chasing the initial break.
+    """
+    lb = cfg.pema_pullback_lookback
+    slope_lb = cfg.pema_slope_lookback
+    warmup = max(cfg.warmup_bars, lb + 1, slope_lb + 1)
+    if i < warmup:
+        return None, "warming up"
+    row = df.iloc[i]
+    c, o = float(row["close"]), float(row["open"])
+    pf, pm, ps = float(row["pema_fast"]), float(row["pema_mid"]), float(row["pema_slow"])
+    # Slope over several bars, not one tick — a 1-bar EMA wiggle is noise on a 5m
+    # chart, not the sustained slope the PEMA method actually means by "trending".
+    pf_then = float(df.iloc[i - slope_lb]["pema_fast"])
+    stack_pct = abs(pf - ps) / c * 100.0
+    window = df.iloc[i - lb : i]  # bars *before* the current one
+
+    bull_trend = pf > pm > ps and pf > pf_then and stack_pct >= cfg.pema_min_stack_pct
+    bear_trend = pf < pm < ps and pf < pf_then and stack_pct >= cfg.pema_min_stack_pct
+    if bull_trend:
+        ran_up = bool((window["close"] > pm).any())  # a real leg up to pull back from
+        pulled_back = bool((window["low"] <= window["pema_fast"]).any())
+        if ran_up and pulled_back and c > pf and c > o:
+            return (
+                "CE",
+                f"PEMA pullback: ribbon {stack_pct:.2f}% stacked, {lb}-bar dip to fast PEMA "
+                f"({pf:.1f}), bullish rejection close",
+            )
+        return None, "PEMA uptrend, no clean pullback+rejection yet"
+    if bear_trend:
+        ran_down = bool((window["close"] < pm).any())
+        pulled_back = bool((window["high"] >= window["pema_fast"]).any())
+        if ran_down and pulled_back and c < pf and c < o:
+            return (
+                "PE",
+                f"PEMA pullback: ribbon {stack_pct:.2f}% stacked, {lb}-bar rally to fast PEMA "
+                f"({pf:.1f}), bearish rejection close",
+            )
+        return None, "PEMA downtrend, no clean pullback+rejection yet"
+    return None, "PEMA not stacked/sloping — no trend"
+
+
 def entry_features(
     df: pd.DataFrame, i: int, cpr: CprContext, prev_day: pd.DataFrame
 ) -> dict[str, float]:
@@ -237,4 +299,22 @@ if __name__ == "__main__":  # ponytail self-check
     df2.loc[df2.index[-1], "volume"] = 500.0
     df2 = add_indicators(df2, cfg)
     assert evaluate_entry(df2, len(df2) - 1, cpr, cfg)[0] is None
+
+    # PEMA pullback-rejection: uptrend ribbon, a dip that touches the fast PEMA,
+    # then a bullish rejection close -> CE. No pullback yet -> None.
+    up = list(np.linspace(100, 160, 60))
+    pdf = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-01-03 09:15", periods=62, freq="5min"),
+            "open": up + [155.0, 158.0],
+            "high": [x + 1 for x in up] + [156.0, 159.0],
+            "low": [x - 1 for x in up] + [148.0, 157.0],
+            "close": up + [150.0, 158.5],
+            "volume": 1000.0,
+        }
+    )
+    pdf = add_pema(pdf, cfg)
+    side, why = evaluate_entry_pema_pullback(pdf, len(pdf) - 1, cpr, cfg)
+    assert side == "CE", (side, why)
+    assert evaluate_entry_pema_pullback(pdf, 30, cpr, cfg)[0] is None  # mid-trend, no pullback yet
     print("engine.py self-check ok")
