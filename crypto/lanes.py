@@ -139,6 +139,13 @@ def _enabled_strategies(s) -> list[str]:
 _STRATEGY_SYMBOLS: dict[str, tuple[str, ...]] = {
     # net-positive on these three, net-negative on PAXG/XRP/BNB (2026-09-15)
     "rsi_adx_trend": ("BTCUSD", "ETHUSD", "SOLUSD"),
+    # measured 2026-09-29 from the real journal since the 09-10 epoch: XRP was
+    # 0/12 (-$74.2, its own entries never even went into profit before the
+    # stop caught them), BNB 2/9 (-$33.6), SOL 3/10 (-$24.3) -- three-quarters
+    # of the strategy's total loss (-$147.7). BTC/ETH are ~33% win and roughly
+    # breakeven-to-positive on the same signal, so this narrows the coin list
+    # rather than touching the entry/exit logic itself.
+    "ny_n_break": ("BTCUSD", "ETHUSD"),
 }
 
 
@@ -904,20 +911,24 @@ def _prune_removed_strategies(st, enabled, client, fx, now_utc, events) -> None:
 
 
 def _prune_removed_coins(st, s, client, fx, now_utc, events) -> None:
-    """A coin no longer in the active set -- taken off CRYPTO_ALLOWLIST
-    entirely (e.g. gold, 2026-09-25), or just unticked from CRYPTO_SYMBOLS in
-    the dashboard's day-to-day coin list -- drops out of `_symbols_for` and is
-    never scanned again, so its open PAPER positions would sit open forever
-    with no more stop/trail checks: close them at the mark ('coin removed').
-    Found the hard way 2026-09-28: unticking ADA/TRX left an open ADA short
-    unmanaged until it was closed by hand. Checking against `s.symbols` (the
-    live active set) rather than the allowlist catches both cases -- symbols
-    is always a subset of the allowlist (config._symbols filters against it).
-    A LIVE position is never closed silently -- it stays for a manual close
-    and is logged every scan."""
-    active = set(s.symbols)
+    """A coin no longer in the active set for ITS OWN strategy -- taken off
+    CRYPTO_ALLOWLIST entirely (gold, 2026-09-25), unticked from CRYPTO_SYMBOLS
+    in the dashboard's day-to-day coin list (2026-09-28), or narrowed for one
+    strategy only via `_STRATEGY_SYMBOLS` (ny_n_break dropped to BTC/ETH,
+    2026-09-29) -- drops out of `_symbols_for(strat, s)` and is never scanned
+    again, so its open PAPER positions would sit open forever with no more
+    stop/trail checks: close them at the mark ('coin removed'). Checking each
+    key against `_symbols_for` for ITS OWN strategy (not a flat `s.symbols`)
+    covers all three cases in one place -- a per-strategy narrowing is just as
+    capable of orphaning a position as a global one. A LIVE position is never
+    closed silently -- it stays for a manual close and is logged every scan."""
     changed = False
-    for key in [k for k in list(st) if ":" in k and k.split(":", 1)[1] not in active]:
+    stale = [
+        k
+        for k in list(st)
+        if ":" in k and k.split(":", 1)[1] not in _symbols_for(k.split(":", 1)[0], s)
+    ]
+    for key in stale:
         pos = (st.get(key) or {}).get("position") or {}
         if pos.get("mode") == "live":
             logger.warning("crypto: live position on removed coin %s -- close it manually", key)
