@@ -100,7 +100,12 @@ def _friendly_error(exc: BaseException) -> str:
         return str(exc)
     if isinstance(exc, httpx.HTTPStatusError):
         return explain_dhan_http_error(exc.response, "Dhan")
-    return str(exc)
+    # asyncio.TimeoutError / builtins.TimeoutError stringify to "" (confirmed:
+    # str(asyncio.TimeoutError()) == ""), so every "stage=trails · error="
+    # / "stage=index_scans · error=" line in server.log carried zero
+    # diagnostic value -- couldn't tell a timeout from a network drop from
+    # anything else. Name the class whenever the message itself is empty.
+    return str(exc) or type(exc).__name__
 
 
 def _without_event(payload: dict[str, Any]) -> dict[str, Any]:
@@ -438,10 +443,10 @@ _trail_lock = asyncio.Lock()
 # waiting for the next 20s check (which stays as the fallback if the feed
 # drops). Nothing here closes a trade by itself: it only triggers
 # _check_trails, which re-prices and closes through the normal path.
-_tick_stops: dict[str, list[dict[str, float]]] = {}   # index -> [{dir, dist, best}]
-_tick_extremes: dict[str, list[float]] = {}           # index -> [high, low] since last check
+_tick_stops: dict[str, list[dict[str, float]]] = {}  # index -> [{dir, dist, best}]
+_tick_extremes: dict[str, list[float]] = {}  # index -> [high, low] since last check
 _tick_check_pending = False
-_tick_cross_px: dict[str, float] = {}                 # index -> the tick price that crossed a stop
+_tick_cross_px: dict[str, float] = {}  # index -> the tick price that crossed a stop
 _sec_to_key: dict[int, str] = {}
 
 
@@ -563,13 +568,16 @@ async def _check_trails_locked(
             if ext:
                 # move the trail with the best tick since the last check first,
                 # so a peak-then-drop between checks can't slip past the stop
-                d = (_stop_spec(work, (work.get("option") or {}).get("trail_meta") or {})
-                     or {}).get("dir", 0)
+                d = (
+                    _stop_spec(work, (work.get("option") or {}).get("trail_meta") or {}) or {}
+                ).get("dir", 0)
                 fav = ext[0] if d > 0 else ext[1] if d < 0 else None
                 if fav is not None:
                     pre = evaluate_open_trade(work, fav, cfg.risk)
-                    work = {**work, "option": {**(work.get("option") or {}),
-                                               "trail_meta": pre["trail"]}}
+                    work = {
+                        **work,
+                        "option": {**(work.get("option") or {}), "trail_meta": pre["trail"]},
+                    }
             evaluation = evaluate_open_trade(
                 work,
                 price,
