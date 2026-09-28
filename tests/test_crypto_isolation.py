@@ -107,6 +107,7 @@ def test_apply_entry_blocks_at_per_strategy_cap(monkeypatch):
         datetime.now(_UTC),
         strat_open=2,
         total_open=2,
+        coin_open=0,
         frame=_frame(),
     )
     assert ev["event"] == "wait" and "per strategy" in ev["reason"]
@@ -137,9 +138,53 @@ def test_apply_entry_blocks_at_per_strategy_cap(monkeypatch):
         datetime.now(_UTC),
         strat_open=0,
         total_open=2,
+        coin_open=0,
         frame=_frame(),
     )
     assert ev2["event"] != "wait" or "per strategy" not in ev2.get("reason", "")
+
+
+def test_open_counts_by_coin_span_every_strategy():
+    st = {
+        "ny_n_break:BTCUSD": {"position": {"side": "long"}},
+        "ichimoku:BTCUSD": {"position": {"side": "short"}},
+        "ak_roxx_pro:ETHUSD": {"position": {"side": "long"}},
+        "cpr_trend:ETHUSD": {"position": None},
+        "_meta": {"whatever": 1},
+    }
+    counts = lanes._open_counts_by_coin(st)
+    assert counts["BTCUSD"] == 2  # two different strategies, same coin
+    assert counts["ETHUSD"] == 1
+
+
+def test_apply_entry_blocks_at_per_coin_cap_even_across_different_strategies(monkeypatch):
+    """Found 2026-09-28: nothing stopped several strategies all picking the
+    same coin, so one move against it hit all of them at once."""
+    monkeypatch.setenv("CRYPTO_MAX_CONCURRENT", "5")
+    monkeypatch.setenv("CRYPTO_MAX_OPEN_TOTAL", "0")
+    monkeypatch.setenv("CRYPTO_MAX_OPEN_PER_COIN", "2")
+    s = crypto_settings()
+    contract = Contract("BTCUSD", 27, 0.001, 0.5, 1, 100)
+    ev = _blank_ev()
+    # a DIFFERENT strategy already holds 2 on BTCUSD -> this one is blocked too,
+    # even though it has 0 open itself and the portfolio cap is off
+    lanes._apply_entry(
+        ev,
+        {},
+        {},
+        s,
+        contract,
+        "cpr_trend",
+        "BTCUSD",
+        "d",
+        datetime.now(_UTC),
+        strat_open=0,
+        total_open=2,
+        coin_open=2,
+        frame=_frame(),
+    )
+    assert ev["event"] == "wait" and "BTCUSD" in ev["reason"] and "across all strategies" in ev["reason"]
+    assert not ev.get("position")
 
 
 def test_apply_entry_blocks_at_portfolio_cap(monkeypatch):
@@ -160,6 +205,7 @@ def test_apply_entry_blocks_at_portfolio_cap(monkeypatch):
         datetime.now(_UTC),
         strat_open=1,
         total_open=4,
+        coin_open=0,
         frame=_frame(),
     )
     assert ev["event"] == "wait" and "portfolio cap" in ev["reason"]

@@ -98,6 +98,10 @@ class CryptoSettings:
     #  price stop). CRYPTO_LEVERAGE overrides; clamped per-product.
     max_concurrent: int  # open positions allowed PER STRATEGY (each strategy trades its own book)
     max_open_total: int  # portfolio-wide safety cap across all strategies; 0 = unlimited
+    max_open_per_coin: int  # cap on how many strategies can be open on the SAME coin
+    # at once (0 = unlimited). Different from max_concurrent (per strategy, any
+    # coin) -- this caps the other axis, so a market move against one coin can't
+    # hit several strategies at once just because they all picked the same coin.
     max_hold_days: int  # force-close a position open across more than this many day boundaries (crypto has no session)
     paper_bankroll_usd: float
     # lanes — the section runs when any strategy is enabled. ny_n_break,
@@ -177,6 +181,11 @@ def crypto_settings() -> CryptoSettings:
         leverage=max(1.0, _f("CRYPTO_LEVERAGE", 20.0)),
         max_concurrent=max(1, _i("CRYPTO_MAX_CONCURRENT", 2)),
         max_open_total=max(0, _i("CRYPTO_MAX_OPEN_TOTAL", 0)),
+        # Found 2026-09-28: BTC/BNB/ADA all moved the same way overnight and hit
+        # 4+ strategies at once because nothing stopped them all picking the same
+        # coin. Default 2: one strategy can add a second position on a coin
+        # already held, but a third is turned away.
+        max_open_per_coin=max(0, _i("CRYPTO_MAX_OPEN_PER_COIN", 2)),
         max_hold_days=max(1, _i("CRYPTO_MAX_HOLD_DAYS", 1)),
         paper_bankroll_usd=max(100.0, _f("CRYPTO_PAPER_BANKROLL", 2000.0)),
         ny_nbreak_enabled=_b("CRYPTO_NY_NBREAK_ENABLED", True),
@@ -257,6 +266,7 @@ if __name__ == "__main__":  # self-check
     assert s.deploy_usd >= 0.0
     assert s.leverage >= 1.0
     assert s.max_concurrent >= 1 and s.max_open_total >= 0 and s.max_hold_days >= 1
+    assert s.max_open_per_coin >= 0
     assert s.stop_pnl_pct > 0 and s.tp_trigger_pnl_pct > 0
     assert s.base_url.startswith("https://")
     assert not s.base_url.endswith("/")
