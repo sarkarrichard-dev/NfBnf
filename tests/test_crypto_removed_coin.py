@@ -69,3 +69,26 @@ def test_paper_position_on_a_coin_just_unticked_from_the_active_set_is_also_clos
     assert (
         len(rows) == 1 and rows[0]["exit_reason"] == "coin removed" and rows[0]["asset"] == "ADAUSD"
     )
+
+
+def test_position_orphaned_by_a_per_strategy_coin_narrowing_is_also_closed(tmp_path, monkeypatch):
+    """A _STRATEGY_SYMBOLS override (e.g. ny_n_break dropped to BTC/ETH,
+    2026-09-29) narrows one strategy's coins without touching CRYPTO_SYMBOLS,
+    so a flat check against s.symbols alone would miss it -- exactly the same
+    orphan risk as the global narrowing case, just on the other axis."""
+    monkeypatch.setattr(journal, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(journal, "JOURNAL_PATH", tmp_path / "journal.jsonl")
+    monkeypatch.setattr(lanes.market_data, "ticker", lambda sym, client=None: {"mark_price": 700.0})
+    monkeypatch.setattr(lanes.notify, "crypto_closed", lambda row: None)
+    monkeypatch.setattr(lanes, "_STRATEGY_SYMBOLS", {"ny_n_break": ("BTCUSD", "ETHUSD")})
+    st = {
+        "ny_n_break:BNBUSD": {"position": _pos("paper", "BNBUSD"), "strategy": {}},
+        # BNBUSD is still in the wide active set, and cpr_trend has no override
+        # -- its own BNB position must be left alone
+        "cpr_trend:BNBUSD": {"position": _pos("paper", "BNBUSD"), "strategy": {}},
+    }
+    events = []
+    s = SimpleNamespace(symbols=("BTCUSD", "ETHUSD", "BNBUSD"))
+    lanes._prune_removed_coins(st, s, None, 88.0, datetime.now(timezone.utc), events)
+    assert "ny_n_break:BNBUSD" not in st  # narrowed off this strategy: closed
+    assert "cpr_trend:BNBUSD" in st  # this strategy still trades BNB: untouched
