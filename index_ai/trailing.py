@@ -215,6 +215,11 @@ def evaluate_open_trade(
         }
 
     st_hit, st_reason = check_supertrend_exit(updated, current_index_price, fresh_supertrend)
+    if _is_long_premium(action, tx):
+        # Buys are decided by Richard's 1:1 index trail and the 15:10 close
+        # only (2026-09-28): on 2026-09-25 the Supertrend backstop closed both
+        # buys 2 and 4 minutes after entry, before the 25/55-pt trail could act.
+        st_hit, st_reason = False, None
     trail_hit = bool(updated.get("hit"))
     mtm = option.get("mtm_pnl")
     profit_hit = False
