@@ -304,6 +304,18 @@ def _open_counts(state: dict[str, Any]) -> dict[str, int]:
     return out
 
 
+def _open_counts_by_coin(state: dict[str, Any]) -> dict[str, int]:
+    """Open positions per COIN, across every strategy -- the other axis from
+    _open_counts. Nothing previously stopped several strategies all picking
+    the same coin, so one move against it hit all of them at once (BTC/BNB/
+    ADA, 2026-09-28); max_open_per_coin caps this."""
+    out: dict[str, int] = defaultdict(int)
+    for k, v in state.items():
+        if ":" in k and isinstance(v, dict) and v.get("position"):
+            out[k.split(":", 1)[1]] += 1
+    return out
+
+
 def _hold_exceeded(pos: dict[str, Any], now_utc: datetime, max_days: int) -> bool:
     """True once a position has been open across more than ``max_days`` UTC-day
     boundaries. Crypto has no session — Richard: opened today may close tomorrow,
@@ -392,6 +404,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
     _prune_removed_strategies(st, strategies, client, fx, now_utc, events)
     _prune_removed_coins(st, s, client, fx, now_utc, events)
     open_by_strat = _open_counts(st)  # after prune — pruned positions must not count
+    open_by_coin = _open_counts_by_coin(st)
 
     for strat in strategies:
         for sym in _symbols_for(strat, s):
@@ -515,6 +528,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                     st[key] = slot
                     journal.save_state(st)
                     open_by_strat[strat] = max(0, open_by_strat.get(strat, 0) - 1)
+                    open_by_coin[sym] = max(0, open_by_coin.get(sym, 0) - 1)
                     events.append(
                         {
                             "strategy": strat,
@@ -551,6 +565,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                         now_utc,
                         open_by_strat.get(strat, 0),
                         sum(open_by_strat.values()),
+                        open_by_coin.get(sym, 0),
                         frame,
                         client=client,
                         live=live and (strat, sym) in live_pairs,
@@ -558,6 +573,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                     )
                     if slot.get("position"):
                         open_by_strat[strat] = open_by_strat.get(strat, 0) + 1
+                        open_by_coin[sym] = open_by_coin.get(sym, 0) + 1
                 elif action == "exit":
                     pos = slot.get("position") or {}
                     if pos.get("mode") == "live" and not _live_close(client, contract, pos, ev):
@@ -574,6 +590,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                             journal.journal(row)
                             notify.crypto_closed(row)
                         open_by_strat[strat] = max(0, open_by_strat.get(strat, 0) - 1)
+                        open_by_coin[sym] = max(0, open_by_coin.get(sym, 0) - 1)
                         ev.update(pnl_usd=row["pnl_usd"], pnl_inr=row["pnl_inr"])
             except Exception as exc:
                 events.append(
@@ -712,6 +729,7 @@ def _apply_entry(
     now_utc,
     strat_open,
     total_open,
+    coin_open,
     frame=None,
     *,
     client=None,
@@ -729,6 +747,13 @@ def _apply_entry(
         new_state["position"] = None
         ev.update(
             event="wait", reason=f"portfolio cap: {s.max_open_total} open across all strategies"
+        )
+        return
+    if s.max_open_per_coin and coin_open >= s.max_open_per_coin:
+        new_state["position"] = None
+        ev.update(
+            event="wait",
+            reason=f"{sym}: max {s.max_open_per_coin} open on this coin across all strategies",
         )
         return
     entry_px = float(ev["price"])
