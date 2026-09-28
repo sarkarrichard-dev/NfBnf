@@ -117,7 +117,11 @@ def update_trail(meta: dict[str, Any], current_index_price: float) -> dict[str, 
             "hit": hit,
         }
 
-    activation = float(meta.get("trail_activation_points") or 25.0)
+    # `or 25.0` read the buy trail's activation of 0 ("trail from the first
+    # point", Richard 2026-09-24) as 25, so the stop sat still for the first
+    # 25 favourable points. Only a missing value falls back now.
+    _act = meta.get("trail_activation_points")
+    activation = 25.0 if _act is None else float(_act)
     distance = float(meta.get("trail_distance_points") or 40.0)
     initial = float(meta.get("initial_stop_points") or 100.0)
     entry = float(meta.get("entry_index_price") or current_index_price)

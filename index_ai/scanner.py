@@ -435,6 +435,85 @@ async def _run_reconcile(client: DhanClient, cfg: AppSettings) -> None:
 
 _trail_lock = asyncio.Lock()
 
+# --- tick-driven stops (Richard, 2026-09-28) -----------------------------------
+# The live index tick feed moves each open trade's 1:1 trail with every tick
+# and fires the close check the moment a tick crosses the stop, instead of
+# waiting for the next 20s check (which stays as the fallback if the feed
+# drops). Nothing here closes a trade by itself: it only triggers
+# _check_trails, which re-prices and closes through the normal path.
+_tick_stops: dict[str, list[dict[str, float]]] = {}   # index -> [{dir, dist, best}]
+_tick_extremes: dict[str, list[float]] = {}           # index -> [high, low] since last check
+_tick_check_pending = False
+_tick_cross_px: dict[str, float] = {}                 # index -> the tick price that crossed a stop
+_sec_to_key: dict[int, str] = {}
+
+
+def _stop_spec(trade: dict[str, Any], meta: dict[str, Any]) -> dict[str, float] | None:
+    """(direction, distance, best) of a trade's 1:1 index trail, or None."""
+    action = str(trade.get("action") or "").upper()
+    if "it_best" in meta and meta.get("it_points"):
+        d = {"SELL_BULL_PUT_SPREAD": 1.0, "SELL_BEAR_CALL_SPREAD": -1.0}.get(action)
+        if d:
+            return {"dir": d, "dist": float(meta["it_points"]), "best": float(meta["it_best"])}
+    if meta.get("direction") and "entry_index_price" in meta:
+        if meta.get("trail_armed"):
+            dist, best = meta.get("trail_distance_points"), meta.get("anchor_index_price")
+        else:  # not moved yet: the stop is still the initial one below/above entry
+            dist, best = meta.get("initial_stop_points"), meta.get("entry_index_price")
+        if dist and best:
+            return {"dir": float(meta["direction"]), "dist": float(dist), "best": float(best)}
+    return None
+
+
+def on_index_tick(pkt: dict[str, Any]) -> None:
+    """Called by the tick feed for every packet (same event loop)."""
+    if not _sec_to_key:
+        for key in configured_index_keys():
+            sid = get_instrument(key).underlying_security_id
+            if sid is not None:
+                _sec_to_key[int(sid)] = key
+    key = _sec_to_key.get(int(pkt.get("security_id") or -1))
+    px = float(pkt.get("ltp") or 0)
+    if not key or px <= 0:
+        return
+    hi, lo = _tick_extremes.get(key, [px, px])
+    _tick_extremes[key] = [max(hi, px), min(lo, px)]
+    for spec in _tick_stops.get(key, ()):
+        if spec["dir"] > 0:
+            spec["best"] = max(spec["best"], px)
+            crossed = px <= spec["best"] - spec["dist"]
+        else:
+            spec["best"] = min(spec["best"], px)
+            crossed = px >= spec["best"] + spec["dist"]
+        if crossed:
+            # the check must act on this real traded price even if the market
+            # bounces back before it runs -- the stop WAS hit
+            _tick_cross_px[key] = px
+            _trigger_tick_check()
+            return
+
+
+def _trigger_tick_check() -> None:
+    global _tick_check_pending
+    if _tick_check_pending or not _state.running:
+        return
+    _tick_check_pending = True
+
+    async def _run() -> None:
+        global _tick_check_pending
+        try:
+            cfg = settings()
+            await _check_trails(DhanClient(cfg.dhan), cfg, refresh_supertrend=False)
+        except Exception as exc:
+            _log("stage_error", stage="tick_trails", error=_friendly_error(exc))
+        finally:
+            _tick_check_pending = False
+
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        _tick_check_pending = False
+
 
 async def _check_trails(
     client: DhanClient, cfg: AppSettings, *, refresh_supertrend: bool = True
@@ -450,9 +529,16 @@ async def _check_trails_locked(
 ) -> None:
     open_list = open_trades_for_mode(cfg.risk.trading_mode)
     if not open_list:
+        _tick_stops.clear()
+        _tick_extremes.clear()
+        _tick_cross_px.clear()
         return
     prices = await _fetch_index_prices(client, open_list=open_list)
+    for k, px in list(_tick_cross_px.items()):
+        prices[k] = px
+    _tick_cross_px.clear()
     keys = {str(t.get("instrument") or "") for t in open_list if t.get("instrument")}
+    new_stops: dict[str, list[dict[str, float]]] = {}
     supertrends: dict[str, dict] = {}
     for key in sorted(keys) if refresh_supertrend else ():
         try:
@@ -476,6 +562,17 @@ async def _check_trails_locked(
                     work = await asyncio.to_thread(enrich_open_trade_mtm, work, client)
                 except Exception:
                     pass
+            ext = _tick_extremes.get(key)
+            if ext:
+                # move the trail with the best tick since the last check first,
+                # so a peak-then-drop between checks can't slip past the stop
+                d = (_stop_spec(work, (work.get("option") or {}).get("trail_meta") or {})
+                     or {}).get("dir", 0)
+                fav = ext[0] if d > 0 else ext[1] if d < 0 else None
+                if fav is not None:
+                    pre = evaluate_open_trade(work, fav, cfg.risk)
+                    work = {**work, "option": {**(work.get("option") or {}),
+                                               "trail_meta": pre["trail"]}}
             evaluation = evaluate_open_trade(
                 work,
                 price,
@@ -483,6 +580,10 @@ async def _check_trails_locked(
                 fresh_supertrend=supertrends.get(key),
             )
             update_trade_trail_meta(str(trade["id"]), evaluation["trail"])
+            if not evaluation.get("should_exit"):
+                spec = _stop_spec(trade, evaluation["trail"])
+                if spec:
+                    new_stops.setdefault(key, []).append(spec)
             if evaluation.get("should_exit"):
                 await _close_trade(
                     trade,
@@ -494,6 +595,9 @@ async def _check_trails_locked(
                 await asyncio.sleep(TRAIL_INDEX_GAP_SECONDS)
         except Exception as exc:
             _log("trail_check_error", instrument=key, error=_friendly_error(exc))
+    _tick_stops.clear()
+    _tick_stops.update(new_stops)
+    _tick_extremes.clear()
 
 
 async def _square_off_open(client: DhanClient, cfg: AppSettings) -> None:
