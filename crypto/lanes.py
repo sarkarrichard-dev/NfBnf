@@ -590,10 +590,13 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 slot["strategy"] = prev_strategy_state
 
             st[key] = slot
-            try:
-                journal.save_state(st)  # persist each symbol's change as it happens
-            except OSError:
-                logger.warning("crypto_state.json write failed", exc_info=True)
+            if action == "enter" and slot.get("position"):
+                # a fresh position must survive a crash before the batched
+                # end-of-loop save; a plain indicator-state tick can wait for it.
+                try:
+                    journal.save_state(st)
+                except OSError:
+                    logger.warning("crypto_state.json write failed", exc_info=True)
             events.append(ev)
 
     try:

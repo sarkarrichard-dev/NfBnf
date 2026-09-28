@@ -73,10 +73,46 @@ def freeze_env() -> None:
     _ENV_FROZEN = True
 
 
+_env_mtime_loaded: tuple[int | None, int] | None = None
+
+# Bumped (under _ENV_WRITE_LOCK) on every in-process .env write. mtime alone
+# is not a safe cache key: two writes issued back to back (e.g. set_trading_mode
+# then arm_live_trading) can land in the same filesystem mtime tick on
+# coarser-resolution filesystems, which would make the cache below serve a
+# stale TRADING_MODE/ALLOW_LIVE_TRADING to _build_risk_settings(). This counter
+# always advances for an in-process write regardless of mtime resolution.
+_env_write_generation = 0
+
+
+def _bump_env_generation() -> None:
+    global _env_write_generation
+    _env_write_generation += 1
+
+
+def _env_mtime_ns() -> int | None:
+    try:
+        return ENV_PATH.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
 def _load_env() -> None:
+    """Reload .env into os.environ, skipping the disk read when the file hasn't
+    changed since the last load. settings() calls this on every request across
+    51 handler sites, so an unconditional load_dotenv() there means every
+    concurrent dashboard poll blocks on a disk read for no reason. Any real
+    write goes through update_env_values(), which bumps _env_write_generation
+    as well as the file's mtime, so a stale read here is impossible even if
+    two writes share an mtime tick.
+    """
+    global _env_mtime_loaded
     if _ENV_FROZEN or os.getenv("PYTEST_CURRENT_TEST"):
         return
+    key = (_env_mtime_ns(), _env_write_generation)
+    if key == _env_mtime_loaded:
+        return
     load_dotenv(ENV_PATH, override=True)
+    _env_mtime_loaded = key
 
 
 VALID_CANDLE_INTERVALS = frozenset({"1", "5", "15", "25", "60"})
@@ -255,12 +291,24 @@ def _strip_env_quotes(value: str) -> str:
     return s
 
 
+_env_mtime_repair_checked: tuple[int | None, int] | None = None
+
+
 def repair_env_access_token_line() -> bool:
     """
     Fix .env files where a long JWT was split across multiple lines.
     Without this, dotenv only loads the first line and Dhan returns DH-906.
+
+    settings() calls this on every request; skip the full-file re-scan once a
+    given file version has already been checked clean. A real repair rewrites
+    the file (new mtime + generation bump), so the next check always sees
+    fresh content.
     """
+    global _env_mtime_repair_checked
     if not ENV_PATH.exists():
+        return False
+    key = (_env_mtime_ns(), _env_write_generation)
+    if key == _env_mtime_repair_checked:
         return False
     lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
     out: list[str] = []
@@ -286,6 +334,9 @@ def repair_env_access_token_line() -> bool:
         i += 1
     if repaired:
         ENV_PATH.write_text("\n".join(out) + "\n", encoding="utf-8")
+        _bump_env_generation()
+    else:
+        _env_mtime_repair_checked = key
     return repaired
 
 
@@ -333,3 +384,4 @@ def _update_env_values_locked(values: dict[str, str]) -> None:
     tmp = ENV_PATH.with_suffix(ENV_PATH.suffix + ".tmp")
     tmp.write_text("\n".join(parts) + "\n", encoding="utf-8")
     os.replace(tmp, ENV_PATH)
+    _bump_env_generation()
