@@ -43,3 +43,13 @@ def test_option_price_trail_no_longer_closes_buys_early():
     # is still above the 25-pt index stop -> the buy stays open
     t["option"]["last_option_ltp"] = 138.0
     assert not _step(t, 23390)["should_exit"]
+
+
+def test_supertrend_no_longer_closes_a_buy():
+    """2026-09-25: two buys were closed 2 and 4 minutes in by the Supertrend
+    backstop while still inside the 25-pt index trail."""
+    t = _buy()
+    t["option"]["trail_meta"]["supertrend_direction"] = 1
+    t["option"]["trail_meta"]["supertrend_stop"] = 23395.0
+    ev = evaluate_open_trade(t, 23390.0, settings().risk)   # below Supertrend, above the 23375 trail stop
+    assert not ev["should_exit"] and not ev["supertrend_exit"]
