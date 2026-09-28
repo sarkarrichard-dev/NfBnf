@@ -89,10 +89,14 @@ export function StatsOverview({
     },
   ]
 
-  // Accumulate an intraday history point per metric on every data tick.
+  // Accumulate an intraday history point per metric, but only when a value
+  // actually changed — `stats` is a fresh array every render, so without a
+  // signature this fired (and re-walked pushPoint) on every unrelated re-render.
+  const statSignature = stats.map((s) => `${s.key}:${s.n}`).join('|')
   useEffect(() => {
     for (const s of stats) pushPoint(`stat:${period}:${s.key}`, s.n)
-  })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statSignature, period])
 
   const equity = equityCurve(analytics)
   const net = block.pnl_rupees ?? 0
