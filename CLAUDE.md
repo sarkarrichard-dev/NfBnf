@@ -12,8 +12,17 @@ SENSEX — all three, never just one.
   `POST /api/settings/features` (backed by `config.update_env_values`, which
   preserves every existing key) toggles non-financial flags; there's a "Feature
   toggles" panel in the dashboard's Setup tab. Anything that can move money is
-  excluded from that path on purpose.
+  excluded from that path on purpose. `set_feature_flag()` is the same function
+  called server-side — fine to call directly for a flag in `TOGGLEABLE_FLAGS`.
 - The server must be restarted to pick up an `.env` change.
+- **`DASHBOARD_PASSWORD` gates the whole API** (HTTP Basic, any username) once
+  set — added 2026-09-28 after finding it was configured but never enforced
+  (read before `.env` was loaded, always empty). In cloud mode
+  (`PUBLIC_DEPLOY=true`) the server now refuses to start without a 12+ char
+  password or a `WORKER_TOKEN`; `/api/health` stays open for probes; 10 wrong
+  attempts locks an address out 15 min. This means Claude generally can't hit
+  the local API directly anymore without the password — ask the user to read
+  it from `.env` rather than trying to bypass it.
 - Run the server: `python -m uvicorn index_ai.server:app --port 8000`. Dashboard
   is served from `dashboard/dist/` — **rebuild it (`npm --prefix dashboard run
   build`) after any `dashboard/src` change** or you'll debug a stale bundle.
@@ -26,7 +35,7 @@ SENSEX — all three, never just one.
 
 ## Checks before committing
 
-- `python -m pytest -q` — 513 tests, ~70s. Keep it green.
+- `python -m pytest -q` — 660 tests, ~7-8 min. Keep it green.
 - `ruff check index_ai/` — **~8 pre-existing cosmetic errors** (unused locals,
   ambiguous `l`). Don't chase zero; compare against `git stash` to see only what
   your change added. The `ruff --fix` PostToolUse hook clears the auto-fixable
@@ -42,8 +51,24 @@ SENSEX — all three, never just one.
 ## Money path — extra care
 
 `executor.py`, `dhan_orders.py`, `exit.py`, live arming in `config.py`
-(`arm_live_trading` / `set_trading_mode`), and the cost model (`charges.py`,
-`market_context/spread_calib.py`).
+(`arm_live_trading` / `set_trading_mode`), the cost model (`charges.py`,
+`market_context/spread_calib.py`), `index_ai/risk_manager.py` (one live-loss
+budget across India + crypto — `TIGHTENED` drops India orders to 1 lot,
+`STOPPED` trips both `risk.kill_switch_state` and `crypto.executor.kill_switch`),
+`index_ai/trailing.py` and `index_ai/strategies/credit_spread.py`
+(`SELL_TRAIL_POINTS`) — the live stop/trail logic, and `index_ai/scanner.py`'s
+tick-driven stop triggering (`on_index_tick`, needs `ENABLE_TICK_FEED=true`).
+
+- **Trailing stops are now index-point-based, not percent-of-premium**
+  (Richard, 2026-09-24/28): the stop starts a fixed number of index points
+  from entry and moves 1:1 with the index. Buys: NIFTY 25 / BANKNIFTY 55 /
+  SENSEX 80 (`instruments._buy_scalp_trail`, activation 0 — scalp, no wide
+  initial stop). Sells: NIFTY 40 / BANKNIFTY 100 / SENSEX 130
+  (`credit_spread.SELL_TRAIL_POINTS`). `premium_trail.py`'s percent-of-premium
+  trail still exists in the repo but is bypassed for both lanes now — don't
+  assume it's the live rule just because it's still imported somewhere.
+  Crypto has its own separate point trail, `crypto/strategies/trailing.py`
+  (`point_trail_pct`, default 1.6% of entry price).
 
 - **Two independent locks arm real orders**: `TRADING_MODE=LIVE` *and*
   `ALLOW_LIVE_TRADING=true`. Both are read in `_build_risk_settings`. Arming
@@ -58,25 +83,43 @@ SENSEX — all three, never just one.
   options paper/live lane is the legacy `planner` → `executor` path (see below);
   the old `options_cpr` paper lane was retired — `options_cpr/` is backtest-only.
 
-## Strategy state (don't relitigate)
+## Strategy state (don't relitigate — but see 2026-09 cost-model correction below)
 
-Every intraday config tested is net-negative after real costs. **Friction, not
-signal quality, is the binding constraint.** Naked option buying has no
-directional edge at all. Directional selling has a small real gross edge that
-4-leg friction eats. Multi-day holding failed too. See
-`memory/strategy-findings.md` for the durable conclusions and which numbers are
-trustworthy (the option backtest uses a Black-Scholes proxy — relative
+Historically every intraday config tested net-negative after real costs, and
+naked option buying showed no directional edge. See `memory/strategy-findings.md`
+for the full history (the option backtest uses a Black-Scholes proxy — relative
 comparisons only, never absolute rupees).
 
+**2026-09-24 correction — this changed the picture:** the live cost model's
+slippage estimate (`charges.round_trip_slippage_rupees`) used fixed guessed
+half-spreads that were 3-7x the real measured bid-ask, overstating every
+India trade's cost by roughly ₹100-200. Fixed to read the measured spread
+(`market_context/spread_calib.py`). After the fix, NIFTY credit selling is
+**net positive** on the real journal (+₹1,016 over 9 trades, previously shown
+as a loss) — so "every config is net-negative" is no longer the settled
+conclusion for NIFTY sells specifically; don't cite the old blanket claim
+without re-checking `strategy_performance.strategy_scorecard()` against
+current data. BANKNIFTY and SENSEX sells are still weaker; a live
+per-(strategy, instrument) read is in `memory/strategy-findings.md`'s
+newest entries and the Strategy P&L dashboard tab.
+
 `options_cpr/viability.py` scores each index's measured gross edge against its
-measured cost floor. The sell-lane gross was re-measured from the real journal
-2026-09-09 — NIFTY +₹6, BANKNIFTY −₹178, SENSEX −₹57 per trade, i.e. **no live
-gross edge** (the +₹200–300 backtest numbers were BS-proxy optimism). The
-`entry_guard._viable_sell_blocks` gate that would pause a NOT_VIABLE index ships
-**default-off** (`OPTIONS_REQUIRE_VIABLE`) because the signal was just retimed to
-5m/15m; re-run `scripts/measure_viability_gross.py` after ~30 forward trades and
-decide. BANKNIFTY's option book is ~20× NIFTY's, so 4-leg structures never work
-there no matter the tuning.
+measured cost floor — this predates the slippage fix above and should be
+re-run before being trusted (`scripts/measure_viability_gross.py`).
+BANKNIFTY's option book is ~20× NIFTY's, so 4-leg structures never work there
+no matter the tuning.
+
+**Strategy lab (`index_ai/strategy_lab.py`), added 2026-09-24 — the current way
+new ideas get proven or killed.** Paper-trades ~10 candidate strategies side
+by side on the *real* recorded option chain (`market_log.chain` — strikes near
+spot, real bid/ask/IV, recorded every scan since 2026-09-23; no more
+Black-Scholes proxy for anything built after that date), each priced with real
+Dhan charges and the real measured slippage above. `GET /api/strategy-lab`
+serves it; each candidate gets a verdict — `COLLECTING` (<30 trades or <14
+days), `PASSING`, `DROPPED` — once enough data exists. This is a different
+system from the live legacy engine below: it never places an order, it only
+tells you which candidate is worth wiring in. Don't confuse a "PASSING" lab
+verdict with something already live.
 
 ## Which Indian-options engine
 
@@ -92,7 +135,15 @@ change to how index options trade goes in the legacy modules. See
 ## Other sections (own scan task, own journal, paper only)
 
 - **`crypto/`** — Delta Exchange perps, 24/7, its own strategies + ML. Evening
-  entry window (`CRYPTO_SESSION_*`, default 16:00–06:00 IST).
+  entry window (`CRYPTO_SESSION_*`, default 16:00–06:00 IST). Gold (PAXGUSD,
+  XAUTUSD) removed from `CRYPTO_ALLOWLIST` 2026-09-25 — lost for nearly every
+  strategy while every real crypto coin was net positive; don't re-add without
+  re-measuring. **Arming crypto live does not send every strategy/coin live**:
+  `strategy_performance.crypto_live_pairs()` gates it to (strategy, coin) pairs
+  that individually cleared the readiness bar (30+ trades/14+ days net-positive
+  for the strategy, and that specific coin net-positive over 5+ trades) —
+  `crypto/lanes.py` checks this per entry. Everything else keeps paper-trading
+  alongside even when armed.
 - **`commodities/`** — MCX mini/micro futures (crude/gas/gold/silver), 09:00–23:30
   IST, runs the evening the equity scanner is shut. **Reuses the index directional
   signal** (`index_ai.strategies.futures.engine`), not the crypto strategies.
