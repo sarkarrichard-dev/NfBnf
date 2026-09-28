@@ -53,3 +53,12 @@ def test_supertrend_no_longer_closes_a_buy():
     t["option"]["trail_meta"]["supertrend_stop"] = 23395.0
     ev = evaluate_open_trade(t, 23390.0, settings().risk)   # below Supertrend, above the 23375 trail stop
     assert not ev["should_exit"] and not ev["supertrend_exit"]
+
+
+def test_stop_follows_from_the_very_first_point():
+    """Regression: activation 0 was read as 25, so the first 25 favourable
+    points left the stop where it started."""
+    t = _buy()
+    _step(t, 23400)
+    ev = _step(t, 23410)                                   # +10 in our favour
+    assert ev["trail"]["stop_index_price"] == 23385        # moved up 10, not still 23375

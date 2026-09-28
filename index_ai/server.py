@@ -180,7 +180,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             c = settings()
             if c.dhan.ready and c.dhan.access_token and c.dhan.client_id:
                 try:
-                    await run_feed(c.dhan.access_token, str(c.dhan.client_id), stop=tick_stop)
+                    from index_ai.scanner import on_index_tick
+
+                    # every index tick also moves/checks open trades' stops
+                    await run_feed(c.dhan.access_token, str(c.dhan.client_id), stop=tick_stop,
+                                   on_tick=on_index_tick)
                 except Exception:
                     logging.getLogger(__name__).warning("tick feed loop error", exc_info=True)
             if tick_stop.is_set():
