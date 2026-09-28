@@ -21,9 +21,11 @@ from index_ai.charges import half_spread_points, leg_charge_rupees
 from index_ai.strategies.options_cpr.config import OptionsCprConfig, config_for
 from index_ai.strategies.options_cpr.engine import (
     add_indicators,
+    add_pema,
     cpr_context,
     entry_features,
     evaluate_entry,
+    evaluate_entry_pema_pullback,
 )
 from index_ai.strategies.options_cpr.premium import premium_at, select_strike
 
@@ -72,9 +74,11 @@ def replay_session(
 ) -> list[dict[str, Any]]:
     cpr = cpr_context(prev_day_ohlc, cfg)
     n_tail = len(bars5_prev_tail)
-    df = add_indicators(
-        pd.concat([bars5_prev_tail, bars5_today], ignore_index=True), cfg
-    )
+    df = add_indicators(pd.concat([bars5_prev_tail, bars5_today], ignore_index=True), cfg)
+    pema_mode = cfg.entry_mode == "pema_pullback"
+    if pema_mode:
+        df = add_pema(df, cfg)
+    entry_fn = evaluate_entry_pema_pullback if pema_mode else evaluate_entry
     align15 = _align15(bars15_prev, bars15_today, cfg) if require_15m_alignment else (lambda _ts: 0)
 
     ts_all = pd.to_datetime(df["datetime"])
@@ -155,8 +159,20 @@ def replay_session(
             if pos["stage"] < 3 and peak >= e + cfg.trail_stage3_trigger_r * r:
                 pos["stage"] = 3
 
-            # structural invalidation — spot closed back through the CPR line
-            broke_struct = (c < cpr.tc) if pos["is_call"] else (c > cpr.bc)
+            # structural invalidation — spot closed back through the level the
+            # entry was actually measured against: the CPR line for a
+            # breakout entry, or the fast PEMA line (recomputed every bar,
+            # unlike the day-fixed CPR line) for a pullback entry. Using CPR
+            # here even in PEMA mode was the bug: a PEMA entry has no
+            # relationship to the CPR line, so it could fire while spot was
+            # already on the "wrong" side of TC/BC, forcing an immediate
+            # structural_sl close on a routine dip through CPR while the
+            # PEMA setup itself was still fully valid.
+            if pema_mode:
+                struct_now = float(row["pema_fast"])
+                broke_struct = (c < struct_now) if pos["is_call"] else (c > struct_now)
+            else:
+                broke_struct = (c < cpr.tc) if pos["is_call"] else (c > cpr.bc)
 
             # 1) stops (checked at the adverse intrabar extreme) — conservative: stop wins ties
             trail_hit = False
@@ -168,12 +184,22 @@ def replay_session(
                     else pos["peak_spot"] + cfg.atr_multiplier * atr
                 )
                 ema_stop = float(row["ema_fast"])
-                struct_trail = max(trail_spot, ema_stop) if pos["is_call"] else min(trail_spot, ema_stop)
+                struct_trail = (
+                    max(trail_spot, ema_stop) if pos["is_call"] else min(trail_spot, ema_stop)
+                )
                 trail_hit = (c < struct_trail) if pos["is_call"] else (c > struct_trail)
-            pos["peak_spot"] = max(pos["peak_spot"], h) if pos["is_call"] else min(pos["peak_spot"], low)
+            pos["peak_spot"] = (
+                max(pos["peak_spot"], h) if pos["is_call"] else min(pos["peak_spot"], low)
+            )
 
             if p_adverse <= pos["sl_premium"]:
-                close_pos(pos["sl_premium"], pos["qty_open"], "premium_sl" if pos["stage"] < 1 else "trail_sl", ts, adverse_spot)
+                close_pos(
+                    pos["sl_premium"],
+                    pos["qty_open"],
+                    "premium_sl" if pos["stage"] < 1 else "trail_sl",
+                    ts,
+                    adverse_spot,
+                )
                 continue
             if broke_struct:
                 close_pos(p_now, pos["qty_open"], "structural_sl", ts, c)
@@ -215,7 +241,7 @@ def replay_session(
             continue
         if not (cfg.first_entry_time <= ts.time() <= cfg.last_entry_time):
             continue
-        side, _why = evaluate_entry(df, i, cpr, cfg)
+        side, _why = entry_fn(df, i, cpr, cfg)
         if side is None:
             continue
         is_call = side == "CE"
@@ -230,7 +256,12 @@ def replay_session(
         if entry_prem <= 1.0:
             continue
 
-        struct_level = cpr.tc if is_call else cpr.bc
+        # PEMA-native initial stop: the fast PEMA line AT ENTRY, which is
+        # guaranteed to sit on the correct side of spot by evaluate_entry_
+        # pema_pullback's own criteria (c > pf for a CE, c < pf for a PE) —
+        # unlike cpr.tc/bc, which a PEMA entry never checks against and can
+        # be on either side of spot.
+        struct_level = float(row["pema_fast"]) if pema_mode else (cpr.tc if is_call else cpr.bc)
         sl_struct = premium_at(struct_level, strike, is_call, cfg.iv, mte)
         sl_pct = entry_prem * (1.0 - cfg.initial_sl_premium_pct / 100.0)
         sl_premium = max(sl_struct, sl_pct)  # tighter (higher) stop wins
@@ -265,8 +296,13 @@ def replay_session(
 
     if pos is not None:
         last = df.iloc[-1]
-        close_pos(prem(float(last["close"]), ts_all.iloc[-1]), pos["qty_open"], "session_end",
-                  ts_all.iloc[-1], float(last["close"]))
+        close_pos(
+            prem(float(last["close"]), ts_all.iloc[-1]),
+            pos["qty_open"],
+            "session_end",
+            ts_all.iloc[-1],
+            float(last["close"]),
+        )
     return trades
 
 
@@ -296,8 +332,9 @@ def run(
         if today5.empty or prev5.empty or prev15.empty:
             continue
         tail = prev5.tail(cfg.warmup_bars + 5)
-        for t in replay_session(tail, today5, prev15, today15, prev5, cfg,
-                                require_15m_alignment=require_15m_alignment):
+        for t in replay_session(
+            tail, today5, prev15, today15, prev5, cfg, require_15m_alignment=require_15m_alignment
+        ):
             t["session"] = str(d)
             out.append(t)
     return out

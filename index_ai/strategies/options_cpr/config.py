@@ -73,6 +73,20 @@ class OptionsCprConfig:
     sell_min_credit_pts: float = 5.0  # skip if the modelled net credit is thinner than this
     sell_naked: bool = False  # True = single short leg, no wing (not deployable at small capital)
 
+    # --- PEMA pullback-rejection entry mode (alt. to CPR breakout; studied live off
+    # Richard's own TradingView "PivotBoss PEMA Method" indicator, 2026-09-23) ---
+    entry_mode: str = "cpr_breakout"  # "cpr_breakout" | "pema_pullback"
+    pema_fast: int = 21
+    pema_mid: int = 34
+    pema_slow: int = 55
+    pema_pullback_lookback: int = 5  # bars to look back for the pullback touch
+    pema_slope_lookback: int = (
+        8  # bars back to measure the fast line's slope over (not 1-bar noise)
+    )
+    pema_min_stack_pct: float = (
+        0.15  # min fast-vs-slow separation, % of spot — filters a flat/tangled ribbon
+    )
+
     # --- session, IST (Section 2) ---
     market_open: time = time(9, 15)
     first_entry_time: time = time(9, 20)

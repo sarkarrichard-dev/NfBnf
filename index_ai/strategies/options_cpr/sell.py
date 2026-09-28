@@ -26,9 +26,11 @@ from index_ai.charges import leg_charge_rupees
 from index_ai.strategies.options_cpr.config import OptionsCprConfig, config_for
 from index_ai.strategies.options_cpr.engine import (
     add_indicators,
+    add_pema,
     cpr_context,
     entry_features,
     evaluate_entry,
+    evaluate_entry_pema_pullback,
     trend15_read,
 )
 from index_ai.strategies.options_cpr.premium import bs_price_delta, strike_for_delta
@@ -130,6 +132,10 @@ def replay_sell_session(
     cpr = cpr_context(prev_day_ohlc, cfg)
     n_tail = len(bars5_prev_tail)
     df = add_indicators(pd.concat([bars5_prev_tail, bars5_today], ignore_index=True), cfg)
+    pema_mode = cfg.entry_mode == "pema_pullback"
+    if pema_mode:
+        df = add_pema(df, cfg)
+    entry_fn = evaluate_entry_pema_pullback if pema_mode else evaluate_entry
     _blank15 = {"direction": 0.0, "ema_dir": 0.0, "swing_high": 0.0, "swing_low": 0.0}
 
     def t15_at(ts: pd.Timestamp) -> dict[str, float]:
@@ -202,7 +208,15 @@ def replay_sell_session(
                 adverse_spot, pos["short_k"], pos["long_k"], is_put, cfg.iv, m
             )
 
-            broke_struct = (c < cpr.tc) if is_put else (c > cpr.bc)
+            # Same PEMA-vs-CPR fix as backtest.py's buy lane: a PEMA entry has
+            # no relationship to the CPR line, so use the fast PEMA line
+            # (recomputed every bar) as the structural invalidation level
+            # in PEMA mode instead.
+            if pema_mode:
+                struct_now = float(row["pema_fast"])
+                broke_struct = (c < struct_now) if is_put else (c > struct_now)
+            else:
+                broke_struct = (c < cpr.tc) if is_put else (c > cpr.bc)
             d15 = int(t15_at(ts)["ema_dir"])  # looser EMA-only read for the exit
             trend_flip = d15 != 0 and d15 != (1 if is_put else -1)
 
@@ -226,7 +240,7 @@ def replay_sell_session(
             continue
         if not (cfg.first_entry_time <= ts.time() <= cfg.last_entry_time):
             continue
-        side, _why = evaluate_entry(df, i, cpr, cfg)
+        side, _why = entry_fn(df, i, cpr, cfg)
         if side is None:
             continue
         bullish = side == "CE"

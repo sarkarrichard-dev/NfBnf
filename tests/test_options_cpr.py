@@ -231,3 +231,43 @@ def test_entry_guard_viability_gate_is_opt_in(monkeypatch, tmp_path):
     # opt out again
     monkeypatch.setenv("OPTIONS_REQUIRE_VIABLE", "false")
     assert _viable_sell_blocks("BANKNIFTY")[0] is False
+
+
+def test_pema_pullback_structural_stop_uses_pema_not_cpr(monkeypatch):
+    """Regression for the bug ultrareview found 2026-09-28: a PEMA-mode entry's
+    structural stop used the CPR line unconditionally, although the entry itself
+    has no relationship to it. Here the prior day's CPR top sits well ABOVE the
+    PEMA uptrend's whole range, so under the old code a CE entry's structural
+    stop level (cpr.tc) would price a premium *higher* than entry_prem, driving
+    r_unit negative and silently dropping every entry -- the PEMA signal fired,
+    but no trade was ever recorded. The fix (struct_level = pema_fast at entry,
+    guaranteed below spot for a valid CE) must let the trade actually open.
+    """
+    cfg = with_overrides(config_for("NIFTY"), entry_mode="pema_pullback")
+    # prev day flat at 220 -> cpr.tc/pivot/bc all sit near 220, well above
+    # today's whole PEMA-uptrend range (100 -> 160)
+    prev = _day([220.0] * 26, "2026-01-01 09:15", freq="15min", vol=0.0)
+    cpr = cpr_context(prev, cfg)
+    assert cpr.tc > 160  # sanity: the old bug needs the CPR line above spot
+
+    up = list(np.linspace(100, 160, 60))
+    # same pullback+rejection candle shape as engine.py's own self-check: a
+    # down bar dipping to pema_fast (open 155 -> close 150), then a bullish
+    # rejection close (open 158 -> close 158.5)
+    today5 = pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-01-02 09:15", periods=len(up) + 2, freq="5min"),
+            "open": up + [155.0, 158.0],
+            "high": [c + 1 for c in up] + [156.0, 159.0],
+            "low": [c - 1 for c in up] + [148.0, 157.0],
+            "close": up + [150.0, 158.5],
+            "volume": 1000.0,
+        }
+    )
+    p15 = prev
+    t15 = _day([160.0] * 26, "2026-01-02 09:15", freq="15min", vol=0.0)
+    trades = replay_session(
+        today5.head(0), today5, p15, t15, prev, cfg, require_15m_alignment=False
+    )
+    assert trades, "PEMA entry fired but was silently dropped by the CPR-based structural stop"
+    assert trades[0]["side"] == "CE"
