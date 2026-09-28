@@ -344,11 +344,8 @@ async def _apply_strategy_exits_for_index(
 ) -> None:
     """Close open trades when CPR regime, EMA flip, or signal opposes the position."""
     active_mode = cfg.risk.trading_mode
-    open_here = [
-        t
-        for t in open_trades_for_mode(active_mode)
-        if str(t.get("instrument") or "") == instrument_key
-    ]
+    all_open = await asyncio.to_thread(open_trades_for_mode, active_mode)
+    open_here = [t for t in all_open if str(t.get("instrument") or "") == instrument_key]
     if not open_here:
         return
     prices = await _fetch_index_prices(client, open_list=open_here)
@@ -527,7 +524,7 @@ async def _check_trails(
 async def _check_trails_locked(
     client: DhanClient, cfg: AppSettings, *, refresh_supertrend: bool
 ) -> None:
-    open_list = open_trades_for_mode(cfg.risk.trading_mode)
+    open_list = await asyncio.to_thread(open_trades_for_mode, cfg.risk.trading_mode)
     if not open_list:
         _tick_stops.clear()
         _tick_extremes.clear()
@@ -689,7 +686,10 @@ async def _scan_index(
         # plan_instrument makes several blocking Dhan HTTP calls — run it in a thread
         # so the event loop (and every dashboard poll) keeps serving meanwhile.
         result = await asyncio.to_thread(
-            plan_instrument, client=client, app_settings=cfg, instrument_key=instrument_key,
+            plan_instrument,
+            client=client,
+            app_settings=cfg,
+            instrument_key=instrument_key,
             record_next_expiry=True,
         )
     except Exception as exc:
@@ -786,7 +786,7 @@ async def _scan_index(
         if opp_action == "NO_TRADE" or not opp_plan.get("allowed"):
             continue
 
-        if _has_open_trade(instrument_key, mode=active_mode, lane=lane):
+        if await asyncio.to_thread(_has_open_trade, instrument_key, mode=active_mode, lane=lane):
             _log(
                 "skip_open_position",
                 instrument=instrument_key,
@@ -796,7 +796,9 @@ async def _scan_index(
             )
             continue
 
-        if _recent_same_action(instrument_key, opp_action, mode=active_mode):
+        if await asyncio.to_thread(
+            _recent_same_action, instrument_key, opp_action, mode=active_mode
+        ):
             _log("skip_cooldown", instrument=instrument_key, action=opp_action, lane=lane)
             continue
 

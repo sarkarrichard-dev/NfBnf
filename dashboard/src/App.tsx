@@ -123,7 +123,6 @@ function App() {
     staleTime: 10_000,
   })
 
-  const dashboard = useDashboardData()
   const [tab, setTab] = useStickyTab('algo.tab', 'trade')
   // 2026-09-17: commodities/futures hidden from nav to focus on index options +
   // crypto — both lanes keep running and logging in the background, this just
@@ -131,6 +130,11 @@ function App() {
   useEffect(() => {
     if (tab === 'futures' || tab === 'commodities') setTab('trade')
   }, [tab, setTab])
+  // trade detail (MTM/journal) only needs its fast cadence on the tabs that
+  // actually render it; elsewhere it still polls, just slower, so the nav
+  // open-count badge and other tabs' trade data don't go stale.
+  const isTradeDetailTab = tab === 'trade' || tab === 'trades' || tab === 'reports'
+  const dashboard = useDashboardData(isTradeDetailTab)
   const openCount = useMemo(
     () => (dashboard.trades ?? []).filter((t) => t.is_open).length,
     [dashboard.trades],

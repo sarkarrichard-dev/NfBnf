@@ -16,11 +16,16 @@ import type {
 
 const ANALYTICS_MS = 12_000
 const JOURNAL_MS = 5_000
+const JOURNAL_MS_BACKGROUND = 20_000
 const MTM_MS = 1_500
+const MTM_MS_BACKGROUND = 8_000
 
-export function useDashboardData() {
+/** @param detailActive Whether the current tab renders live trade detail (trade/trades/reports).
+ * Off-tab, journal/MTM still poll — the nav open-count badge and other tabs'
+ * trade data need to stay fresh — just at a far less aggressive cadence. */
+export function useDashboardData(detailActive = true) {
   const analyticsPoll = usePollMs(ANALYTICS_MS)
-  const journalPoll = usePollMs(JOURNAL_MS)
+  const journalPoll = usePollMs(detailActive ? JOURNAL_MS : JOURNAL_MS_BACKGROUND)
 
   const analyticsQuery = useQuery({
     queryKey: ['analytics'],
@@ -41,7 +46,7 @@ export function useDashboardData() {
     return rows.some((t) => t.is_open)
   }, [journalQuery.data?.rows, analyticsQuery.data?.trades])
 
-  const mtmPoll = usePollMs(MTM_MS, hasOpen)
+  const mtmPoll = usePollMs(detailActive ? MTM_MS : MTM_MS_BACKGROUND, hasOpen)
 
   const mtmQuery = useQuery({
     queryKey: ['live-mtm'],

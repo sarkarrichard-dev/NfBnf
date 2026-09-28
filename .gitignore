@@ -31,3 +31,6 @@ research/
 
 # Playwright MCP runtime snapshots
 .playwright-mcp/
+
+# uv-generated lockfile (project deps are managed via pyproject.toml directly)
+uv.lock

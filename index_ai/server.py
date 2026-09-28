@@ -487,8 +487,9 @@ if _DASHBOARD_PW:
         recent = [t for t in _auth_fails.get(ip, []) if now - t < _AUTH_WINDOW_S]
         if len(recent) >= _AUTH_MAX_FAILS:
             _auth_fails[ip] = recent
-            return _PlainResp("Too many wrong passwords -- try again in 15 minutes.",
-                              status_code=429)
+            return _PlainResp(
+                "Too many wrong passwords -- try again in 15 minutes.", status_code=429
+            )
         hdr = request.headers.get("authorization", "")
         ok = False
         if hdr[:6].lower() == "basic ":  # RFC 7617 — scheme token is case-insensitive
@@ -498,7 +499,7 @@ if _DASHBOARD_PW:
             except Exception:
                 ok = False
         if not ok:
-            if hdr:                       # a browser's first, header-less request isn't a guess
+            if hdr:  # a browser's first, header-less request isn't a guess
                 _auth_fails[ip] = recent + [now]
             return _PlainResp(
                 "Authentication required.",
@@ -961,11 +962,13 @@ async def sync_broker_orders() -> dict[str, Any]:
 
     client = DhanClient(cfg.dhan)
     updated = await asyncio.to_thread(sync_open_live_trades, client)
-    rows = [format_trade_for_ui(t) for t in recent_trades(limit=80) if is_live_trade_ui(t)]
+    recent = await asyncio.to_thread(recent_trades, limit=80)
+    pending = await asyncio.to_thread(live_trades_for_broker_sync)
+    rows = [format_trade_for_ui(t) for t in recent if is_live_trade_ui(t)]
     return {
         "updated": updated,
         "live_trades": rows,
-        "pending_sync": len(live_trades_for_broker_sync()),
+        "pending_sync": len(pending),
     }
 
 
@@ -1458,7 +1461,7 @@ async def market_log_api(
 
     def _read() -> dict[str, Any]:
         return {
-            "stats": stats(),   # COUNT(*) over a multi-GB ticks table: seconds, off-loop
+            "stats": stats(),  # COUNT(*) over a multi-GB ticks table: seconds, off-loop
             "observations": observations(session=session, instrument=instrument, limit=limit),
             "top_skip_reasons": skip_reasons(session=session),
         }

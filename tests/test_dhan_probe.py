@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from index_ai import dhan_auth
 from index_ai.config import DhanSettings
-from index_ai.dhan_auth import probe_access_token, save_access_token_direct
+from index_ai.dhan_auth import save_access_token_direct
 
 
 def _settings(access_token: str = "old") -> DhanSettings:
@@ -48,4 +49,4 @@ def test_probe_raises_when_market_fails(monkeypatch) -> None:
     import pytest
 
     with pytest.raises(RuntimeError, match="market"):
-        probe_access_token(_settings("bad"))
+        dhan_auth.probe_access_token(_settings("bad"))
