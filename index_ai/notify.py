@@ -400,6 +400,32 @@ def crypto_closed(row: dict[str, Any]) -> None:
     )
 
 
+def crypto_straddle_opened(pos: dict[str, Any]) -> None:
+    """A different shape from crypto_opened's single perp leg — two option
+    legs sold for a combined credit, no side/entry_price/leverage."""
+    key = f"c-entry:{pos.get('asset')}:btc_daily_straddle:{pos.get('entry_time')}"
+    send(
+        f"{_GREEN} <b>CRYPTO ENTRY</b>{_tag('paper')} — "
+        f"{pos.get('asset')} · Straddle\n"
+        f"Sold {pos.get('strike')} call+put, {pos.get('size')} contract(s), "
+        f"credit {_usd(pos.get('total_credit'))}",
+        key=key,
+    )
+
+
+def crypto_straddle_closed(row: dict[str, Any]) -> None:
+    p = _f(row.get("pnl_usd"))
+    mark = _GREEN if p > 0 else _RED if p < 0 else _WHITE
+    sign = "+" if p >= 0 else "−"
+    send(
+        f"{mark} <b>CRYPTO EXIT</b>{_tag('paper')} — "
+        f"{row.get('asset')} · Straddle\n"
+        f"{sign}{_usd(abs(p))} ({sign}{_inr(row.get('pnl_inr'))})\n"
+        f"{row.get('exit_reason') or 'closed'}",
+        key=f"c-exit:{row.get('exit_id')}",
+    )
+
+
 # back-compat alias — crypto lanes historically called notify.alert for crypto too
 crypto_alert = alert
 

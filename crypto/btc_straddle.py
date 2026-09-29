@@ -47,6 +47,7 @@ from crypto.delta import options as delta_options
 from crypto.delta.client import DeltaClient
 from crypto.delta.market_data import ticker
 from crypto.session import in_ny_window
+from index_ai import notify
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,45 @@ def _leg_price(symbol: str, client: DeltaClient) -> float | None:
         return px if px > 0 else None
     except Exception:
         return None
+
+
+def is_straddle_position(pos: dict[str, Any]) -> bool:
+    """The dashboard's generic /api/crypto/positions loop needs to tell this
+    two-leg shape apart from every other (single-leg-perp) position it knows
+    how to price — a straddle has no ``side``/``entry_price``/``notional_usd``,
+    so running the perp P&L math on it would compute nonsense, not just be
+    imprecise."""
+    return "call_symbol" in pos
+
+
+def unrealized(pos: dict[str, Any], client: DeltaClient) -> dict[str, Any]:
+    """Live mark-to-market for one open straddle, in the same shape the
+    dashboard's positions endpoint expects (mark/unrealized_usd/...). None
+    for a field it can't compute right now (a dead quote), never a fake 0."""
+    call_mark = _leg_price(pos["call_symbol"], client)
+    put_mark = _leg_price(pos["put_symbol"], client)
+    if call_mark is None or put_mark is None:
+        return {
+            "mark": None,
+            "unrealized_usd": None,
+            "unrealized_inr": None,
+            "unrealized_pct": None,
+        }
+    size = pos["size"]
+    debit_now = (call_mark + put_mark) * size
+    gross = pos["total_credit"] - debit_now
+    leg_notional = size * pos["contract_value"] * pos["entry_spot"]
+    cost = fee_usd(leg_notional) * 4  # same approximation as _build_exit_row
+    upnl = gross - cost
+    credit = pos["total_credit"]
+    return {
+        "mark": round(call_mark + put_mark, 2),
+        "unrealized_usd": round(upnl, 2),
+        "unrealized_inr": round(upnl * _fx_rate(), 0),
+        "unrealized_pct": round(upnl / credit * 100.0, 2) if credit else None,
+        "unrealized_gross_usd": round(gross, 2),
+        "accrued_cost_usd": round(cost, 2),
+    }
 
 
 def scan_btc_straddle_paper(client: DeltaClient | None = None) -> list[dict[str, Any]]:
@@ -123,6 +163,7 @@ def _scan(s, client: DeltaClient, *, now: datetime) -> list[dict[str, Any]]:
         journal.save_state(st)  # persist the close before journalling it
         if not _already_journalled(row["exit_id"]):
             journal.journal(row)
+            notify.crypto_straddle_closed(row)
         return [
             {
                 "strategy": STRATEGY,
@@ -156,11 +197,13 @@ def _scan(s, client: DeltaClient, *, now: datetime) -> list[dict[str, Any]]:
         ]
 
     entry = _try_entry(s, client, now)
-    if entry.get("position") is not None:
-        slot["position"] = entry.pop("position")
+    new_pos = entry.get("position")
+    if new_pos is not None:
+        slot["position"] = new_pos
         slot["last_entry_day"] = today
         st[_KEY] = slot
         journal.save_state(st)
+        notify.crypto_straddle_opened(new_pos)
     return [entry["event"]]
 
 
@@ -331,6 +374,13 @@ if __name__ == "__main__":  # self-check — no network
     tmp = Path(tempfile.mkdtemp())
     journal.STATE_PATH = tmp / "s.json"
     journal.JOURNAL_PATH = tmp / "j.jsonl"
+
+    # This runs as a plain script, not under pytest, so conftest's autouse
+    # Telegram-token-clearing fixture does NOT apply here — without this, a
+    # real self-check run would fire real Telegram messages for fabricated
+    # test trades through whatever bot token is sitting in .env (the exact
+    # "test-suite leak" class of bug this project has been bitten by before).
+    notify.send = lambda *a, **k: None
 
     _now = datetime(2026, 9, 29, 12, 30, tzinfo=timezone.utc)  # 18:00 IST
     settlement = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
