@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 
 from index_ai.admin_auth import require_admin_secret
 
-from crypto import charges, executor, journal, lanes, sizing
+from crypto import btc_straddle, charges, executor, journal, lanes, sizing
 from crypto._util import num
 from crypto.ml import gate as ml_gate
 from crypto.ml import model as ml_model
@@ -56,6 +56,7 @@ def crypto_status() -> dict:
             "ak_roxx_pro": s.ak_roxx_enabled,
             "cpr_trend": s.cpr_trend_enabled,
             "rsi_adx_trend": s.rsi_adx_trend_enabled,
+            "btc_daily_straddle": s.btc_straddle_enabled,
         },
         "sizing": {
             "margin_per_position_usd": s.margin_per_position_usd,
@@ -301,6 +302,15 @@ def crypto_positions() -> dict:
         if ":" not in k or not isinstance(v, dict) or not v.get("position"):
             continue
         p = dict(v["position"])
+        if btc_straddle.is_straddle_position(p):
+            # a different position shape (two option legs, no side/entry_price)
+            # — the perp math below would compute nonsense on it
+            info = btc_straddle.unrealized(p, client)
+            p.update(info)
+            if info.get("unrealized_usd") is not None:
+                open_pnl_usd += info["unrealized_usd"]
+            open_pos.append({"key": k, **p})
+            continue
         sym = p.get("asset", "")
         if sym and sym not in marks:
             try:
@@ -498,6 +508,7 @@ def set_config(
     ak_roxx_enabled: bool | None = Body(None, embed=True),
     cpr_trend_enabled: bool | None = Body(None, embed=True),
     rsi_adx_trend_enabled: bool | None = Body(None, embed=True),
+    btc_straddle_enabled: bool | None = Body(None, embed=True),
     nbreak_allround: bool | None = Body(None, embed=True),
     session_start: str | None = Body(None, embed=True),
     session_end: str | None = Body(None, embed=True),
@@ -538,6 +549,8 @@ def set_config(
         values["CRYPTO_CPR_TREND_ENABLED"] = "true" if cpr_trend_enabled else "false"
     if rsi_adx_trend_enabled is not None:
         values["CRYPTO_RSI_ADX_TREND_ENABLED"] = "true" if rsi_adx_trend_enabled else "false"
+    if btc_straddle_enabled is not None:
+        values["CRYPTO_BTC_STRADDLE_ENABLED"] = "true" if btc_straddle_enabled else "false"
     if nbreak_allround is not None:
         values["CRYPTO_NBREAK_ALLROUND"] = "true" if nbreak_allround else "false"
     for name, raw in (("CRYPTO_SESSION_START", session_start), ("CRYPTO_SESSION_END", session_end)):
