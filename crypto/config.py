@@ -155,6 +155,22 @@ class CryptoSettings:
     live_armed: bool  # CRYPTO_ALLOW_LIVE
     max_daily_loss_usd: float
     max_consec_losses: int
+    # BTC daily options straddle (Theta Gainers video, studied 2026-09-29) — a
+    # different shape from every other lane (two option legs, not one perp
+    # side), so it runs its own tiny scan loop (crypto/btc_straddle.py), not
+    # crypto/lanes.py's _SIMPLE registry. Off by default: brand new, unvalidated,
+    # and options-specific (crypto/delta/products.py only tracks perps), so
+    # nothing about it should run until the operator opts in.
+    btc_straddle_enabled: bool
+    btc_straddle_entry_start: str  # IST "HH:MM" — new entries only inside this window
+    btc_straddle_entry_end: str
+    # ponytail: fixed contract size, not wallet-scaled. The video sizes 0.1 BTC
+    # per $500 of capital; auto-sizing off the live wallet balance is the
+    # obvious next step once this has enough paper trades to be worth the
+    # extra complexity.
+    btc_straddle_size_btc: float
+    btc_straddle_tp_fraction: float  # close at this fraction of total credit collected
+    btc_straddle_sl_fraction: float  # close at this fraction of total credit lost
 
     @property
     def credentials_ready(self) -> bool:
@@ -219,6 +235,12 @@ def crypto_settings() -> CryptoSettings:
         live_armed=_b("CRYPTO_ALLOW_LIVE", False),
         max_daily_loss_usd=abs(_f("CRYPTO_MAX_DAILY_LOSS_USD", 50.0)),
         max_consec_losses=max(1, _i("CRYPTO_MAX_CONSEC_LOSSES", 3)),
+        btc_straddle_enabled=_b("CRYPTO_BTC_STRADDLE_ENABLED", False),
+        btc_straddle_entry_start=os.getenv("CRYPTO_BTC_STRADDLE_ENTRY_START", "18:00").strip(),
+        btc_straddle_entry_end=os.getenv("CRYPTO_BTC_STRADDLE_ENTRY_END", "19:00").strip(),
+        btc_straddle_size_btc=max(0.001, _f("CRYPTO_BTC_STRADDLE_SIZE_BTC", 0.01)),
+        btc_straddle_tp_fraction=min(1.0, max(0.01, _f("CRYPTO_BTC_STRADDLE_TP_FRACTION", 0.5))),
+        btc_straddle_sl_fraction=max(0.01, _f("CRYPTO_BTC_STRADDLE_SL_FRACTION", 1.0)),
     )
 
 
@@ -257,6 +279,12 @@ CRYPTO_ENV_KEYS = (
     "CRYPTO_ALLOW_LIVE",
     "CRYPTO_MAX_DAILY_LOSS_USD",
     "CRYPTO_MAX_CONSEC_LOSSES",
+    "CRYPTO_BTC_STRADDLE_ENABLED",
+    "CRYPTO_BTC_STRADDLE_ENTRY_START",
+    "CRYPTO_BTC_STRADDLE_ENTRY_END",
+    "CRYPTO_BTC_STRADDLE_SIZE_BTC",
+    "CRYPTO_BTC_STRADDLE_TP_FRACTION",
+    "CRYPTO_BTC_STRADDLE_SL_FRACTION",
 )
 
 
@@ -267,6 +295,9 @@ if __name__ == "__main__":  # self-check
     assert s.leverage >= 1.0
     assert s.max_concurrent >= 1 and s.max_open_total >= 0 and s.max_hold_days >= 1
     assert s.max_open_per_coin >= 0
+    assert s.btc_straddle_size_btc > 0
+    assert 0 < s.btc_straddle_tp_fraction <= 1.0
+    assert s.btc_straddle_sl_fraction > 0
     assert s.stop_pnl_pct > 0 and s.tp_trigger_pnl_pct > 0
     assert s.base_url.startswith("https://")
     assert not s.base_url.endswith("/")

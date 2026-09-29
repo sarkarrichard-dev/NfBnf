@@ -183,8 +183,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                     from index_ai.scanner import on_index_tick
 
                     # every index tick also moves/checks open trades' stops
-                    await run_feed(c.dhan.access_token, str(c.dhan.client_id), stop=tick_stop,
-                                   on_tick=on_index_tick)
+                    await run_feed(
+                        c.dhan.access_token,
+                        str(c.dhan.client_id),
+                        stop=tick_stop,
+                        on_tick=on_index_tick,
+                    )
                 except Exception:
                     logging.getLogger(__name__).warning("tick feed loop error", exc_info=True)
             if tick_stop.is_set():
@@ -202,6 +206,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             from crypto.lanes import enabled as crypto_enabled, scan_crypto_paper
         except Exception:
             return
+        try:
+            from crypto.btc_straddle import enabled as straddle_enabled, scan_btc_straddle_paper
+        except Exception:
+            straddle_enabled = lambda: False  # noqa: E731
+            scan_btc_straddle_paper = None
         _clog = logging.getLogger("crypto.lanes")
         while True:
             try:
@@ -216,6 +225,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                             )
             except Exception:
                 _clog.warning("crypto paper loop error", exc_info=True)
+            try:
+                if scan_btc_straddle_paper is not None and straddle_enabled():
+                    events = await asyncio.to_thread(scan_btc_straddle_paper)
+                    for e in events:
+                        if e.get("event") not in ("none", "hold", "wait"):
+                            _clog.info(
+                                "btc_straddle | %s",
+                                " · ".join(f"{k}={v}" for k, v in e.items()),
+                            )
+            except Exception:
+                _clog.warning("btc_straddle loop error", exc_info=True)
             await asyncio.sleep(60)
 
     crypto_task = asyncio.create_task(_crypto_paper_loop())
