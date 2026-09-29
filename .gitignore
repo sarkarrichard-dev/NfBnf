@@ -26,8 +26,12 @@ memory/
 *.parquet
 *.xlsx
 
-# Research / backtest / ML-seed outputs (regenerable)
-research/
+# Research / backtest / ML-seed outputs (regenerable) — anchored to repo root
+# so it doesn't also catch .planning/research/ (GSD's tracked planning docs)
+/research/
+
+# GSD research-agent query cache — regenerable, not part of the tracked docs
+.planning/research/.cache/
 
 # Playwright MCP runtime snapshots
 .playwright-mcp/
