@@ -173,3 +173,86 @@ def test_scorecard_shape_against_real_journals():
     for side in ("india", "crypto", "commodities"):
         t = sc[side]["totals"]
         assert t["net"] == round(t["gross"] - t["charges"] - t["slippage"], 2)
+
+
+def test_strategy_scorecard_since_isolates_tuned_buy_entries(monkeypatch):
+    """D-06/D-07: judge the tuned NIFTY buy entries on their own trades — the
+    since cut-off must exclude the pre-switch trade, and the data epoch must
+    still win when since is earlier than it."""
+    trades = [
+        {  # before the switch — must be excluded once since=2026-10-01
+            "instrument": "NIFTY",
+            "action": "BUY_CALL",
+            "mode": "PAPER",
+            "pnl": 500.0,
+            "created_at": "2026-09-20T10:00:00",
+            "signal": {"strategy_mode": "candlestick_buy"},
+            "option": {"instrument": "NIFTY", "quantity": 75, "ltp": 100.0},
+        },
+        {  # after the switch — always counted
+            "instrument": "NIFTY",
+            "action": "BUY_CALL",
+            "mode": "PAPER",
+            "pnl": 700.0,
+            "created_at": "2026-10-02T10:00:00",
+            "signal": {"strategy_mode": "candlestick_buy"},
+            "option": {"instrument": "NIFTY", "quantity": 75, "ltp": 100.0},
+        },
+    ]
+    monkeypatch.setattr(sp, "data_epoch", lambda: "2026-09-10T00:00:00")
+    import index_ai.learning as learning
+
+    monkeypatch.setattr(learning, "recent_trades", lambda limit=0: trades)
+
+    both = sp.strategy_scorecard()["india"]["rows"]
+    assert sum(r["trades"] for r in both) == 2
+
+    since_next_switch = sp.strategy_scorecard(since="2026-10-01")["india"]["rows"]
+    assert len(since_next_switch) == 1
+    row = since_next_switch[0]
+    assert row["trades"] == 1
+    assert row["gross"] == 700.0
+
+    # since earlier than the epoch -> the epoch (2026-09-10) still wins, so a
+    # trade from 2026-09-05 (before the epoch) stays excluded
+    early_trade = [
+        {
+            "instrument": "NIFTY",
+            "action": "BUY_CALL",
+            "mode": "PAPER",
+            "pnl": 100.0,
+            "created_at": "2026-09-05T10:00:00",
+            "signal": {"strategy_mode": "candlestick_buy"},
+            "option": {"instrument": "NIFTY", "quantity": 75, "ltp": 100.0},
+        }
+    ]
+    monkeypatch.setattr(learning, "recent_trades", lambda limit=0: early_trade)
+    excluded = sp.strategy_scorecard(since="2026-09-01")["india"]["rows"]
+    assert sum(r["trades"] for r in excluded) == 0
+
+
+def test_crypto_rows_unaffected_by_since(tmp_path, monkeypatch):
+    j = tmp_path / "crypto_journal.jsonl"
+    j.write_text(
+        json.dumps(
+            {
+                "strategy": "cpr_trend",
+                "asset": "BTCUSD",
+                "mode": "paper",
+                "gross_usd": 5.0,
+                "fees_usd": 1.0,
+                "pnl_usd": 4.0,
+                "day": "2026-09-08",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("crypto.journal.JOURNAL_PATH", j)
+    monkeypatch.setattr(sp, "data_epoch", lambda: None)
+    import index_ai.learning as learning
+
+    monkeypatch.setattr(learning, "recent_trades", lambda limit=0: [])
+
+    no_since = sp.strategy_scorecard()["crypto"]
+    with_since = sp.strategy_scorecard(since="2026-10-01")["crypto"]
+    assert no_since == with_since
