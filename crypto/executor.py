@@ -314,6 +314,11 @@ def settle_entry(client: DeltaClient, *, client_order_id: str, product_id: int) 
 
 # --- reconciliation --------------------------------------------------------
 
+# ORD-02: a failed read is not a clean reconcile — crypto.lanes retries the
+# next scan instead of marking today's reconcile done when an issue starts
+# with this prefix.
+RECONCILE_UNREADABLE = "could not read Delta positions"
+
 
 def reconcile(client: DeltaClient) -> list[str]:
     """Compare crypto_state.json **live** open positions against Delta's live
@@ -335,7 +340,19 @@ def reconcile(client: DeltaClient) -> list[str]:
             if abs(float(p.get("size") or 0)) > 0
         }
     except DeltaError as exc:
-        return [f"could not read Delta positions: {exc}"]
+        if local:
+            try:
+                from index_ai import notify
+
+                notify.alert(
+                    "⚠️ <b>CRYPTO RECONCILE</b>\n"
+                    "Could not read Delta positions — today's live positions "
+                    "could not be confirmed. Will retry next scan.",
+                    key="reconcile-unreadable",
+                )
+            except Exception:
+                pass
+        return [f"{RECONCILE_UNREADABLE}: {exc}"]
 
     issues: list[str] = []
     for sym, key in local.items():
