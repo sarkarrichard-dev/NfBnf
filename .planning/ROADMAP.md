@@ -66,7 +66,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-03-PLAN.md — OI-wall room gate + 3-bar breakout confirmation in the tuned bundle, dashboard switch rows, three-index real-chain sanity check (wave 2)
+- [x] 01-03-PLAN.md — OI-wall room gate + 3-bar breakout confirmation in the tuned bundle, dashboard switch rows, three-index real-chain sanity check (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 

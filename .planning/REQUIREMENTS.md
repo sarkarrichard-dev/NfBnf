@@ -23,7 +23,7 @@ Requirements for the first outside subscriber. Each maps to a roadmap phase.
 - [ ] **STRAT-02**: Any strategy-parameter change goes through the existing
   confidence ladder (~15 trades observe-only, ~40+ trades human-approved
   suggestion) — no shortcutting the ladder to ship a "fix" faster.
-- [ ] **STRAT-03**: Strategy Lab verdicts (COLLECTING/PASSING/DROPPED) are
+- [x] **STRAT-03**: Strategy Lab verdicts (COLLECTING/PASSING/DROPPED) are
   re-validated against the real recorded option-chain data available since
   2026-09-23 — anything scored before that date used the Black-Scholes proxy
   and is not trustworthy as-is (`.planning/codebase/CONCERNS.md`).
@@ -196,7 +196,7 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 |-------------|-------|--------|
 | STRAT-01 | Phase 1 | Pending |
 | STRAT-02 | Phase 1 | Pending |
-| STRAT-03 | Phase 1 | Pending |
+| STRAT-03 | Phase 1 | Complete |
 | ORD-01 | Phase 2 | Pending |
 | ORD-02 | Phase 2 | Pending |
 | ORD-03 | Phase 2 | Pending |
@@ -227,6 +227,7 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 | COMP-02 | Phase 10 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 31 total
 - Mapped to phases: 31
 - Unmapped: 0 ✓

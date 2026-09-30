@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 1
 current_phase_name: Strategy Fixes
 status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-09-30T11:52:48.655Z"
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-09-30T12:12:03.730Z"
 last_activity: 2026-09-30
 last_activity_desc: Phase 1 execution started
-state_head: f97569196f13b98e8e6db3b4ec5722cec7b35bbb
+state_head: ce8151bc959b6a1fdf2c65c4955f3fb3a6423a2e
 progress:
   total_phases: 10
   completed_phases: 0
   total_plans: 4
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-09-30)
 ## Current Position
 
 Phase: 1 (Strategy Fixes) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-09-30 — Phase 1 execution started
 
@@ -60,6 +60,7 @@ Progress: [░░░░░░░░░░] 0%
 |------|----------|-------|-------|
 | Phase 01 P01 | 35 min | 2 tasks | 5 files |
 | Phase 01-strategy-fixes P02 | 25 min | 2 tasks | 4 files |
+| Phase 01-strategy-fixes P03 | 25 min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,8 @@ Recent decisions affecting current work:
 - [Phase 1]: strategy_lab's two new live-buy-lane candidates are ON_DEMAND-excluded from run()'s default name set — keeps GET /api/strategy-lab's per-call cost unchanged; proven by a test that makes the adapter raise if called during a default run
 - [Phase 1]: Buy-lane viability rows removed outright from OBSERVED_GROSS_PER_TRADE (not flagged/zeroed) so no code path can hand out a fabricated buy-lane rupee figure; UNMEASURED is now the only reachable verdict unless gross is explicitly supplied — STRAT-03 required the proxy backtest numbers stop being presented as measured; deletion is the only guarantee against reintroduction
 - [Phase 1]: strategy_scorecard/_india_rows since is keyword-only with a no-op default and no endpoint exposes it (server.py untouched) — Keeps the cut-off an internal measuring instrument, not a public promotion path, per the plan's STRAT-02 prohibition
+- [Phase 1]: OI-wall room gate (BUY_BLOCK_INTO_OI_WALL, default off) added symmetrically to the buy lane; WALL_ROOM_PCT=0.10% chosen to match each index's own buy-trail distance (NIFTY 25 / BANKNIFTY 55 / SENSEX 80 points)
+- [Phase 1]: strategy_lab.LIVE_BUY_TUNED now carries the full bundle (CPR-direction gate + OI-wall gate + 3 confirmed breakout closes); real 3-index chain replay shows NIFTY and BANKNIFTY worse on both win rate and net rupees, SENSEX better on net despite lower win rate -- recommendation to plan 01-04 is Hold, sample too thin (6-9 trades/index) and the two switches weren't isolated from each other
 
 ### Pending Todos
 
@@ -84,6 +87,7 @@ None yet.
 
 - Phase 10 (Compliance & Go-Live Gate) depends on primary-source SEBI circular verification (or counsel) per research/SUMMARY.md — do not treat the static-IP architecture as sufficient compliance until that's resolved.
 - Phase 9 (Billing) needs its own research pass on India payment gateway choice (Razorpay vs. Stripe India) before planning — not covered in the initial research pass.
+- This machine's live .env already has ENTRY_CONFIRMATION_BARS=3 (not the code default of 2), discovered via the strategy_lab CLI's baseline readout -- worth confirming with Richard whether that's intentional before plan 01-04 treats the 01-03 sanity-check numbers as a clean baseline-vs-tuned comparison
 
 ## Deferred Items
 
@@ -95,6 +99,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-30T11:52:48.633Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-09-30T12:12:03.689Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None
