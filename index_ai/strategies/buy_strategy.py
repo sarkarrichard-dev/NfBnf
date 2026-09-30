@@ -16,6 +16,12 @@ from index_ai.strategies.strategy import (
 from index_ai.strategies.strategy_params import StrategyParams, get_strategy_params
 from index_ai.strategies.supertrend import supertrend_snapshot
 
+# Percent of price, about one buy-trail distance on every index (NIFTY 25,
+# BANKNIFTY 55, SENSEX 80 index points in instruments._buy_scalp_trail); the
+# 1:1 trail cannot lock a profit before the index moves that far, so an
+# opposing OI wall nearer than this caps the trade at a loss or a scratch.
+WALL_ROOM_PCT = 0.10
+
 
 def evaluate_buy_signal(
     frame: pd.DataFrame,
@@ -153,6 +159,22 @@ def evaluate_buy_signal(
                 ema_spread_pct=0.0,
                 **base_fields,
             )
+        if (
+            cfg.buy_block_into_oi_wall
+            and walls
+            and 0 <= walls[1] - price < price * WALL_ROOM_PCT / 100
+        ):
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=(
+                    f"{setup['reason']} — call-OI wall {walls[1]:.0f} only "
+                    f"{walls[1] - price:.0f} pts above, long skipped."
+                ),
+                confidence=0.0,
+                entry_quality="oi_wall_room_filter",
+                ema_spread_pct=0.0,
+                **base_fields,
+            )
         if ema_fast < ema_slow:
             conf = max(0.55, conf - 0.05)
         return StrategySignal(
@@ -179,6 +201,22 @@ def evaluate_buy_signal(
                 reason=f"{setup['reason']} — CPR reads {regime.day_bias}, short skipped.",
                 confidence=0.0,
                 entry_quality="cpr_contra_filter",
+                ema_spread_pct=0.0,
+                **base_fields,
+            )
+        if (
+            cfg.buy_block_into_oi_wall
+            and walls
+            and 0 <= price - walls[0] < price * WALL_ROOM_PCT / 100
+        ):
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=(
+                    f"{setup['reason']} — put-OI wall {walls[0]:.0f} only "
+                    f"{price - walls[0]:.0f} pts below, short skipped."
+                ),
+                confidence=0.0,
+                entry_quality="oi_wall_room_filter",
                 ema_spread_pct=0.0,
                 **base_fields,
             )

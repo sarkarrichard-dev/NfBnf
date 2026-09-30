@@ -15,6 +15,11 @@ Signals come from ``oi_signals.read`` computed with only the snapshots known at
 that moment, so replaying a recorded day gives the same trades live paper would.
 Nothing here places an order or changes a running strategy.
 
+Every verdict here is recomputed from ``market_log.chain`` rows on each call --
+those rows start 2026-09-23, so there is no Black-Scholes-proxy backtest number
+and no pre-cutover Strategy Lab verdict to re-validate; a fresh call against
+today's recorded sessions is the only source of truth.
+
 Verdict per (strategy, index), on Richard's readiness bar:
   COLLECTING  fewer than 30 trades or 14 trading days — no call yet
   DROPPED     enough data and net-negative after charges
@@ -108,12 +113,17 @@ def _rich(rule: Direction) -> Direction:
     return lambda sig: rule(sig) if (sig.get("iv_rv") or 0) >= VRP_MIN_RATIO else 0
 
 
-# The live option-buy lane's own entry rules (D-03/D-08/D-09), replayed
+# The live option-buy lane's own entry rules (D-01/D-03/D-08/D-09), replayed
 # on the recorded chain instead of a new signal reader -- see
-# _live_buy_read below. LIVE_BUY_TUNED is the one lever this plan adds
-# (plan 01-03 adds the others); "tuned" just means today's params with
-# these overrides applied via dataclasses.replace.
-LIVE_BUY_TUNED: dict[str, Any] = {"buy_block_contra_cpr": True}
+# _live_buy_read below. "tuned" just means today's params with these
+# overrides applied via dataclasses.replace: no buying against the CPR day
+# direction, no buying into a nearby OI wall, and 3 confirmed closes for a
+# breakout (up from the live default of 2).
+LIVE_BUY_TUNED: dict[str, Any] = {
+    "buy_block_contra_cpr": True,
+    "buy_block_into_oi_wall": True,
+    "entry_confirmation_bars": 3,
+}
 
 
 def _live_buy(sig: dict[str, Any]) -> int:
@@ -192,7 +202,8 @@ CANDIDATES: dict[str, tuple[str, Direction, str]] = {
     "live_buy_lane_tuned": (
         "buy",
         _live_buy_tuned,
-        "live_buy_lane, but no buying against the CPR day direction or on a sideways CPR day",
+        "live_buy_lane, but no buying against the CPR day direction or on a sideways CPR day, "
+        "no buying into a nearby OI wall, and 3 confirmed closes for a breakout",
     ),
 }
 
