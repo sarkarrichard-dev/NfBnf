@@ -805,6 +805,9 @@ def _apply_entry(
             ev.update(event="wait", reason=why)
             _log_blocked_live(strat, sym, side, why)
             return
+        coid = f"{strat}-{sym}-{ev.get('ts')}"
+        resp = None
+        settled_filled: float | None = None
         try:
             resp = executor.place_entry(
                 client,
@@ -813,20 +816,47 @@ def _apply_entry(
                 sr.size,
                 leverage=sr.leverage,
                 sl_price=bracket_stop_price(entry_px, side, _trail_cfg_for(strat, s)),
-                client_order_id=f"{strat}-{sym}-{ev.get('ts')}",
+                client_order_id=coid,
             )
         except Exception as exc:
-            new_state["position"] = None  # order failed → we are flat, record nothing
-            logger.error("crypto live entry FAILED for %s %s: %s", sym, side.upper(), exc)
-            ev.update(event="live_rejected", reason=str(exc))
-            _log_blocked_live(strat, sym, side, f"order rejected: {exc}")
-            notify.crypto_alert(
-                f"\U0001f534 <b>CRYPTO LIVE ENTRY FAILED</b> — {sym} {side.upper()}\n{exc}",
-                key=f"c-entryfail:{sym}:{strat}",
-            )
-            return
-        # THE ORDER IS LIVE. The position MUST be recorded from here — the fill
-        # lookup is a soft refinement, never a reason to drop the position.
+            # The POST reply may be lost rather than a definite answer (D-06) —
+            # ask Delta's own order list before ever deciding "we are flat".
+            # NEVER re-sends POST /v2/orders (D-07).
+            reject_reason = str(exc)
+            if executor.outcome_unknown(exc):
+                settle = executor.settle_entry(
+                    client, client_order_id=coid, product_id=contract.product_id
+                )
+                if settle["verdict"] == "FILLED":
+                    resp = {"order_id": settle["order_id"]}
+                    settled_filled = settle["filled"]
+                    notify.crypto_alert(
+                        f"⚠️ <b>CRYPTO LIVE ENTRY</b> — {sym} {side.upper()}\n"
+                        "Delta did not answer the order request, but its order list "
+                        f"shows the {sym} {side.upper()} order filled, so the position "
+                        "is now tracked normally.",
+                        key=f"c-lost:{sym}:{strat}",
+                    )
+                elif settle["verdict"] == "UNKNOWN":
+                    # Delta itself could not be reached either — treat as not
+                    # placed so nothing is ever resent; a future settlement
+                    # (Task 2) re-checks and adopts or clears this.
+                    reject_reason = "Delta unreachable — outcome unknown"
+                # NOT_PLACED falls straight into the rejected path below with
+                # the original exception text — nothing filled, nothing to undo.
+            if resp is None:
+                new_state["position"] = None  # order failed → we are flat, record nothing
+                logger.error("crypto live entry FAILED for %s %s: %s", sym, side.upper(), exc)
+                ev.update(event="live_rejected", reason=reject_reason)
+                _log_blocked_live(strat, sym, side, f"order rejected: {reject_reason}")
+                notify.crypto_alert(
+                    f"\U0001f534 <b>CRYPTO LIVE ENTRY FAILED</b> — {sym} {side.upper()}\n{reject_reason}",
+                    key=f"c-entryfail:{sym}:{strat}",
+                )
+                return
+        # THE ORDER IS LIVE (placed now, or confirmed filled via settlement).
+        # The position MUST be recorded from here — the fill lookup is a soft
+        # refinement, never a reason to drop the position.
         order_id = resp.get("order_id")
         try:
             fp, fq = executor.fill_report(client, order_id)
@@ -834,8 +864,12 @@ def _apply_entry(
                 entry_px, entry_src = fp, "fill"
             if fq and fq >= 1:
                 fill_size = int(fq)
+            elif settled_filled is not None:
+                fill_size = max(1, int(settled_filled))
         except Exception:
             logger.warning("crypto fill lookup failed — using signal price", exc_info=True)
+            if settled_filled is not None:
+                fill_size = max(1, int(settled_filled))
 
     pos = {
         "strategy": strat,

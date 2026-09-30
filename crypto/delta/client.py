@@ -45,10 +45,18 @@ class DeltaError(RuntimeError):
     callers (e.g. the IP-whitelist hint) don't have to scrape the message.
     """
 
-    def __init__(self, message: str, *, code: str | None = None, context: Any = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        context: Any = None,
+        status: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.context = context if isinstance(context, dict) else {}
+        self.status = status
 
 
 def _sign(secret: str, prehash: str) -> str:
@@ -76,7 +84,12 @@ def _reset_wait(headers: httpx.Headers) -> float:
 
 
 class DeltaClient:
-    def __init__(self, settings: CryptoSettings | None = None) -> None:
+    def __init__(
+        self,
+        settings: CryptoSettings | None = None,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         s = settings or crypto_settings()
         self._base = s.base_url
         self._key = s.api_key
@@ -84,6 +97,9 @@ class DeltaClient:
         # Residential IPv6 is a rotating privacy address no static whitelist can
         # hold; pin Delta traffic to IPv4 so the operator whitelists one address.
         self._force_ipv4 = getattr(s, "force_ipv4", True)
+        # Optional transport seam, e.g. for recording or replay in tests — when
+        # given, it's used verbatim instead of the IPv4-pinned default.
+        self._transport = transport
         self._http: httpx.Client | None = None
 
     def _client(self) -> httpx.Client:
@@ -92,7 +108,11 @@ class DeltaClient:
         of CPU — so a fresh one per request made a scan cycle's ~25 calls burn a
         core on SSL setup. Timeout is passed per-request instead."""
         if self._http is None or self._http.is_closed:
-            transport = httpx.HTTPTransport(local_address="0.0.0.0") if self._force_ipv4 else None
+            transport = self._transport
+            if transport is None:
+                transport = (
+                    httpx.HTTPTransport(local_address="0.0.0.0") if self._force_ipv4 else None
+                )
             # keepalive_expiry well under a typical API-gateway idle timeout: a
             # pooled connection that's been idle a few seconds is replaced rather
             # than reused, so a signed POST /v2/orders can't hit a server-closed
@@ -152,6 +172,17 @@ class DeltaClient:
 
     def fills(self) -> list[dict[str, Any]]:
         return self.signed("GET", "/v2/fills")
+
+    def open_orders(self) -> list[dict[str, Any]]:
+        return self.signed("GET", "/v2/orders", params={"state": "open"})
+
+    def order_history(self, page_size: int = 50) -> list[dict[str, Any]]:
+        return self.signed("GET", "/v2/orders/history", params={"page_size": page_size})
+
+    def cancel_order(self, order_id: int, product_id: int) -> dict[str, Any]:
+        return self.signed(
+            "DELETE", "/v2/orders", body={"id": int(order_id), "product_id": int(product_id)}
+        )
 
     def margin_required(
         self, product_id: int, size: int, side: str, order_type: str = "market_order"
@@ -231,7 +262,10 @@ class DeltaClient:
                 if code == "ip_not_whitelisted_for_api_key" and isinstance(ctx, dict):
                     LAST_IP_BLOCK.update(ip=str(ctx.get("client_ip") or ""), at=time.time())
                 raise DeltaError(
-                    f"{m} {path}: HTTP {resp.status_code} — {err}", code=code, context=ctx
+                    f"{m} {path}: HTTP {resp.status_code} — {err}",
+                    code=code,
+                    context=ctx,
+                    status=resp.status_code,
                 )
 
             if LAST_IP_BLOCK:
@@ -262,4 +296,19 @@ if __name__ == "__main__":  # self-check — no network
     assert c4.is_closed
     with DeltaClient(_dc.replace(_s, force_ipv4=False)) as dc6:
         assert dc6._client()._transport is not None or dc6._force_ipv4 is False
+    # DeltaError carries an optional HTTP status
+    e2 = DeltaError("boom", status=502)
+    assert e2.status == 502
+    # cancel_order / open_orders / order_history exist on the class
+    assert callable(DeltaClient.cancel_order)
+    assert callable(DeltaClient.open_orders)
+    assert callable(DeltaClient.order_history)
+
+    # optional injected transport seam (e.g. recording/replay) overrides the IPv4 pin
+    class _NoopTransport(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"success": True, "result": []})
+
+    with DeltaClient(_s, transport=_NoopTransport()) as dc_seam:
+        assert isinstance(dc_seam._client()._transport, _NoopTransport)
     print("crypto.delta.client self-check ok — signing, query string, error context, IPv4 pin")

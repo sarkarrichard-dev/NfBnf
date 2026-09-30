@@ -16,6 +16,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from crypto import journal
 from crypto.config import CryptoSettings, crypto_settings
 from crypto.delta.client import DeltaClient, DeltaError
@@ -26,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 # --- kill switch --------------------------------------------------------------
+
 
 def _today_live_rows() -> list[dict[str, Any]]:
     today = datetime.now(timezone.utc).date().isoformat()
@@ -44,7 +47,7 @@ def kill_switch(settings: CryptoSettings | None = None) -> tuple[bool, str]:
     s = settings or crypto_settings()
     from index_ai.risk_manager import stopped as account_stopped
 
-    hit, why = account_stopped()   # India + crypto live losses, one ₹ budget
+    hit, why = account_stopped()  # India + crypto live losses, one ₹ budget
     if hit:
         return True, why
     rows = _today_live_rows()
@@ -88,11 +91,10 @@ def live_gate(settings: CryptoSettings | None = None) -> tuple[bool, str]:
 
 # --- orders -----------------------------------------------------------------
 
+
 def _set_leverage(client: DeltaClient, product_id: int, leverage: float) -> None:
     lev = str(int(round(max(1.0, leverage))))
-    client.signed(
-        "POST", f"/v2/products/{product_id}/orders/leverage", body={"leverage": lev}
-    )
+    client.signed("POST", f"/v2/products/{product_id}/orders/leverage", body={"leverage": lev})
 
 
 def _place(client: DeltaClient, body: dict[str, Any]) -> dict[str, Any]:
@@ -145,8 +147,12 @@ def place_entry(
 
 
 def place_exit(
-    client: DeltaClient, contract: Contract, side: str, size: int,
-    *, client_order_id: str | None = None,
+    client: DeltaClient,
+    contract: Contract,
+    side: str,
+    size: int,
+    *,
+    client_order_id: str | None = None,
 ) -> dict[str, Any]:
     """Reduce-only market order that closes a `side` position of `size` contracts."""
     body = {
@@ -218,7 +224,69 @@ def fill_price(client: DeltaClient, order_id: str | None) -> float | None:
     return round(num / px, 2) if px else None
 
 
+# --- settlement (D-06/D-07: a lost entry reply is asked of Delta, never resent) --
+
+
+def outcome_unknown(exc: Exception) -> bool:
+    """True only when `exc` is a DeltaError whose reply never came back (the
+    order may still have reached Delta) or a 5xx. Everything else — a 4xx, a
+    `success: false`, or any non-Delta exception — is a definite answer."""
+    if not isinstance(exc, DeltaError):
+        return False
+    if isinstance(exc.__cause__, httpx.TransportError):
+        return True
+    return exc.status is not None and exc.status >= 500
+
+
+def find_order(client: DeltaClient, client_order_id: str, product_id: int) -> dict[str, Any] | None:
+    """The row (from open orders, then order history) whose client_order_id
+    and product_id match ours, or None. Lets DeltaError propagate — the
+    caller decides what "could not ask" means."""
+    for rows in (client.open_orders(), client.order_history()):
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("client_order_id")) == client_order_id and int(
+                row.get("product_id") or -1
+            ) == int(product_id):
+                return row
+    return None
+
+
+def settle_entry(client: DeltaClient, *, client_order_id: str, product_id: int) -> dict[str, Any]:
+    """Ask Delta what happened to an entry whose own POST reply was lost.
+    Never re-sends the order. Returns verdict FILLED | NOT_PLACED | UNKNOWN,
+    order_id ({product_id}:{id} or None), filled (contracts), cancelled, error."""
+    coid = _coid(client_order_id)
+    out: dict[str, Any] = {
+        "verdict": "UNKNOWN",
+        "order_id": None,
+        "filled": 0.0,
+        "cancelled": False,
+        "error": None,
+    }
+    try:
+        row = find_order(client, coid, product_id)
+    except DeltaError as exc:
+        out["error"] = str(exc)
+        return out
+    if row is None:
+        out["verdict"] = "NOT_PLACED"
+        return out
+    oid = row.get("id")
+    out["order_id"] = f"{product_id}:{oid}" if oid is not None else None
+    try:
+        size = abs(float(row.get("size") or 0))
+        unfilled = abs(float(row.get("unfilled_size") or 0))
+    except (TypeError, ValueError):
+        size = unfilled = 0.0
+    out["filled"] = max(0.0, size - unfilled)
+    out["verdict"] = "FILLED" if out["filled"] > 0 else "NOT_PLACED"
+    return out
+
+
 # --- reconciliation --------------------------------------------------------
+
 
 def reconcile(client: DeltaClient) -> list[str]:
     """Compare crypto_state.json **live** open positions against Delta's live
@@ -228,7 +296,9 @@ def reconcile(client: DeltaClient) -> list[str]:
     local = {
         v["position"].get("asset"): k
         for k, v in st.items()
-        if ":" in k and isinstance(v, dict) and v.get("position")
+        if ":" in k
+        and isinstance(v, dict)
+        and v.get("position")
         and str((v["position"] or {}).get("mode")) == "live"
     }
     try:
@@ -292,12 +362,54 @@ if __name__ == "__main__":  # self-check — mocked client, no network, no journ
 
     # kill switch: 3 straight live losses trips it
     for i in range(3):
-        journal.journal({"mode": "live", "day": datetime.now(timezone.utc).date().isoformat(),
-                         "pnl_usd": -5.0, "exit_time": datetime.now(timezone.utc).isoformat()})
+        journal.journal(
+            {
+                "mode": "live",
+                "day": datetime.now(timezone.utc).date().isoformat(),
+                "pnl_usd": -5.0,
+                "exit_time": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
     class _S:
         max_daily_loss_usd = 50.0
         max_consec_losses = 3
+
     trip, why = kill_switch(_S())
     assert trip and "consecutive" in why
+
+    # outcome_unknown: transport error / 5xx are unknown, everything else is definite
+    cause = httpx.ConnectTimeout("timed out")
+    assert outcome_unknown(DeltaError("boom")) is False  # bare error, no cause/status
+    lost_reply = DeltaError("POST /v2/orders: boom")
+    lost_reply.__cause__ = cause
+    assert outcome_unknown(lost_reply) is True
+    assert outcome_unknown(DeltaError("boom", status=502)) is True
+    assert outcome_unknown(DeltaError("boom", status=400)) is False
+    assert outcome_unknown(ValueError("not even a DeltaError")) is False
+
+    # find_order / settle_entry: tracer scope — lookup only, never re-sends
+    class _SettleClient:
+        def open_orders(self):
+            return []
+
+        def order_history(self):
+            return [
+                {
+                    "id": 55,
+                    "product_id": 27,
+                    "client_order_id": "abc",
+                    "size": 3,
+                    "unfilled_size": 0,
+                },
+            ]
+
+    sc = _SettleClient()
+    assert find_order(sc, "abc", 27)["id"] == 55
+    assert find_order(sc, "missing", 27) is None
+    res = settle_entry(sc, client_order_id="abc", product_id=27)
+    assert res["verdict"] == "FILLED" and res["order_id"] == "27:55" and res["filled"] == 3.0
+    res2 = settle_entry(sc, client_order_id="nope", product_id=27)
+    assert res2["verdict"] == "NOT_PLACED"
+
     print("crypto.executor self-check ok")
