@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from index_ai.options_oi import OptionOiContext
 from index_ai.strategies.buy_strategy import evaluate_buy_signal
 from index_ai.strategies.cpr_regime import CprRegime
 from index_ai.strategies.strategy_params import reload_strategy_params
@@ -175,3 +176,168 @@ def test_contra_cpr_gate_sideways_engulfing_and_mixed_pass(monkeypatch) -> None:
     mixed = evaluate_buy_signal(_breakout_candles(), previous, _regime("MIXED"))
     assert mixed.action == "BUY_CALL"
     assert mixed.entry_quality == "breakout_resistance"
+
+
+# --- D-01: OI-wall room gate (BUY_BLOCK_INTO_OI_WALL) ---
+#
+# Index-scale prices here (not the ~100-level toy prices above) because the
+# gate compares to 0.10% of price -- a few points, indistinguishable from
+# noise at toy scale but a clean ~24/~100-point gap at real NIFTY/index
+# levels. The opposite OI wall is always kept far away so it can't pre-empt
+# the breakout with a reversal pattern (candlestick_patterns prefers OI
+# walls as S/R when given).
+
+
+def _index_breakout_candles() -> pd.DataFrame:
+    """Flat range near 24000, then two bars confirming a real breakout above
+    it -- same shape as _breakout_candles, at index scale."""
+    rows = [{"open": 24000.0, "high": 24020.0, "low": 23985.0, "close": 24000.0} for _ in range(25)]
+    rows.append({"open": 24000.0, "high": 24085.0, "low": 24000.0, "close": 24070.0})
+    rows.append({"open": 24070.0, "high": 24110.0, "low": 24060.0, "close": 24090.0})
+    return pd.DataFrame(rows)
+
+
+def _index_breakdown_candles() -> pd.DataFrame:
+    """Mirror of _index_breakout_candles: a flat range near 24000, then two
+    bars confirming a real breakdown below it."""
+    rows = [{"open": 24000.0, "high": 24020.0, "low": 23985.0, "close": 24000.0} for _ in range(25)]
+    rows.append({"open": 24000.0, "high": 24000.0, "low": 23915.0, "close": 23930.0})
+    rows.append({"open": 23930.0, "high": 23940.0, "low": 23890.0, "close": 23910.0})
+    return pd.DataFrame(rows)
+
+
+def _oi(*, max_call: float | None, max_put: float | None, spot: float) -> OptionOiContext:
+    return OptionOiContext(
+        spot=spot,
+        atm_strike=round(spot / 50) * 50,
+        total_call_oi=0,
+        total_put_oi=0,
+        pcr=1.0,
+        max_call_oi_strike=max_call,
+        max_put_oi_strike=max_put,
+        bias="balanced",
+        note="",
+        confidence_adjustment=0.0,
+    )
+
+
+def test_wall_room_gate_unset_ignores_nearby_wall(monkeypatch) -> None:
+    """Switch unset (default): a call-OI wall just above the last close does
+    not change anything -- the breakout still fires."""
+    monkeypatch.setenv("REQUIRE_SUPERTREND_ALIGN", "false")
+    reload_strategy_params()
+    previous = pd.DataFrame(
+        [
+            {"open": 100, "high": 103, "low": 97, "close": 100},
+            {"open": 100, "high": 103, "low": 97, "close": 101},
+        ]
+    )
+    frame = _index_breakout_candles()
+    oi = _oi(max_call=24105.0, max_put=23800.0, spot=24090.0)  # +15 pts, well inside 0.10%
+
+    result = evaluate_buy_signal(frame, previous, _regime("TRENDING_BULL"), oi=oi)
+    assert result.action == "BUY_CALL"
+    assert result.entry_quality == "breakout_resistance"
+
+
+def test_wall_room_gate_blocks_when_call_wall_too_close(monkeypatch) -> None:
+    """Switch on, call wall above price by less than 0.10% of price ->
+    NO_TRADE / oi_wall_room_filter."""
+    monkeypatch.setenv("REQUIRE_SUPERTREND_ALIGN", "false")
+    monkeypatch.setenv("BUY_BLOCK_INTO_OI_WALL", "true")
+    reload_strategy_params()
+    previous = pd.DataFrame(
+        [
+            {"open": 100, "high": 103, "low": 97, "close": 100},
+            {"open": 100, "high": 103, "low": 97, "close": 101},
+        ]
+    )
+    frame = _index_breakout_candles()
+    oi = _oi(max_call=24105.0, max_put=23800.0, spot=24090.0)  # +15 pts < 24.09 (0.10% of 24090)
+
+    result = evaluate_buy_signal(frame, previous, _regime("TRENDING_BULL"), oi=oi)
+    assert result.action == "NO_TRADE"
+    assert result.entry_quality == "oi_wall_room_filter"
+
+
+def test_wall_room_gate_allows_call_wall_with_room(monkeypatch) -> None:
+    """Switch on, call wall above price by more than 0.10% of price ->
+    BUY_CALL still fires."""
+    monkeypatch.setenv("REQUIRE_SUPERTREND_ALIGN", "false")
+    monkeypatch.setenv("BUY_BLOCK_INTO_OI_WALL", "true")
+    reload_strategy_params()
+    previous = pd.DataFrame(
+        [
+            {"open": 100, "high": 103, "low": 97, "close": 100},
+            {"open": 100, "high": 103, "low": 97, "close": 101},
+        ]
+    )
+    frame = _index_breakout_candles()
+    oi = _oi(max_call=24190.0, max_put=23800.0, spot=24090.0)  # +100 pts > 24.09
+
+    result = evaluate_buy_signal(frame, previous, _regime("TRENDING_BULL"), oi=oi)
+    assert result.action == "BUY_CALL"
+    assert result.entry_quality == "breakout_resistance"
+
+
+def test_wall_room_gate_allows_when_call_wall_already_broken(monkeypatch) -> None:
+    """Switch on, price already above the call wall -> BUY_CALL (the wall is
+    broken, not defended)."""
+    monkeypatch.setenv("REQUIRE_SUPERTREND_ALIGN", "false")
+    monkeypatch.setenv("BUY_BLOCK_INTO_OI_WALL", "true")
+    reload_strategy_params()
+    previous = pd.DataFrame(
+        [
+            {"open": 100, "high": 103, "low": 97, "close": 100},
+            {"open": 100, "high": 103, "low": 97, "close": 101},
+        ]
+    )
+    frame = _index_breakout_candles()
+    oi = _oi(max_call=24000.0, max_put=23800.0, spot=24090.0)  # wall below current close
+
+    result = evaluate_buy_signal(frame, previous, _regime("TRENDING_BULL"), oi=oi)
+    assert result.action == "BUY_CALL"
+    assert result.entry_quality == "breakout_resistance"
+
+
+def test_wall_room_gate_unaffected_when_oi_none(monkeypatch) -> None:
+    """Switch on, but no oi passed at all -> gate can't apply, unaffected."""
+    monkeypatch.setenv("REQUIRE_SUPERTREND_ALIGN", "false")
+    monkeypatch.setenv("BUY_BLOCK_INTO_OI_WALL", "true")
+    reload_strategy_params()
+    previous = pd.DataFrame(
+        [
+            {"open": 100, "high": 103, "low": 97, "close": 100},
+            {"open": 100, "high": 103, "low": 97, "close": 101},
+        ]
+    )
+    frame = _index_breakout_candles()
+
+    result = evaluate_buy_signal(frame, previous, _regime("TRENDING_BULL"), oi=None)
+    assert result.action == "BUY_CALL"
+    assert result.entry_quality == "breakout_resistance"
+
+
+def test_wall_room_gate_bear_mirror(monkeypatch) -> None:
+    """Bear mirror: a put-OI wall just below price blocks; one far below
+    doesn't."""
+    monkeypatch.setenv("REQUIRE_SUPERTREND_ALIGN", "false")
+    monkeypatch.setenv("BUY_BLOCK_INTO_OI_WALL", "true")
+    reload_strategy_params()
+    previous = pd.DataFrame(
+        [
+            {"open": 100, "high": 103, "low": 97, "close": 100},
+            {"open": 100, "high": 103, "low": 97, "close": 101},
+        ]
+    )
+    frame = _index_breakdown_candles()
+
+    close_wall = _oi(max_call=24500.0, max_put=23895.0, spot=23910.0)  # -15 pts < 23.91
+    blocked = evaluate_buy_signal(frame, previous, _regime("TRENDING_BEAR"), oi=close_wall)
+    assert blocked.action == "NO_TRADE"
+    assert blocked.entry_quality == "oi_wall_room_filter"
+
+    far_wall = _oi(max_call=24500.0, max_put=23810.0, spot=23910.0)  # -100 pts > 23.91
+    allowed = evaluate_buy_signal(frame, previous, _regime("TRENDING_BEAR"), oi=far_wall)
+    assert allowed.action == "BUY_PUT"
+    assert allowed.entry_quality == "breakdown_support"
