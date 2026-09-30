@@ -22,8 +22,8 @@ See: .planning/PROJECT.md (updated 2026-09-30)
 
 Phase: 1 of 10 (Strategy Fixes)
 Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-09-30 — Richard added Strategy Fixes / Order Placing & Tracking / Exit Optimisation / Dashboard UI-UX as Phases 1-4 ahead of the subscription build-out (renumbered to Phases 5-10); REQUIREMENTS.md and ROADMAP.md updated, 31/31 v1 requirements mapped
+Status: Context gathered, ready to plan
+Last activity: 2026-09-30 — Phase 1 context gathered: focus NIFTY buy-lane tuning first (finish the OI-wall + fake-breakout work, fold in the ML gate-tightening suggestion), target ≥65% win rate AND net-positive rupees over 40+ paper trades, backtest on real option-chain data first as a sanity check, stay paper-only throughout. See 01-CONTEXT.md.
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -77,5 +77,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-09-30
-Stopped at: ROADMAP.md, REQUIREMENTS.md, and STATE.md updated with Phases 1-4 (product quality) ahead of the subscription build-out (now Phases 5-10). Roadmap approved by Richard. Next: discuss/plan Phase 1 (Strategy Fixes).
-Resume file: None
+Stopped at: Phase 1 context gathered
+Resume file: .planning/phases/01-strategy-fixes/01-CONTEXT.md
