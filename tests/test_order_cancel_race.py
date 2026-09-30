@@ -832,6 +832,429 @@ def test_first_exit_attempt_has_no_extra_order_book_read(monkeypatch) -> None:
     assert replay.count("GET", "/v2/orders") == 0
 
 
+# ── Plan 02-04 Task 1: cancel-while-pending settles from Dhan's book ──
+
+
+def _record_pending_trade(
+    option: dict,
+    *,
+    instrument: str = "NIFTY",
+    action: str = "BUY_CALL",
+    status: str = "LIVE_PENDING",
+) -> dict:
+    from index_ai.learning import record_trade
+
+    trade_id = record_trade(
+        mode="LIVE",
+        instrument=instrument,
+        action=action,
+        confidence=0.7,
+        option=option,
+        signal={"action": action, "confidence": 0.7, "price": 24000},
+        status=status,
+    )
+    return {
+        "id": trade_id,
+        "mode": "LIVE",
+        "status": status,
+        "pnl": None,
+        "instrument": instrument,
+        "option": option,
+    }
+
+
+def _single_leg_pending_option(**overrides) -> dict:
+    base = dict(
+        instrument="NIFTY",
+        security_id=54321,
+        segment="NSE_FNO",
+        transaction_type="BUY",
+        option_type="CALL",
+        strike=25000,
+        quantity=65,
+        entry_ltp=100.0,
+        broker_order_ids=["321"],
+        broker_orders={"order_ids": ["321"], "unconfirmed_correlation_ids": []},
+    )
+    base.update(overrides)
+    return base
+
+
+def test_settle_cancel_wins_row_rejected_with_zero_pnl(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+    monkeypatch.setattr("index_ai.notify.send", lambda *a, **k: None)
+
+    option = _single_leg_pending_option(
+        broker_order_ids=["123"], broker_orders={"order_ids": ["123"]}
+    )
+    trade = _record_pending_trade(option)
+    settings = _live_settings()
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.script(
+        "GET", "/v2/orders", [{"orderId": "123", "orderStatus": "TRANSIT", "quantity": 65}]
+    )
+    replay.script("GET", "/v2/trades", [])
+    replay.script(
+        "GET",
+        "/v2/orders/123",
+        {"orderId": "123", "orderStatus": "TRANSIT", "quantity": 65},
+        {"orderId": "123", "orderStatus": "CANCELLED", "quantity": 65},
+    )
+    replay.script("DELETE", "/v2/orders/123", {"orderId": "123", "orderStatus": "CANCELLED"})
+
+    client = fake_dhan_client(replay, monkeypatch)
+    result = close_open_trade(trade, client=client, app_settings=settings, reason="manual close")
+
+    assert result["status"] == "CANCELLED"
+    assert "cancelled before it filled" in (result.get("reason") or "")
+    assert replay.count("DELETE", "/v2/orders/123") == 1
+    assert replay.count("POST", "/v2/orders") == 0
+
+    from index_ai.learning import _row_to_trade, connect
+
+    with connect() as db:
+        row = db.execute("SELECT * FROM trades WHERE id = ?", (trade["id"],)).fetchone()
+    fresh = _row_to_trade(row)
+    assert fresh["status"] == "LIVE_REJECTED"
+    assert fresh["pnl"] == 0
+    assert "cancelled before it filled" in (fresh["option"].get("broker_rejection_reason") or "")
+
+
+def test_settle_fill_wins_out_of_order_closes_with_one_exit(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+    monkeypatch.setattr("index_ai.notify.send", lambda *a, **k: None)
+
+    option = _single_leg_pending_option()
+    trade = _record_pending_trade(option)
+    settings = _live_settings()
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.script(
+        "GET", "/v2/orders", [{"orderId": "321", "orderStatus": "PENDING", "quantity": 65}]
+    )
+    replay.script("GET", "/v2/trades", [])
+    replay.script(
+        "GET", "/v2/orders/321", {"orderId": "321", "orderStatus": "PENDING", "quantity": 65}
+    )
+    replay.script(
+        "DELETE",
+        "/v2/orders/321",
+        (400, {"errorCode": "DH-000", "errorMessage": "Order already traded"}),
+    )
+
+    client = fake_dhan_client(replay, monkeypatch)
+    # First read: PENDING; cancel loses the race (400 "already traded"); the
+    # re-read below must show TRADED for the fill-wins branch to fire.
+    # Swap the GET /v2/orders / GET /v2/trades scripts to their post-cancel
+    # values once the first pair has been consumed (BrokerReplay keeps
+    # returning the single remaining scripted response forever, so we script
+    # a second value up front for each — first consumed by the initial read,
+    # second (sticky) consumed by the re-read after the lost cancel race).
+    replay.script(
+        "GET",
+        "/v2/orders",
+        [{"orderId": "321", "orderStatus": "PENDING", "quantity": 65}],
+        [{"orderId": "321", "orderStatus": "TRADED", "filledQty": 65, "quantity": 65}],
+    )
+    replay.script(
+        "GET",
+        "/v2/trades",
+        [],
+        [{"orderId": "321", "tradedQuantity": 65, "tradedPrice": 100.0}],
+    )
+    replay.script(
+        "POST",
+        "/v2/orders",
+        {"orderId": "E1", "orderStatus": "TRADED", "filledQty": 65, "quantity": 65},
+    )
+
+    result = close_open_trade(trade, client=client, app_settings=settings, reason="manual close")
+
+    assert result["status"] == "CLOSED"
+    assert replay.count("DELETE", "/v2/orders/321") == 1
+    assert replay.count("POST", "/v2/orders") == 1
+
+
+def test_settle_dhan_unreachable_blocks_nothing_sent(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+    alerts: list[str] = []
+    monkeypatch.setattr("index_ai.notify.send", lambda text, **k: alerts.append(text))
+
+    option = _single_leg_pending_option()
+    trade = _record_pending_trade(option)
+    settings = _live_settings()
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.fault(
+        "GET",
+        "/v2/orders",
+        httpx.ReadTimeout,
+        httpx.ReadTimeout,
+        httpx.ReadTimeout,
+        httpx.ReadTimeout,
+    )
+    client = fake_dhan_client(replay, monkeypatch)
+
+    result = close_open_trade(trade, client=client, app_settings=settings, reason="manual close")
+
+    assert result["status"] == "BLOCKED"
+    assert replay.count("DELETE", "/v2/orders/321") == 0
+    assert replay.count("POST", "/v2/orders") == 0
+    assert alerts
+
+    from index_ai.learning import _row_to_trade, connect
+
+    with connect() as db:
+        row = db.execute("SELECT * FROM trades WHERE id = ?", (trade["id"],)).fetchone()
+    fresh = _row_to_trade(row)
+    assert fresh["status"] == "LIVE_PENDING"
+    assert fresh["pnl"] is None
+
+
+def test_settle_partial_spread_cancels_short_alerts_open_hedge(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+    alerts: list[str] = []
+    monkeypatch.setattr("index_ai.notify.send", lambda text, **k: alerts.append(text))
+
+    option = {
+        "instrument": "NIFTY",
+        "quantity": 65,
+        "structure": "BULL_PUT_SPREAD",
+        "broker_order_ids": ["H1", "S1"],
+        "broker_orders": {"order_ids": ["H1", "S1"]},
+        "legs": [
+            {
+                "security_id": 111,
+                "segment": "NSE_FNO",
+                "transaction_type": "BUY",
+                "option_type": "PUT",
+                "strike": 24700,
+                "quantity": 65,
+                "entry_ltp": 50.0,
+                "broker_order_id": "H1",
+            },
+            {
+                "security_id": 222,
+                "segment": "NSE_FNO",
+                "transaction_type": "SELL",
+                "option_type": "PUT",
+                "strike": 24900,
+                "quantity": 65,
+                "entry_ltp": 90.0,
+                "broker_order_id": "S1",
+            },
+        ],
+    }
+    trade = _record_pending_trade(option, action="SELL_BULL_PUT_SPREAD")
+    settings = _live_settings()
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.script(
+        "GET",
+        "/v2/orders",
+        [
+            {"orderId": "H1", "orderStatus": "TRADED", "filledQty": 65, "quantity": 65},
+            {"orderId": "S1", "orderStatus": "PENDING", "quantity": 65},
+        ],
+        [
+            {"orderId": "H1", "orderStatus": "TRADED", "filledQty": 65, "quantity": 65},
+            {"orderId": "S1", "orderStatus": "CANCELLED", "quantity": 65},
+        ],
+    )
+    replay.script(
+        "GET",
+        "/v2/trades",
+        [{"orderId": "H1", "tradedQuantity": 65, "tradedPrice": 50.0}],
+    )
+    replay.script(
+        "GET",
+        "/v2/orders/S1",
+        {"orderId": "S1", "orderStatus": "PENDING", "quantity": 65},
+        {"orderId": "S1", "orderStatus": "CANCELLED", "quantity": 65},
+    )
+    replay.script("DELETE", "/v2/orders/S1", {"orderId": "S1", "orderStatus": "CANCELLED"})
+
+    client = fake_dhan_client(replay, monkeypatch)
+    result = close_open_trade(trade, client=client, app_settings=settings, reason="manual close")
+
+    assert result["status"] == "BLOCKED"
+    assert replay.count("DELETE", "/v2/orders/S1") == 1
+    assert replay.count("POST", "/v2/orders") == 0
+    assert alerts
+    assert any("H1" in a for a in alerts)
+
+    from index_ai.learning import _row_to_trade, connect
+
+    with connect() as db:
+        row = db.execute("SELECT * FROM trades WHERE id = ?", (trade["id"],)).fetchone()
+    fresh = _row_to_trade(row)
+    assert fresh["status"] == "LIVE_PENDING"
+    assert fresh["pnl"] is None
+
+
+def test_settle_unconfirmed_not_on_book_cancels_with_zero_broker_calls(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+    monkeypatch.setattr("index_ai.notify.send", lambda *a, **k: None)
+
+    option = _single_leg_pending_option(
+        broker_order_ids=[],
+        broker_orders={"order_ids": [], "unconfirmed_correlation_ids": ["idxai-abc"]},
+    )
+    trade = _record_pending_trade(option)
+    settings = _live_settings()
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.script("GET", "/v2/orders", [])  # empty book -- correlation id never appeared
+    replay.script("GET", "/v2/trades", [])
+
+    client = fake_dhan_client(replay, monkeypatch)
+    result = close_open_trade(trade, client=client, app_settings=settings, reason="manual close")
+
+    assert result["status"] == "CANCELLED"
+    assert replay.count("DELETE", "/v2/orders/321") == 0
+    assert replay.count("POST", "/v2/orders") == 0
+
+
+def test_settle_already_live_traded_runs_normal_close(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+    monkeypatch.setattr("index_ai.notify.send", lambda *a, **k: None)
+
+    option = _single_leg_pending_option()
+    # Journal already shows LIVE_TRADED, but the caller's in-hand `trade` dict
+    # is stale (still LIVE_PENDING) -- e.g. fetched just before a concurrent
+    # sync updated it. settle must re-read the DB and find LIVE_TRADED.
+    trade = _record_pending_trade(option, status="LIVE_TRADED")
+    trade["status"] = "LIVE_PENDING"
+    settings = _live_settings()
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.script(
+        "POST",
+        "/v2/orders",
+        {"orderId": "E1", "orderStatus": "TRADED", "filledQty": 65, "quantity": 65},
+    )
+    client = fake_dhan_client(replay, monkeypatch)
+
+    result = close_open_trade(trade, client=client, app_settings=settings, reason="manual close")
+
+    assert result["status"] == "CLOSED"
+    assert replay.count("GET", "/v2/orders") == 0
+    assert replay.count("POST", "/v2/orders") == 1
+
+
+def test_skip_broker_exit_never_calls_settle_pending_entry(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+    monkeypatch.setattr("index_ai.notify.send", lambda *a, **k: None)
+
+    calls: list[int] = []
+
+    def _raise_if_called(*a, **k):
+        calls.append(1)
+        raise AssertionError("settle_pending_entry must not be called when skip_broker_exit=True")
+
+    import index_ai.dhan_orders as dhan_orders_mod
+
+    monkeypatch.setattr(dhan_orders_mod, "settle_pending_entry", _raise_if_called)
+
+    option = _single_leg_pending_option()
+    trade = _record_pending_trade(option)
+    settings = _live_settings()
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    client = fake_dhan_client(replay, monkeypatch)
+
+    result = close_open_trade(
+        trade, client=client, app_settings=settings, reason="synced", skip_broker_exit=True
+    )
+
+    assert not calls
+    assert result["status"] in {"CLOSED", "ALREADY_CLOSED"}
+    assert replay.count("GET", "/v2/orders") == 0
+    assert replay.count("POST", "/v2/orders") == 0
+    assert replay.count("DELETE", "/v2/orders/321") == 0
+
+
+def test_live_orders_not_enabled_never_calls_settle_pending_entry(monkeypatch) -> None:
+    """When live orders are not enabled (disarmed / not in Live mode), the new
+    route is a no-op -- this plan never touches that pre-existing path. Current
+    (pre- and post-this-plan, unchanged) behaviour for a disarmed pending row is
+    to close the journal row using an estimated price without ever contacting
+    Dhan -- verified empirically against the real close_open_trade/
+    _close_open_trade_locked code, not assumed from the plan's own prose."""
+    from index_ai.exit import close_open_trade
+
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+    monkeypatch.setattr("index_ai.notify.send", lambda *a, **k: None)
+
+    calls: list[int] = []
+
+    def _raise_if_called(*a, **k):
+        calls.append(1)
+        raise AssertionError("settle_pending_entry must not be called when live orders disabled")
+
+    import index_ai.dhan_orders as dhan_orders_mod
+
+    monkeypatch.setattr(dhan_orders_mod, "settle_pending_entry", _raise_if_called)
+
+    option = _single_leg_pending_option()
+    trade = _record_pending_trade(option)
+
+    from index_ai.config import AppSettings, DhanSettings, RiskSettings
+
+    disarmed_settings = AppSettings(
+        dhan=DhanSettings(
+            client_id="1000000001",
+            access_token="test-token",
+            api_base_url="https://api.dhan.co/v2",
+            api_key="",
+            api_secret="",
+            auth_base_url="https://auth.dhan.co",
+            token_expiry="",
+        ),
+        risk=RiskSettings(
+            trading_mode="LIVE",
+            allow_live_trading=False,  # disarmed -- live_orders_enabled() is False
+            allow_option_buying=True,
+            allow_option_selling=True,
+            max_losing_trades_per_day=3,
+            max_daily_loss_rupees=6000.0,
+            trailing_stop_index_points=1.0,
+            min_confidence=0.55,
+            max_profit_cap_rupees=None,
+        ),
+    )
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    client = fake_dhan_client(replay, monkeypatch)
+
+    result = close_open_trade(
+        trade, client=client, app_settings=disarmed_settings, reason="manual close"
+    )
+
+    assert not calls
+    assert replay.count("GET", "/v2/orders") == 0
+    assert replay.count("DELETE", "/v2/orders/321") == 0
+    assert replay.count("POST", "/v2/orders") == 0
+    # The journal row still gets closed (unchanged pre-existing behaviour for a
+    # disarmed row) -- no broker order was ever sent for it.
+    assert result["status"] == "CLOSED"
+
+
 def test_exit_with_no_trade_keeps_random_correlation_ids(monkeypatch) -> None:
     from index_ai.dhan_orders import place_live_exit_orders
 

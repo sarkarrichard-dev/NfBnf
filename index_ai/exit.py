@@ -192,6 +192,40 @@ def close_open_trade(
     trade_id = str(trade.get("id") or "")
     if not trade_id:
         raise ValueError("trade id required")
+
+    # Settle a still-working entry (LIVE_SENT / LIVE_PENDING) BEFORE taking the
+    # exit lock below. settle_pending_entry takes the per-instrument execution
+    # lock (the same one execute_plan holds while placing) -- taking the exit
+    # lock first here and settle's instrument lock second would let this call
+    # deadlock against a concurrent execute_plan that holds the instrument
+    # lock while it journals the entry. Lock order stays instrument -> exit,
+    # never the other way round.
+    if (
+        not skip_broker_exit
+        and client is not None
+        and str(trade.get("mode") or "").upper() == "LIVE"
+        and str(trade.get("status") or "").upper() in {"LIVE_SENT", "LIVE_PENDING"}
+    ):
+        from index_ai.dhan_orders import live_orders_enabled, settle_pending_entry
+
+        if live_orders_enabled(app_settings):
+            settled = settle_pending_entry(client, trade, settings=app_settings)
+            settled_status = str(settled.get("status") or "")
+            if settled_status == "CANCELLED":
+                return {
+                    "status": "CANCELLED",
+                    "trade_id": trade_id,
+                    "reason": settled.get("reason"),
+                }
+            if settled_status == "LIVE_TRADED":
+                trade = settled.get("trade") or trade
+            else:
+                return {
+                    "status": "BLOCKED",
+                    "trade_id": trade_id,
+                    "reason": settled.get("reason"),
+                }
+
     with _exit_lock(trade_id):
         return _close_open_trade_locked(
             trade,

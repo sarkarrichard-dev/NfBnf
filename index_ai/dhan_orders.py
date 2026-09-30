@@ -1243,6 +1243,208 @@ def sync_trade_broker_status(
     return {**trade, "status": agg_status, "option": option}
 
 
+def _alert_settle_partial(
+    trade_id: str, option: dict[str, Any], leg_statuses: dict[str, str]
+) -> None:
+    """Same "may be open on Dhan" wording as `_alert_legs_possibly_open`, but
+    scoped to only the legs `settle_pending_entry` found TRADED when a close
+    was requested mid-fill -- those are the ones that genuinely need a human
+    to look, the cancelled/rejected/never-reached legs do not."""
+    legs = option.get("legs")
+    descs: list[str] = []
+    if isinstance(legs, list) and legs:
+        for leg in legs:
+            if not isinstance(leg, dict):
+                continue
+            oid = _order_id_str(leg.get("broker_order_id"))
+            if oid and leg_statuses.get(oid) in _FILLED_STATUSES:
+                descs.append(
+                    f"{leg.get('transaction_type')} {leg.get('option_type')} "
+                    f"{leg.get('strike')} (order {oid})"
+                )
+    else:
+        for oid, st in leg_statuses.items():
+            if st in _FILLED_STATUSES:
+                descs.append(
+                    f"{option.get('transaction_type')} {option.get('option_type')} "
+                    f"{option.get('strike')} (order {oid})"
+                )
+    if not descs:
+        return
+    try:
+        from index_ai import notify
+
+        notify.alert(
+            "A live entry was cancelled while only partly filled and these legs are "
+            "open on Dhan and need checking — nothing more was sent: " + "; ".join(descs),
+            key=f"settle-partial:{trade_id}",
+        )
+    except Exception:
+        pass
+
+
+def settle_pending_entry(
+    client: DhanClient,
+    trade: dict[str, Any],
+    *,
+    settings: AppSettings,
+) -> dict[str, Any]:
+    """Cancel a still-working India entry (Close/Close-all/stop/square-off
+    requested while the row is LIVE_SENT or LIVE_PENDING) and settle from
+    Dhan's own order book (D-06) -- the India mirror of Delta's
+    ``settle_entry``. A cancel reply can lose the race to a fill, so only a
+    fresh read of the book *after* the cancel attempt decides the outcome,
+    never the DELETE response itself. Never re-sends an entry leg and never
+    places an exit order itself -- the caller (``exit.close_open_trade``)
+    decides what to do with a LIVE_TRADED result. Runs entirely under the
+    same per-instrument lock ``execute_plan`` holds while placing (D-06/D-07,
+    ORD-01) -- no other lock is held at the same time.
+
+    Returns ``{"status": ..., "trade": <fresh row or None>, "reason": "..."}``.
+    ``status`` is one of ``CANCELLED`` / ``LIVE_TRADED`` / ``UNRESOLVED`` /
+    ``ALREADY_CLOSED`` / any other current row status (a fill or rejection
+    that already won before the lock was taken -- the caller decides what
+    that means).
+    """
+    from index_ai.execution_safety import acquire_execution_lock
+    from index_ai.learning import (
+        _row_to_trade,
+        connect,
+        reject_live_trade,
+        sanitize_rejected_option,
+    )
+
+    trade_id = str(trade.get("id") or "")
+    instrument_key = str(
+        trade.get("instrument") or (trade.get("option") or {}).get("instrument") or "NIFTY"
+    )
+
+    with acquire_execution_lock(instrument_key):
+        with connect() as db:
+            row = db.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+        if row is None:
+            return {"status": "ALREADY_CLOSED", "trade": None, "reason": "trade not found"}
+        fresh = _row_to_trade(row)
+        if fresh.get("pnl") is not None:
+            return {"status": "ALREADY_CLOSED", "trade": fresh, "reason": "already closed"}
+
+        status = str(fresh.get("status") or "").upper()
+        if status not in {"LIVE_SENT", "LIVE_PENDING"}:
+            return {"status": status, "trade": fresh, "reason": "already resolved"}
+
+        def _alert_unknown() -> None:
+            try:
+                from index_ai import notify
+
+                notify.alert(
+                    f"Dhan did not answer while cancelling a pending {instrument_key} "
+                    "entry — nothing was sent. Please check the order on Dhan.",
+                    key=f"settle-unknown:{trade_id}",
+                )
+            except Exception:
+                pass
+
+        try:
+            book = build_order_book_index(client, strict=True)
+            fills = build_trade_fill_index(client, strict=True)
+        except Exception:
+            _alert_unknown()
+            return {
+                "status": "UNRESOLVED",
+                "trade": fresh,
+                "reason": "Dhan did not answer, so nothing was sent",
+            }
+
+        option = dict(fresh.get("option") or {})
+        broker_orders = option.get("broker_orders")
+        unconfirmed = (
+            [str(x) for x in (broker_orders.get("unconfirmed_correlation_ids") or []) if str(x)]
+            if isinstance(broker_orders, dict)
+            else []
+        )
+        order_ids = [
+            _order_id_str(x) for x in (option.get("broker_order_ids") or []) if _order_id_str(x)
+        ]
+        never_reached: list[str] = []
+        for cid in unconfirmed:
+            found_oid = None
+            for row_book in book.values():
+                if str(row_book.get("correlationId") or "") == cid:
+                    found_oid = _order_id_str(row_book.get("orderId"))
+                    break
+            if found_oid:
+                if found_oid not in order_ids:
+                    order_ids.append(found_oid)
+            else:
+                never_reached.append(cid)
+
+        def _leg_statuses() -> dict[str, str]:
+            out: dict[str, str] = {}
+            for oid in order_ids:
+                parsed = fetch_order_status(client, oid, book_index=book, trade_fill_index=fills)
+                out[oid] = resolve_leg_broker_status(
+                    oid, parsed, trade_fill_index=fills, strict_trade_book=True
+                )
+            return out
+
+        leg_statuses = _leg_statuses()
+
+        pending_ids = [oid for oid, st in leg_statuses.items() if st in _PENDING_STATUSES]
+        if pending_ids:
+            for oid in pending_ids:
+                try:
+                    client.cancel_order(oid)
+                except Exception:
+                    pass  # the re-read below decides, never the cancel reply
+            try:
+                book = build_order_book_index(client, strict=True)
+                fills = build_trade_fill_index(client, strict=True)
+            except Exception:
+                _alert_unknown()
+                return {
+                    "status": "UNRESOLVED",
+                    "trade": fresh,
+                    "reason": "Dhan did not answer, so nothing was sent",
+                }
+            leg_statuses = _leg_statuses()
+
+        statuses = list(leg_statuses.values())
+        total_legs = len(order_ids) + len(never_reached)
+        all_bad = total_legs > 0 and all(st in _REJECTED_STATUSES for st in statuses)
+        all_traded = (
+            not never_reached and bool(order_ids) and all(st == "TRADED" for st in statuses)
+        )
+
+        if all_bad:
+            reject_live_trade(
+                trade_id,
+                "cancelled before it filled — close requested while the entry was still pending",
+                option=sanitize_rejected_option(option),
+            )
+            return {
+                "status": "CANCELLED",
+                "trade": fresh,
+                "reason": "cancelled before it filled",
+            }
+
+        if all_traded:
+            updated = sync_trade_broker_status(
+                fresh, client, book_index=book, trade_fill_index=fills
+            )
+            return {
+                "status": str(updated.get("status") or "LIVE_TRADED"),
+                "trade": updated,
+                "reason": "entry filled before the cancel took effect",
+            }
+
+        _alert_settle_partial(trade_id, option, leg_statuses)
+        return {
+            "status": "UNRESOLVED",
+            "trade": fresh,
+            "reason": "entry partly filled — nothing more sent, check Dhan",
+        }
+
+
 def build_position_index(client: DhanClient, *, strict: bool = False) -> dict[int, int]:
     """Map security_id -> net qty from GET /positions (includes carryforward)."""
     index: dict[int, int] = {}
