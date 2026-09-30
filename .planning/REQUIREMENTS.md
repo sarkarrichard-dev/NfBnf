@@ -19,7 +19,12 @@ Requirements for the first outside subscriber. Each maps to a roadmap phase.
 - [ ] **STRAT-01**: The option buy lane's entries are reworked to raise its
   real (live-journal) win rate toward Richard's ≥65% precision bar — the
   acknowledged weak lane (`memory/strategy-findings.md`,
-  `memory/strategy-analysis-and-simplification-directive.md`).
+  `memory/strategy-analysis-and-simplification-directive.md`). Phase 1 built
+  the tightening gates and proved the measuring tools work, but Richard's
+  own decision on the real-data test was Hold (see
+  `.planning/phases/01-strategy-fixes/01-04-SUMMARY.md`) — nothing is
+  switched on, so the win rate has not actually moved. Stays open for a
+  future attempt.
 - [x] **STRAT-02**: Any strategy-parameter change goes through the existing
   confidence ladder (~15 trades observe-only, ~40+ trades human-approved
   suggestion) — no shortcutting the ladder to ship a "fix" faster.
@@ -194,7 +199,7 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| STRAT-01 | Phase 1 | Pending |
+| STRAT-01 | Phase 1 | Pending — Hold decision, see 01-04-SUMMARY.md |
 | STRAT-02 | Phase 1 | Complete |
 | STRAT-03 | Phase 1 | Complete |
 | ORD-01 | Phase 2 | Pending |
