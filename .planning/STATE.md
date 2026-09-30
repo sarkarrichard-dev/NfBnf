@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 current_phase: 2
 current_phase_name: Order Placing & Tracking
 status: executing
-stopped_at: Completed 02-04-PLAN.md
-last_updated: "2026-09-30T22:21:53.702Z"
+stopped_at: Completed 02-05-PLAN.md
+last_updated: "2026-09-30T22:38:04.904Z"
 last_activity: 2026-09-30
 last_activity_desc: Phase 2 execution started
-state_head: bfd544148ad76e9b6a313ad55a07ffa2bcf2e60a
+state_head: 57b79bf38e49c4de2defb7c2e755d7e8a64a7228
 progress:
   total_phases: 10
   completed_phases: 1
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-09-30)
 ## Current Position
 
 Phase: 2 (Order Placing & Tracking) — EXECUTING
-Plan: 5 of 7
+Plan: 6 of 7
 Status: Ready to execute
 Last activity: 2026-09-30 — Phase 2 execution started
 
@@ -66,6 +66,7 @@ Progress: [█░░░░░░░░░] 10%
 | Phase 02 P02 | 55 min | 2 tasks | 3 files |
 | Phase 02-order-placing-tracking P03 | 55 min | 3 tasks | 6 files |
 | Phase 02 P04 | 22 min | 2 tasks | 5 files |
+| Phase 02-order-placing-tracking P05 | 38min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -93,6 +94,8 @@ Recent decisions affecting current work:
 - [Phase 2]: 02-03: _EXIT_ATTEMPTED is a bare in-process set (no persistence) -- documented ceiling is a server restart forgets it; upgrade path is persisting the flag on the trade row
 - [Phase 2]: 02-04: settle_pending_entry cancels a still-working India entry under the per-instrument lock, re-reading Dhan's order book strictly after the cancel attempt (never trusting the DELETE reply) to decide CANCELLED vs LIVE_TRADED vs UNRESOLVED
 - [Phase 2]: 02-04: wait_for_inflight_entries adds no new lock -- it snapshots and acquires/releases the existing per-instrument locks so India Close-all waits for an in-flight entry placement before reading open_trades()
+- [Phase 2]: 02-05: sync_open_live_trades now lists trades before any broker call and builds all three Dhan indexes with strict=True inside one try, so a disconnect aborts before touching a row instead of reading swallow-to-{} as Dhan showing nothing (ORD-02, D-07)
+- [Phase 2]: 02-05: reconcile() removed its early no-open-live-trades return so an untracked Dhan position (ORPHAN_BROKER) is caught even with nothing open; a failed strict position read now aborts with ok=False + one alert instead of reading as every position gone
 
 ### Pending Todos
 
@@ -114,6 +117,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-30T22:21:53.403Z
-Stopped at: Completed 02-04-PLAN.md
+Last session: 2026-09-30T22:38:04.558Z
+Stopped at: Completed 02-05-PLAN.md
 Resume file: None
