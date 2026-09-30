@@ -150,6 +150,33 @@ class _NoSleepTime:
         return None
 
 
+def fake_dhan_client(replay: BrokerReplay, monkeypatch: Any = None) -> Any:
+    """A real `DhanClient` wired to `replay` via `httpx.MockTransport` — every
+    retry/error/result-unwrapping code path is the real one, only the network
+    hop is faked."""
+    from index_ai.config import DhanSettings
+    from index_ai.dhan import DhanClient
+
+    settings = DhanSettings(
+        client_id="1000000001",
+        access_token="test-token",
+        api_base_url="https://api.dhan.co/v2",
+        api_key="",
+        api_secret="",
+        auth_base_url="https://auth.dhan.co",
+        token_expiry="",
+    )
+    client = DhanClient(settings, transport=httpx.MockTransport(replay.handler))
+    if monkeypatch is not None:
+        import index_ai.dhan as _dhan_mod
+        import index_ai.dhan_auth as _dhan_auth_mod
+
+        monkeypatch.setattr(_dhan_auth_mod, "auto_refresh_dhan_token", lambda *a, **k: {})
+        monkeypatch.setattr(_dhan_mod._limiter, "wait", lambda: None)
+        monkeypatch.setattr(_dhan_mod, "time", _NoSleepTime(_dhan_mod.time))
+    return client
+
+
 def fake_delta_client(replay: BrokerReplay, monkeypatch: Any = None) -> Any:
     """A real `DeltaClient` wired to `replay` via `httpx.MockTransport` — every
     signing/retry/error/result-unwrapping code path is the real one, only the

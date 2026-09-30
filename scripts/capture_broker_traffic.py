@@ -4,10 +4,13 @@ refuses anything that is not a GET before it ever reaches the network, so
 this script cannot place, cancel or modify a real order.
 
     python -m scripts.capture_broker_traffic --broker delta
+    python -m scripts.capture_broker_traffic --broker dhan
+    python -m scripts.capture_broker_traffic --broker all
 
-Only ``--broker delta`` exists this plan. Plan 02-03 adds ``--broker dhan``
-(REST + journal extraction) and plan 02-06 adds ``--feed-seconds`` (raw feed
-frames) to this same file/script.
+``--broker dhan`` also extracts real placement/status responses already
+sitting in the app's own journal (a live GET capture cannot reach a
+historical fill). Plan 02-06 adds ``--feed-seconds`` (raw feed frames) to
+this same file/script.
 """
 
 from __future__ import annotations
@@ -161,12 +164,140 @@ def capture_delta() -> int:
     return 0
 
 
+def _dhan_journal_rows() -> list[dict[str, Any]]:
+    """Real placement/status responses already sitting in the app's own
+    journal (source "journal") -- a live GET capture cannot reach a
+    historical fill. Read-only: opened via a sqlite3 URI in mode=ro so this
+    can never write to the real journal."""
+    import sqlite3
+
+    from index_ai.config import DB_PATH
+
+    rows: list[dict[str, Any]] = []
+    if not DB_PATH.exists():
+        return rows
+    uri = f"file:{DB_PATH.as_posix()}?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True)
+        conn.row_factory = sqlite3.Row
+        db_rows = conn.execute(
+            """
+            SELECT option_json FROM trades
+            WHERE upper(mode) = 'LIVE' AND option_json LIKE '%broker_orders%'
+            ORDER BY created_at DESC LIMIT 10
+            """
+        ).fetchall()
+        conn.close()
+    except Exception as exc:
+        print(f"journal extraction skipped: {exc}")
+        return rows
+
+    for r in db_rows:
+        try:
+            option = json.loads(r["option_json"])
+        except Exception:
+            continue
+        broker_orders = option.get("broker_orders")
+        if not isinstance(broker_orders, dict):
+            continue
+        entries: list[dict[str, Any]] = []
+        legs = broker_orders.get("legs")
+        if isinstance(legs, list) and legs:
+            for leg in legs:
+                if isinstance(leg, dict):
+                    entries.append(leg)
+        elif isinstance(broker_orders.get("response"), dict):
+            entries.append(broker_orders)
+
+        for entry in entries:
+            raw_reply = entry.get("raw") if isinstance(entry.get("raw"), dict) else entry.get(
+                "response"
+            )
+            final_reply = entry.get("response") if isinstance(entry.get("response"), dict) else raw_reply
+            captured_at = datetime.now(timezone.utc).isoformat()
+            if isinstance(raw_reply, dict):
+                rows.append(
+                    {
+                        "captured_at": captured_at,
+                        "broker": "dhan",
+                        "source": "journal",
+                        "method": "POST",
+                        "path": "/v2/orders",
+                        "params": {},
+                        "status": 200,
+                        "body": raw_reply,
+                    }
+                )
+            order_id = (final_reply or {}).get("orderId") if isinstance(final_reply, dict) else None
+            if order_id:
+                rows.append(
+                    {
+                        "captured_at": captured_at,
+                        "broker": "dhan",
+                        "source": "journal",
+                        "method": "GET",
+                        "path": f"/v2/orders/{order_id}",
+                        "params": {},
+                        "status": 200,
+                        "body": final_reply,
+                    }
+                )
+    return rows
+
+
+def capture_dhan() -> int:
+    from index_ai.config import settings
+    from index_ai.dhan import DhanClient
+
+    cfg = settings()
+    if not cfg.dhan.ready:
+        print("Dhan client-id / access-token not configured — nothing to capture.")
+        return 1
+
+    inner = httpx.HTTPTransport(local_address="0.0.0.0")
+    rec = RecordingTransport(inner, broker="dhan")
+    client = DhanClient(cfg.dhan, transport=rec)
+    calls = (
+        ("/v2/orders", client.list_today_orders),
+        ("/v2/trades", client.list_today_trades),
+        ("/v2/positions", client.list_positions),
+    )
+    for path, fn in calls:
+        try:
+            result = fn()
+            count = len(result) if isinstance(result, list) else (1 if result else 0)
+            print(f"{path}: status=200 count={count}")
+        except Exception as exc:
+            print(f"{path}: error={exc}")
+
+    journal_rows = _dhan_journal_rows()
+
+    secrets = [cfg.dhan.access_token, str(cfg.dhan.client_id)]
+    rows = [redact(r, secrets) for r in rec.rows] + [redact(r, secrets) for r in journal_rows]
+    out_path = FIXTURES_DIR / "dhan_rest.jsonl"
+    _write_jsonl(out_path, rows)
+
+    if _secret_leaked(out_path, secrets):
+        out_path.unlink(missing_ok=True)
+        print("REFUSING TO COMMIT: a configured secret was found in the written file — deleted.")
+        return 1
+
+    print(f"wrote {out_path} ({len(rows)} rows)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--broker", choices=["delta"], required=True)
+    parser.add_argument("--broker", choices=["delta", "dhan", "all"], required=True)
     args = parser.parse_args(argv)
     if args.broker == "delta":
         return capture_delta()
+    if args.broker == "dhan":
+        return capture_dhan()
+    if args.broker == "all":
+        rc_delta = capture_delta()
+        rc_dhan = capture_dhan()
+        return rc_delta or rc_dhan
     print(f"unknown --broker {args.broker!r}")
     return 1
 

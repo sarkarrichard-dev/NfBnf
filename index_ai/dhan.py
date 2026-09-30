@@ -77,8 +77,13 @@ def clamp_intraday_date_range(
 
 
 class DhanClient:
-    def __init__(self, settings: DhanSettings) -> None:
+    def __init__(
+        self, settings: DhanSettings, *, transport: httpx.BaseTransport | None = None
+    ) -> None:
         self.settings = settings
+        # Injectable transport seam — production code never names it; tests and
+        # scripts/capture_broker_traffic.py pass a MockTransport/RecordingTransport.
+        self._transport = transport
 
     def _headers(self, path: str = "") -> dict[str, str]:
         """Chart/historical APIs use access-token only; market feed & orders need client-id."""
@@ -118,17 +123,25 @@ class DhanClient:
             # Non-fatal: request still proceeds with current token.
             pass
 
+        http_method = method.upper()
         for attempt in range(_MAX_RETRIES):
             _limiter.wait()
             try:
-                with httpx.Client(timeout=25) as client:
+                with httpx.Client(timeout=25, transport=self._transport) as client:
                     headers = self._headers(path)
-                    if method.upper() == "GET":
+                    if http_method == "GET":
                         response = client.get(url, headers=headers)
+                    elif http_method == "DELETE":
+                        response = client.delete(url, headers=headers)
                     else:
                         response = client.post(url, headers=headers, json=payload or {})
             except httpx.HTTPError as exc:
                 last_exc = exc
+                # A transport error on a mutating call (POST/DELETE) may mean Dhan
+                # already received it — retrying could place or cancel a second
+                # order, so we fail at once instead (mirrors crypto/delta/client.py).
+                if http_method != "GET":
+                    raise
                 if attempt + 1 < _MAX_RETRIES:
                     time.sleep(min(8.0, 1.5 * (attempt + 1)))
                     continue
@@ -201,6 +214,12 @@ class DhanClient:
             raise ValueError("order_id is required")
         return self._request("GET", f"/orders/{oid}", context="order status")
 
+    def cancel_order(self, order_id: str) -> dict[str, Any]:
+        oid = str(order_id or "").strip()
+        if not oid:
+            raise ValueError("order_id is required")
+        return self._request("DELETE", f"/orders/{oid}", context="cancel order")
+
     def list_today_orders(self) -> list[dict[str, Any]]:
         """All orders for the current session (order book)."""
         data = self._request("GET", "/orders", context="order book")
@@ -227,8 +246,12 @@ class DhanClient:
         ]
         data = self._post(
             "/margincalculator/multi",
-            {"dhanClientId": cid, "includePosition": False, "includeOrder": False,
-             "scripList": scrips},
+            {
+                "dhanClientId": cid,
+                "includePosition": False,
+                "includeOrder": False,
+                "scripList": scrips,
+            },
             context="basket margin",
         )
 
