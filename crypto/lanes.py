@@ -42,6 +42,13 @@ logger = logging.getLogger(__name__)
 # Upgrade to per-key locking only if a real throughput need shows up.
 _STATE_LOCK = threading.Lock()
 
+# D-08: three 60-second scans (index_ai/server.py:215-239 sleeps 60s between
+# scans). One failed scan is a network blip and must not page Richard; three
+# in a row is a real outage, and three minutes is nowhere near the "hours"
+# an unconfirmed position could otherwise sit silently. A fixed constant, not
+# an env key — nothing here needs per-deployment tuning.
+UNCLEAR_ALERT_SECONDS = 180
+
 _ICHI_DAYS = {"15m": 4, "30m": 8, "1h": 15, "2h": 25, "4h": 45, "6h": 60, "1d": 260}
 
 # Every scan cycle's events (enter/exit/wait/error), most-recent-first, so a
@@ -403,9 +410,13 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
     if live:
         today = now_utc.date().isoformat()
         if st.get("_live_reconciled") != today:
-            executor.reconcile(client)
-            st["_live_reconciled"] = today
-            journal.save_state(st)
+            issues = executor.reconcile(client)
+            # An unreadable run is not a clean reconcile — retry next scan
+            # instead of marking today done (ORD-02); reconcile() itself
+            # alerts once when local live positions exist to confirm.
+            if not any(i.startswith(executor.RECONCILE_UNREADABLE) for i in issues):
+                st["_live_reconciled"] = today
+                journal.save_state(st)
 
     strategies = _enabled_strategies(s)
     _prune_removed_strategies(st, strategies, client, fx, now_utc, events)
@@ -539,7 +550,7 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                     live
                     and action != "exit"
                     and (slot.get("position") or {}).get("mode") == "live"
-                    and _reap_exchange_close(client, slot, strat, sym, fx, ev)
+                    and _reap_exchange_close(client, slot, strat, sym, fx, ev, now_utc)
                 ):
                     slot["strategy"]["position"] = None
                     st[key] = slot
@@ -700,15 +711,41 @@ def _live_close(client, contract, pos: dict, ev: dict) -> bool:
         return False
 
 
-def _reap_exchange_close(client, slot: dict, strat: str, sym: str, fx: float, ev: dict) -> bool:
+def _reap_exchange_close(
+    client, slot: dict, strat: str, sym: str, fx: float, ev: dict, now_utc: datetime
+) -> bool:
     """A live position the strategy is NOT exiting this scan — has it been closed
     on the exchange (bracket stop / manual / liquidation)? If Delta shows flat,
-    journal the close at the last mark and clear state. Returns True if reaped."""
+    journal the close at the last mark and clear state. Returns True if reaped.
+
+    Delta unreachable ("unknown", Research Pitfall 3) is never read as flat: the
+    position is kept, `pos["unknown_since"]` tracks when it first went unclear,
+    and a plain-language alert fires once after UNCLEAR_ALERT_SECONDS (D-08),
+    de-duped hourly by notify's own key window. "open" clears the marker."""
     pos = slot.get("position") or {}
     if pos.get("mode") != "live":
         return False
-    if executor.position_state(client, sym) != "flat":
+    state = executor.position_state(client, sym)
+    if state == "unknown":
+        since_raw = pos.get("unknown_since")
+        if not since_raw:
+            pos["unknown_since"] = now_utc.isoformat()
+        else:
+            try:
+                since = datetime.fromisoformat(since_raw)
+            except ValueError:
+                since = now_utc
+            if (now_utc - since).total_seconds() >= UNCLEAR_ALERT_SECONDS:
+                notify.crypto_alert(
+                    f"⚠️ <b>CRYPTO POSITION UNCONFIRMED</b> — cannot confirm the {sym} "
+                    "position on Delta for over 3 minutes, still retrying, check Delta",
+                    key=f"c-unknown:{sym}:{pos.get('strategy')}",
+                )
         return False
+    if state == "open":
+        pos.pop("unknown_since", None)
+        return False
+    # state == "flat" — closed on the exchange (bracket stop / manual / liq)
     try:
         mark = float(market_data.ticker(sym, client=client).get("mark_price") or 0) or None
     except Exception:
@@ -803,6 +840,17 @@ def _resolve_unclear_entry(
         product_id=marker.get("product_id", contract.product_id),
     )
     if settle["verdict"] == "UNKNOWN":
+        since_raw = marker.get("since")
+        try:
+            since = datetime.fromisoformat(since_raw) if since_raw else now_utc
+        except ValueError:
+            since = now_utc
+        if (now_utc - since).total_seconds() >= UNCLEAR_ALERT_SECONDS:
+            notify.crypto_alert(
+                f"⚠️ <b>CRYPTO ORDER STILL UNCONFIRMED</b> — the {sym} order still cannot "
+                "be confirmed after 3 minutes, still retrying, check Delta",
+                key=f"c-unclear-stuck:{sym}:{strat}",
+            )
         events.append(
             {
                 "strategy": strat,
@@ -1278,8 +1326,17 @@ def close_all_positions_manual(client: DeltaClient | None = None) -> dict[str, A
     position (paper and live), one at a time, each through the exact same
     close_position_manual() path (and its lock) as an individual Close click.
     A key that fails (no live price, a failed live order) doesn't stop the
-    rest — the caller sees which closed and which didn't."""
-    keys = [k for k, v in journal.load_state().items() if isinstance(v, dict) and v.get("position")]
+    rest — the caller sees which closed and which didn't.
+
+    Keys are read under _STATE_LOCK (ORD-01) — this waits for any in-flight
+    scan, including one in the middle of POST /v2/orders, so a position being
+    opened at the exact moment Close-all is pressed is still included. The
+    lock is released before the per-key closes (close_position_manual takes
+    it itself and it is not re-entrant)."""
+    with _STATE_LOCK:
+        keys = [
+            k for k, v in journal.load_state().items() if isinstance(v, dict) and v.get("position")
+        ]
     client = client or DeltaClient(crypto_settings())
     results = {k: close_position_manual(k, client) for k in keys}
     failed = {k: r.get("error") for k, r in results.items() if not r.get("ok")}
