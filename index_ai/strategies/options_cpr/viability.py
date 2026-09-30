@@ -26,6 +26,14 @@ and getting worse (first-half -Rs 51/trade, second-half -Rs 302). The
 ``entry_guard`` viability gate that consumes this verdict ships **default-off**
 (``OPTIONS_REQUIRE_VIABLE``) — the lane's own signal was just retimed to 5m/15m
 (PR #41) and hasn't earned its way back yet; re-measure once it has ~30 trades.
+
+Buy-lane rows removed 2026-09-30 (Phase 1, STRAT-03): they were the
+2026-08-29 Black-Scholes-proxy backtest, made before real option-chain
+recording began on 2026-09-23, so they are not trustworthy as a rupee edge.
+The buy lane now reports UNMEASURED until a real number exists — either from
+``scripts/measure_viability_gross.py`` once the live buy lane has ~30 forward
+trades per index, or from the real-chain replay (``python -m
+index_ai.strategy_lab``, candidate ``live_buy_lane``).
 """
 
 from __future__ import annotations
@@ -45,17 +53,18 @@ UNMEASURED = "UNMEASURED"
 VIABLE_MULTIPLE = 1.30
 MARGINAL_MULTIPLE = 1.00
 
-# per-trade gross edge (rupees). Sell lane: re-measured 2026-09-09 from the real
-# journal (scripts/measure_viability_gross.py). Buy lane: still the 2026-08-29
-# backtest — live buy volume is under 30 trades/index, too thin to re-measure.
-# Re-run the script and update the sell rows once a lane clears ~30 forward trades.
+# per-trade gross edge (rupees). Sell rows: re-measured 2026-09-09 from the
+# real journal (scripts/measure_viability_gross.py). Buy rows removed
+# 2026-09-30 (Phase 1, STRAT-03) — they were the 2026-08-29 Black-Scholes-proxy
+# backtest, made before real option-chain recording began on 2026-09-23, and
+# are not trustworthy as rupees. The buy lane reports UNMEASURED until a real
+# number exists — from scripts/measure_viability_gross.py once the live buy
+# lane has ~30 forward trades per index, or from the real-chain replay
+# (python -m index_ai.strategy_lab, candidate live_buy_lane).
 OBSERVED_GROSS_PER_TRADE: dict[tuple[str, str], float] = {
     ("NIFTY", "sell"): 6.0,
     ("BANKNIFTY", "sell"): -178.0,
     ("SENSEX", "sell"): -57.0,
-    ("NIFTY", "buy"): -51.0,
-    ("BANKNIFTY", "buy"): -197.0,
-    ("SENSEX", "buy"): -80.0,
 }
 
 
@@ -211,8 +220,8 @@ if __name__ == "__main__":  # ponytail self-check
     assert n.verdict == NOT_VIABLE, n
     # a positive gross that clears the floor is viable (explicit override)
     assert viability("NIFTY", "sell", gross_per_trade=400.0).verdict in (VIABLE, MARGINAL)
-    # a negative-gross lane is never viable at any cost level
-    assert viability("NIFTY", "buy").verdict == NOT_VIABLE
+    # buy-lane rows were removed 2026-09-30 (STRAT-03) — no measured edge yet
+    assert viability("NIFTY", "buy").verdict == UNMEASURED
     # naked halves the order count
     from index_ai.strategies.options_cpr.config import with_overrides
 
