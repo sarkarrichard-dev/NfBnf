@@ -7,6 +7,8 @@ import time
 import uuid
 from typing import Any
 
+import httpx
+
 from index_ai.config import AppSettings
 from index_ai.dhan import DhanClient
 
@@ -107,7 +109,9 @@ def normalize_order_response(data: Any) -> dict[str, Any]:
     return out
 
 
-def build_order_book_index(client: DhanClient) -> dict[str, dict[str, Any]]:
+def build_order_book_index(
+    client: DhanClient, *, strict: bool = False
+) -> dict[str, dict[str, Any]]:
     """Map orderId -> latest row from GET /orders (one call per sync batch)."""
     index: dict[str, dict[str, Any]] = {}
     try:
@@ -117,11 +121,14 @@ def build_order_book_index(client: DhanClient) -> dict[str, dict[str, Any]]:
             if oid:
                 index[oid] = parsed
     except Exception:
-        pass
+        if strict:
+            raise
     return index
 
 
-def build_trade_fill_index(client: DhanClient) -> dict[str, dict[str, Any]]:
+def build_trade_fill_index(
+    client: DhanClient, *, strict: bool = False
+) -> dict[str, dict[str, Any]]:
     """Map orderId -> latest fill row from GET /trades (authoritative for executed orders)."""
     index: dict[str, dict[str, Any]] = {}
     try:
@@ -132,8 +139,33 @@ def build_trade_fill_index(client: DhanClient) -> dict[str, dict[str, Any]]:
             if oid:
                 index[oid] = row
     except Exception:
-        pass
+        if strict:
+            raise
     return index
+
+
+def order_outcome_unknown(exc: BaseException) -> bool:
+    """True when Dhan's reply to a request was lost (a transport error, or a
+    5xx) -- the request may or may not have reached Dhan. False for a
+    definite answer (a rejection, a validation error, ...)."""
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return False
+
+
+def find_order_by_correlation(client: DhanClient, correlation_id: str) -> dict[str, Any] | None:
+    """Ask Dhan's own order book whether `correlation_id` was accepted (D-06).
+    Lookup failures propagate -- the caller decides what "can't tell" means."""
+    cid = str(correlation_id or "")
+    if not cid:
+        return None
+    for row in client.list_today_orders():
+        parsed = normalize_order_response(row)
+        if str(parsed.get("correlationId") or "") == cid:
+            return parsed
+    return None
 
 
 def _merge_trade_fill(order_row: dict[str, Any], fill_row: dict[str, Any]) -> dict[str, Any]:
@@ -554,6 +586,143 @@ def live_orders_enabled(settings: AppSettings) -> bool:
     )
 
 
+class _OutcomeUnknown(Exception):
+    """Dhan's reply to an order request was lost AND its order book could not
+    be read either (D-07) -- the order's true outcome cannot be determined
+    right now. Never re-sent; the caller holds the slot as unconfirmed."""
+
+    def __init__(self, correlation_id: str, cause: BaseException) -> None:
+        super().__init__(f"order outcome unknown for {correlation_id}: {cause}")
+        self.correlation_id = correlation_id
+        self.cause = cause
+
+
+def _place_or_settle(
+    client: DhanClient,
+    *,
+    correlation_id: str,
+    **order_kwargs: Any,
+) -> dict[str, Any]:
+    """Place a market order; if the reply is lost, settle by asking Dhan's own
+    order book for `correlation_id` (D-06) instead of guessing or re-sending.
+    Never calls place_market_order a second time."""
+    try:
+        return client.place_market_order(correlation_id=correlation_id, **order_kwargs)
+    except Exception as exc:
+        if not order_outcome_unknown(exc):
+            raise
+        try:
+            found = find_order_by_correlation(client, correlation_id)
+        except Exception as lookup_exc:
+            raise _OutcomeUnknown(correlation_id, exc) from lookup_exc
+        if found is None:
+            # Dhan's own book shows no such order -- it never reached Dhan;
+            # the original lost-reply error is the honest answer here.
+            raise
+        found = dict(found)
+        found["_recovered_after_lost_reply"] = True
+        try:
+            from index_ai import notify
+
+            notify.alert(
+                "Dhan did not answer an order request, but its order book shows "
+                f"the order went through (correlation {correlation_id}) — it is "
+                "being tracked normally.",
+                key=f"lost-order:{correlation_id}",
+            )
+        except Exception:
+            pass
+        return found
+
+
+def _known_order_ids(responses: list[dict[str, Any]]) -> list[str]:
+    ids: list[str] = []
+    for r in responses:
+        oid = _order_id_str((r.get("response") or {}).get("orderId"))
+        if oid:
+            ids.append(oid)
+    return ids
+
+
+def _pending_entry_result(responses: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "status": "LIVE_PENDING",
+        "legs": responses,
+        "order_ids": _known_order_ids(responses),
+        "order_statuses": [order_status_label(r.get("response") or {}) for r in responses],
+    }
+
+
+def _alert_unconfirmed_entry(instrument_key: str, correlation_id: str) -> None:
+    try:
+        from index_ai import notify
+
+        notify.alert(
+            f"Dhan did not answer when placing the {instrument_key} order and its order "
+            "book cannot be read either. The order is being treated as NOT placed — "
+            "nothing will be re-sent, and the trade is held as unconfirmed so no second "
+            "order goes out until Dhan can confirm what happened.",
+            key=f"unconfirmed:{correlation_id}",
+        )
+    except Exception:
+        pass
+
+
+def _alert_partial_entry(base_id: str, responses: list[dict[str, Any]]) -> None:
+    legs_desc = [
+        f"{r['leg'].get('transaction_type')} {r['leg'].get('option_type')} "
+        f"{r['leg'].get('strike')} (order {(r.get('response') or {}).get('orderId')})"
+        for r in responses
+        if (r.get("response") or {}).get("orderId")
+    ]
+    if not legs_desc:
+        return
+    try:
+        from index_ai import notify
+
+        notify.alert(
+            "A live entry order failed partway through and these legs may be open on "
+            "Dhan and need checking: " + "; ".join(legs_desc),
+            key=f"partial-entry:{base_id}",
+        )
+    except Exception:
+        pass
+
+
+def _alert_legs_possibly_open(key: str, option: dict[str, Any]) -> None:
+    """Same "may be open on Dhan" wording as `_alert_partial_entry`, but for a
+    trade already persisted to the journal (sync-time resolution) rather than
+    a still-in-flight entry -- the shape of what identifies a leg differs."""
+    legs = option.get("legs")
+    descs: list[str] = []
+    if isinstance(legs, list) and legs:
+        for leg in legs:
+            if not isinstance(leg, dict):
+                continue
+            oid = leg.get("broker_order_id")
+            if not oid:
+                continue
+            descs.append(
+                f"{leg.get('transaction_type')} {leg.get('option_type')} "
+                f"{leg.get('strike')} (order {oid})"
+            )
+    else:
+        for oid in option.get("broker_order_ids") or []:
+            if oid:
+                descs.append(f"{option.get('transaction_type')} order {oid}")
+    if not descs:
+        return
+    try:
+        from index_ai import notify
+
+        notify.alert(
+            "A live order may be partly open on Dhan and needs checking: " + "; ".join(descs),
+            key=f"partial-entry:{key}",
+        )
+    except Exception:
+        pass
+
+
 def place_live_entry_orders(
     client: DhanClient,
     option: dict[str, Any],
@@ -586,26 +755,46 @@ def place_live_entry_orders(
         for idx, leg in enumerate(sequenced):
             leg_tx = str(leg["transaction_type"])
             leg_seg = str(leg["segment"])
-            raw = client.place_market_order(
-                security_id=int(leg["security_id"]),
-                exchange_segment=leg_seg,
-                transaction_type=leg_tx,
-                quantity=int(leg.get("quantity") or option.get("quantity") or 1),
-                correlation_id=f"idxai-{base_id}-{idx}"[:30],
-                product_type=order_product_type_for_leg(
-                    transaction_type=leg_tx,
+            correlation_id = f"idxai-{base_id}-{idx}"[:30]
+            try:
+                raw = _place_or_settle(
+                    client,
+                    correlation_id=correlation_id,
+                    security_id=int(leg["security_id"]),
                     exchange_segment=leg_seg,
-                ),
-            )
+                    transaction_type=leg_tx,
+                    quantity=int(leg.get("quantity") or option.get("quantity") or 1),
+                    product_type=order_product_type_for_leg(
+                        transaction_type=leg_tx,
+                        exchange_segment=leg_seg,
+                    ),
+                )
+            except _OutcomeUnknown:
+                _alert_unconfirmed_entry(instrument_key, correlation_id)
+                result = _pending_entry_result(responses)
+                result["unconfirmed_correlation_ids"] = [correlation_id]
+                return result
             parsed = normalize_order_response(raw)
             responses.append({"leg": leg, "response": parsed, "raw": raw})
-            if not order_response_ok(raw):
-                raise RuntimeError(
-                    f"Dhan rejected {leg.get('transaction_type')} {leg.get('option_type')} "
-                    f"strike {leg.get('strike')}: {order_rejection_detail(parsed)}"
-                )
-            _wait_hedge_before_short_legs(client, sequenced, responses, idx)
-        status, confirmed, _ = confirm_placed_orders(client, responses)
+            try:
+                if not order_response_ok(raw):
+                    raise RuntimeError(
+                        f"Dhan rejected {leg.get('transaction_type')} {leg.get('option_type')} "
+                        f"strike {leg.get('strike')}: {order_rejection_detail(parsed)}"
+                    )
+                _wait_hedge_before_short_legs(client, sequenced, responses, idx)
+            except Exception as exc:
+                if order_outcome_unknown(exc) and _known_order_ids(responses):
+                    return _pending_entry_result(responses)
+                _alert_partial_entry(base_id, responses)
+                raise
+        try:
+            status, confirmed, _ = confirm_placed_orders(client, responses)
+        except Exception as exc:
+            if order_outcome_unknown(exc) and _known_order_ids(responses):
+                return _pending_entry_result(responses)
+            _alert_partial_entry(base_id, responses)
+            raise
         for item, final in zip(responses, confirmed, strict=False):
             item["response"] = final
             item["order_status"] = order_status_label(final)
@@ -620,21 +809,43 @@ def place_live_entry_orders(
 
     single_tx = str(option["transaction_type"])
     single_seg = str(option["segment"])
-    raw = client.place_market_order(
-        security_id=int(option["security_id"]),
-        exchange_segment=single_seg,
-        transaction_type=single_tx,
-        quantity=int(option.get("quantity") or 1),
-        correlation_id=f"idxai-{base_id}"[:30],
-        product_type=order_product_type_for_leg(
-            transaction_type=single_tx,
+    correlation_id = f"idxai-{base_id}"[:30]
+    try:
+        raw = _place_or_settle(
+            client,
+            correlation_id=correlation_id,
+            security_id=int(option["security_id"]),
             exchange_segment=single_seg,
-        ),
-    )
+            transaction_type=single_tx,
+            quantity=int(option.get("quantity") or 1),
+            product_type=order_product_type_for_leg(
+                transaction_type=single_tx,
+                exchange_segment=single_seg,
+            ),
+        )
+    except _OutcomeUnknown:
+        _alert_unconfirmed_entry(instrument_key, correlation_id)
+        return {
+            "status": "LIVE_PENDING",
+            "legs": [],
+            "order_ids": [],
+            "order_statuses": [],
+            "unconfirmed_correlation_ids": [correlation_id],
+        }
     parsed = normalize_order_response(raw)
     if not order_response_ok(raw):
         raise RuntimeError(f"Dhan rejected order: {order_rejection_detail(parsed)}")
-    status, confirmed, _ = confirm_placed_orders(client, [{"response": parsed}])
+    try:
+        status, confirmed, _ = confirm_placed_orders(client, [{"response": parsed}])
+    except Exception as exc:
+        if order_outcome_unknown(exc) and parsed.get("orderId"):
+            return {
+                "status": "LIVE_PENDING",
+                "response": parsed,
+                "order_ids": [parsed.get("orderId")],
+                "order_statuses": [order_status_label(parsed)],
+            }
+        raise
     final = confirmed[0] if confirmed else parsed
     return {
         "status": status,
@@ -840,6 +1051,59 @@ def sync_trade_broker_status(
     )
 
     option = dict(trade.get("option") or {})
+    trade_id = str(trade.get("id") or "")
+
+    broker_orders_raw = option.get("broker_orders")
+    unconfirmed = (
+        [str(x) for x in (broker_orders_raw.get("unconfirmed_correlation_ids") or []) if str(x)]
+        if isinstance(broker_orders_raw, dict)
+        else []
+    )
+    if unconfirmed:
+        resolved_any = False
+        for correlation_id in unconfirmed:
+            try:
+                found = find_order_by_correlation(client, correlation_id)
+            except Exception:
+                # Order book still unreadable -- stay unconfirmed, try again
+                # next sync. Nothing is re-sent, nothing is journaled as gone.
+                return trade
+            if found is None:
+                existing_ids = [x for x in (option.get("broker_order_ids") or []) if x]
+                if existing_ids:
+                    _alert_legs_possibly_open(trade_id or correlation_id, option)
+                rejected_option = sanitize_rejected_option(option)
+                if trade_id:
+                    reason = (
+                        "order never reached Dhan (checked its order book)"
+                        if not existing_ids
+                        else "a leg never reached Dhan (checked its order book)"
+                    )
+                    reject_live_trade(trade_id, reason, option=rejected_option)
+                return {**trade, "status": "LIVE_REJECTED", "pnl": 0.0, "option": rejected_option}
+            oid = _order_id_str(found.get("orderId"))
+            if oid:
+                order_ids_list = [x for x in (option.get("broker_order_ids") or []) if x]
+                if oid not in order_ids_list:
+                    order_ids_list.append(oid)
+                option["broker_order_ids"] = order_ids_list
+                bo = dict(option.get("broker_orders") or {})
+                bo_ids = [x for x in (bo.get("order_ids") or []) if x]
+                if oid not in bo_ids:
+                    bo_ids.append(oid)
+                bo["order_ids"] = bo_ids
+                option["broker_orders"] = bo
+                resolved_any = True
+        if resolved_any:
+            bo = dict(option.get("broker_orders") or {})
+            bo["unconfirmed_correlation_ids"] = []
+            option["broker_orders"] = bo
+            if trade_id:
+                update_trade_status(
+                    trade_id, str(trade.get("status") or "LIVE_PENDING"), option=option
+                )
+            trade = {**trade, "option": option}
+
     order_ids = [
         _order_id_str(x) for x in (option.get("broker_order_ids") or []) if _order_id_str(x)
     ]
@@ -916,7 +1180,7 @@ def sync_trade_broker_status(
     return {**trade, "status": agg_status, "option": option}
 
 
-def build_position_index(client: DhanClient) -> dict[int, int]:
+def build_position_index(client: DhanClient, *, strict: bool = False) -> dict[int, int]:
     """Map security_id -> net qty from GET /positions (includes carryforward)."""
     index: dict[int, int] = {}
     try:
@@ -928,7 +1192,8 @@ def build_position_index(client: DhanClient) -> dict[int, int]:
             if sid:
                 index[sid] = net
     except Exception:
-        pass
+        if strict:
+            raise
     return index
 
 
