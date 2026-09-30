@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any
 
 import httpx
 import pytest
 
 from _fake_brokers import BrokerReplay, fake_dhan_client, load_traffic
+from index_ai.reconcile import GHOST_JOURNAL, ORPHAN_BROKER, OVER_FILLED, UNDER_FILLED
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -274,3 +276,200 @@ def test_sync_waits_for_instrument_lock(monkeypatch) -> None:
     t.join(timeout=5.0)
     assert not t.is_alive()
     assert "updated" in result
+
+
+# ── Task 2: reconciliation reads strictly, catches untracked positions, ─────
+# ── and tells Richard in plain words ─────────────────────────────────────────
+
+
+class _FakePositionsClient:
+    """Reconcile only ever calls ``list_positions()`` on its client -- a real
+    DhanClient/BrokerReplay is unnecessary machinery for testing reconcile.py
+    itself (Task 1's sync tests already exercise the real client end to end)."""
+
+    def __init__(
+        self, positions: list[dict] | None = None, *, raise_exc: BaseException | None = None
+    ) -> None:
+        self._positions = positions or []
+        self._raise_exc = raise_exc
+
+    def list_positions(self) -> list[dict]:
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        return self._positions
+
+
+def test_reconcile_disconnect_with_open_row_blocks_and_alerts(monkeypatch) -> None:
+    from index_ai.reconcile import reconcile
+
+    option = _single_leg_live_option()
+    trade_id = _record_live_traded_trade(option)
+    monkeypatch.setenv("RECONCILE_AUTO_REPAIR", "true")
+    alerts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key))
+    )
+    client = _FakePositionsClient(raise_exc=RuntimeError("boom"))
+
+    out = reconcile(client, mode="LIVE")
+
+    assert out["ok"] is False
+    assert out["error"].startswith("could not read broker positions")
+    assert out["issues"] == []
+    assert out["repaired"] == []
+    assert len(alerts) == 1
+    assert alerts[0][1] == "reconcile:unreadable"
+
+    row = _fetch_trade_row(trade_id)
+    assert row["status"] == "LIVE_TRADED"
+    assert row["pnl"] is None
+
+
+def test_reconcile_disconnect_no_open_rows_is_quiet(monkeypatch) -> None:
+    from index_ai.reconcile import reconcile
+
+    alerts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key))
+    )
+    client = _FakePositionsClient(raise_exc=RuntimeError("boom"))
+
+    out = reconcile(client, mode="LIVE")
+
+    assert out["ok"] is False
+    assert out["error"].startswith("could not read broker positions")
+    assert alerts == []
+
+
+def test_reconcile_ghost_journal_alerts_with_leg_label_and_repairs(monkeypatch) -> None:
+    from index_ai.reconcile import reconcile
+
+    option = _single_leg_live_option(security_id=54321, strike=25000, option_type="CALL")
+    trade_id = _record_live_traded_trade(option, instrument="NIFTY")
+    monkeypatch.setenv("RECONCILE_AUTO_REPAIR", "true")
+    alerts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key))
+    )
+    client = _FakePositionsClient(positions=[])  # Dhan holds nothing
+
+    out = reconcile(client, mode="LIVE")
+
+    assert out["ok"] is False
+    assert len(out["issues"]) == 1
+    assert out["issues"][0]["kind"] == GHOST_JOURNAL
+    assert len(alerts) == 1
+    text, key = alerts[0]
+    assert key == f"reconcile:54321:{GHOST_JOURNAL}"
+    assert "journal shows it open but Dhan holds nothing" in text
+    assert "NIFTY" in text and "25000" in text and "CALL" in text
+
+    assert out["repaired"] and out["repaired"][0]["trade_id"] == trade_id
+    row = _fetch_trade_row(trade_id)
+    assert row["status"] == "CLOSED_RECONCILED"
+
+
+def test_reconcile_orphan_with_no_open_rows_alerts(monkeypatch) -> None:
+    from index_ai.reconcile import reconcile
+
+    alerts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key))
+    )
+    client = _FakePositionsClient(positions=[{"securityId": 999, "netQty": 65}])
+
+    out = reconcile(client, mode="LIVE")
+
+    assert "skipped" not in out
+    assert len(out["issues"]) == 1
+    assert out["issues"][0]["kind"] == ORPHAN_BROKER
+    assert len(alerts) == 1
+    text, key = alerts[0]
+    assert key == f"reconcile:999:{ORPHAN_BROKER}"
+    assert "Dhan holds a position the system is not tracking" in text
+    assert "999" in text and "65" in text
+
+
+def test_reconcile_under_and_over_filled_each_alert(monkeypatch) -> None:
+    from index_ai.reconcile import reconcile
+
+    under_option = _single_leg_live_option(security_id=1001, quantity=65, transaction_type="BUY")
+    over_option = _single_leg_live_option(security_id=1002, quantity=65, transaction_type="BUY")
+    _record_live_traded_trade(under_option, instrument="NIFTY")
+    _record_live_traded_trade(over_option, instrument="NIFTY")
+
+    alerts: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key))
+    )
+    client = _FakePositionsClient(
+        positions=[
+            {"securityId": 1001, "netQty": 30},  # under-filled
+            {"securityId": 1002, "netQty": 130},  # over-filled
+        ]
+    )
+
+    out = reconcile(client, mode="LIVE")
+
+    kinds = {i["security_id"]: i["kind"] for i in out["issues"]}
+    assert kinds[1001] == UNDER_FILLED
+    assert kinds[1002] == OVER_FILLED
+    assert len(alerts) == 2
+    texts = {key: text for text, key in alerts}
+    assert "Dhan holds fewer than the journal expects" in texts[f"reconcile:1001:{UNDER_FILLED}"]
+    assert "Dhan holds more than the journal expects" in texts[f"reconcile:1002:{OVER_FILLED}"]
+
+
+def test_reconcile_alert_key_stable_across_repeated_calls(monkeypatch) -> None:
+    """Same deterministic key on every call -- notify.alert's own hourly
+    window (tested separately in test_notify.py) is what actually dedupes a
+    second reconcile inside the hour; this proves reconcile.py feeds it a
+    stable key so that dedup applies."""
+    from index_ai.reconcile import reconcile
+
+    option = _single_leg_live_option(security_id=54321)
+    _record_live_traded_trade(option)
+    keys: list[str] = []
+    monkeypatch.setattr("index_ai.notify.alert", lambda text, *, key, **k: keys.append(key))
+    client = _FakePositionsClient(positions=[])
+
+    reconcile(client, mode="LIVE")
+    reconcile(client, mode="LIVE")
+
+    assert keys[0] == keys[1] == f"reconcile:54321:{GHOST_JOURNAL}"
+
+
+def test_reconcile_telegram_failure_is_swallowed(monkeypatch) -> None:
+    from index_ai.reconcile import reconcile
+
+    option = _single_leg_live_option(security_id=54321)
+    trade_id = _record_live_traded_trade(option)
+
+    def _boom(*a, **k):
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr("index_ai.notify.alert", _boom)
+    client = _FakePositionsClient(positions=[])
+
+    out = reconcile(client, mode="LIVE")  # must not raise
+
+    assert out["ok"] is False
+    assert out["issues"][0]["kind"] == GHOST_JOURNAL
+    row = _fetch_trade_row(trade_id)
+    assert row is not None  # reconcile ran to completion despite the alert failure
+
+
+def test_reconcile_paper_mode_no_broker_call_no_alert(monkeypatch) -> None:
+    from index_ai.reconcile import reconcile
+
+    alerts: list[Any] = []
+    monkeypatch.setattr("index_ai.notify.alert", lambda *a, **k: alerts.append(a))
+
+    class _BoomClient:
+        def list_positions(self) -> list[dict]:
+            raise AssertionError("must not be called in PAPER mode")
+
+    out = reconcile(_BoomClient(), mode="PAPER")
+    assert out["ok"] is True
+    assert out["skipped"]
+    assert alerts == []
