@@ -597,3 +597,265 @@ def test_book_unreadable_pending_blocks_duplicate_entry(monkeypatch) -> None:
     check = validate_open_position("NIFTY", "LIVE", action="BUY_CALL")
     assert check.ok is False
     assert check.code == "duplicate_open"
+
+
+# ── Task 3: retried India exits never re-send a leg already on Dhan's book ──
+
+
+def _record_live_trade(
+    option: dict, *, instrument: str = "NIFTY", action: str = "SELL_BULL_PUT_SPREAD"
+) -> dict:
+    from index_ai.learning import record_trade
+
+    trade_id = record_trade(
+        mode="LIVE",
+        instrument=instrument,
+        action=action,
+        confidence=0.7,
+        option=option,
+        signal={"action": action, "confidence": 0.7, "price": 24000},
+        status="LIVE_TRADED",
+    )
+    return {
+        "id": trade_id,
+        "mode": "LIVE",
+        "status": "LIVE_TRADED",
+        "pnl": None,
+        "instrument": instrument,
+        "option": option,
+    }
+
+
+def test_spread_exit_retry_skips_confirmed_cover_resends_only_hedge(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    option = {
+        "instrument": "NIFTY",
+        "quantity": 65,
+        "structure": "BULL_PUT_SPREAD",
+        "legs": [
+            {
+                "security_id": 222,
+                "segment": "NSE_FNO",
+                "transaction_type": "SELL",  # short leg -- exit covers with BUY
+                "option_type": "PUT",
+                "strike": 24900,
+                "quantity": 65,
+                "entry_ltp": 90.0,
+            },
+            {
+                "security_id": 111,
+                "segment": "NSE_FNO",
+                "transaction_type": "BUY",  # hedge leg -- exit sells with SELL
+                "option_type": "PUT",
+                "strike": 24700,
+                "quantity": 65,
+                "entry_ltp": 50.0,
+            },
+        ],
+    }
+    trade = _record_live_trade(option)
+    base_id = str(trade["id"]).replace("-", "")[:12]
+    cover_cid = f"idxai-x-{base_id}-0"[:30]
+    hedge_cid = f"idxai-x-{base_id}-1"[:30]
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.script(
+        "POST",
+        "/v2/orders",
+        {
+            "orderId": "C1",
+            "orderStatus": "TRADED",
+            "filledQty": 65,
+            "quantity": 65,
+            "correlationId": cover_cid,
+        },
+        {
+            "orderStatus": "REJECTED",
+            "omsErrorDescription": "Insufficient margin",
+            "correlationId": hedge_cid,
+        },
+    )
+    monkeypatch.setattr("index_ai.notify.send", lambda *a, **k: None)
+    client = fake_dhan_client(replay, monkeypatch)
+    settings = _live_settings()
+
+    first = close_open_trade(
+        trade, client=client, app_settings=settings, reason="stop hit", exit_ltp=10.0
+    )
+    assert first["status"] == "LIVE_EXIT_FAILED"
+    assert replay.count("POST", "/v2/orders") == 2
+
+    # Retry: the book now shows the cover TRADED and the hedge REJECTED.
+    replay.script(
+        "GET",
+        "/v2/orders",
+        [
+            {
+                "orderId": "C1",
+                "orderStatus": "TRADED",
+                "correlationId": cover_cid,
+                "filledQty": 65,
+                "quantity": 65,
+            },
+            {"orderId": "H0", "orderStatus": "REJECTED", "correlationId": hedge_cid},
+        ],
+    )
+    replay.script(
+        "POST",
+        "/v2/orders",
+        {"orderId": "H1", "orderStatus": "TRADED", "filledQty": 65, "quantity": 65},
+    )
+
+    second = close_open_trade(
+        trade, client=client, app_settings=settings, reason="stop hit", exit_ltp=10.0
+    )
+    assert second["status"] == "CLOSED"
+
+    cover_posts = [
+        c
+        for c in replay.calls
+        if c[0] == "POST"
+        and c[1] == "/v2/orders"
+        and (c[2] or {}).get("correlationId") == cover_cid
+    ]
+    assert len(cover_posts) == 1, "the cover leg must be POSTed at most once overall"
+    assert replay.count("POST", "/v2/orders") == 3  # cover + hedge(rejected) + hedge(retry)
+
+
+def test_single_leg_exit_lost_reply_book_unreadable_then_retries(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    option = {
+        "instrument": "NIFTY",
+        "security_id": 54321,
+        "segment": "NSE_FNO",
+        "transaction_type": "BUY",
+        "option_type": "CALL",
+        "strike": 25000,
+        "quantity": 65,
+        "entry_ltp": 100.0,
+    }
+    trade = _record_live_trade(option, action="BUY_CALL")
+    base_id = str(trade["id"]).replace("-", "")[:12]
+    correlation_id = f"idxai-x-{base_id}"[:30]
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.fault("POST", "/v2/orders", httpx.ReadTimeout)
+    replay.fault(
+        "GET",
+        "/v2/orders",
+        httpx.ReadTimeout,
+        httpx.ReadTimeout,
+        httpx.ReadTimeout,
+        httpx.ReadTimeout,
+    )
+    alerts: list[str] = []
+    monkeypatch.setattr("index_ai.notify.send", lambda text, **k: alerts.append(text))
+    client = fake_dhan_client(replay, monkeypatch)
+    settings = _live_settings()
+
+    first = close_open_trade(
+        trade, client=client, app_settings=settings, reason="stop hit", exit_ltp=10.0
+    )
+    assert first["status"] == "LIVE_EXIT_FAILED"
+    assert replay.count("POST", "/v2/orders") == 1
+    assert (
+        not alerts
+    )  # _place_or_settle's own not-on-book path never fired; book was simply unreadable
+
+    # Retry 1: book still unreadable -> no POST, one alert, still fails.
+    replay.fault(
+        "GET",
+        "/v2/orders",
+        httpx.ReadTimeout,
+        httpx.ReadTimeout,
+        httpx.ReadTimeout,
+        httpx.ReadTimeout,
+    )
+    second = close_open_trade(
+        trade, client=client, app_settings=settings, reason="stop hit", exit_ltp=10.0
+    )
+    assert second["status"] == "LIVE_EXIT_FAILED"
+    assert replay.count("POST", "/v2/orders") == 1
+    assert alerts
+
+    # Retry 2: book now readable and shows the SELL traded -> no POST, closes.
+    replay.script(
+        "GET",
+        "/v2/orders",
+        [
+            {
+                "orderId": "S1",
+                "orderStatus": "TRADED",
+                "correlationId": correlation_id,
+                "filledQty": 65,
+                "quantity": 65,
+            }
+        ],
+    )
+    third = close_open_trade(
+        trade, client=client, app_settings=settings, reason="stop hit", exit_ltp=10.0
+    )
+    assert third["status"] == "CLOSED"
+    assert replay.count("POST", "/v2/orders") == 1
+
+
+def test_first_exit_attempt_has_no_extra_order_book_read(monkeypatch) -> None:
+    from index_ai.exit import close_open_trade
+
+    option = {
+        "instrument": "NIFTY",
+        "security_id": 54321,
+        "segment": "NSE_FNO",
+        "transaction_type": "BUY",
+        "option_type": "CALL",
+        "strike": 25000,
+        "quantity": 65,
+        "entry_ltp": 100.0,
+    }
+    trade = _record_live_trade(option, action="BUY_CALL")
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.script(
+        "POST",
+        "/v2/orders",
+        {"orderId": "S1", "orderStatus": "TRADED", "filledQty": 65, "quantity": 65},
+    )
+    client = fake_dhan_client(replay, monkeypatch)
+    settings = _live_settings()
+
+    result = close_open_trade(
+        trade, client=client, app_settings=settings, reason="stop hit", exit_ltp=10.0
+    )
+    assert result["status"] == "CLOSED"
+    assert replay.count("GET", "/v2/orders") == 0
+
+
+def test_exit_with_no_trade_keeps_random_correlation_ids(monkeypatch) -> None:
+    from index_ai.dhan_orders import place_live_exit_orders
+
+    option = {
+        "instrument": "NIFTY",
+        "security_id": 54321,
+        "segment": "NSE_FNO",
+        "transaction_type": "BUY",
+        "option_type": "CALL",
+        "strike": 25000,
+    }
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.script("POST", "/v2/orders", {"orderId": "A1", "orderStatus": "TRADED", "quantity": 65})
+    client = fake_dhan_client(replay, monkeypatch)
+    settings = _live_settings()
+
+    place_live_exit_orders(client, option, settings=settings, quantity=65, trade=None)
+
+    replay.script("POST", "/v2/orders", {"orderId": "A2", "orderStatus": "TRADED", "quantity": 65})
+    place_live_exit_orders(client, option, settings=settings, quantity=65, trade=None)
+
+    cids = [
+        c[2].get("correlationId") for c in replay.calls if c[0] == "POST" and c[1] == "/v2/orders"
+    ]
+    assert len(cids) == 2
+    assert cids[0] != cids[1]
+    assert replay.count("GET", "/v2/orders") == 0

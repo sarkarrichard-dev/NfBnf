@@ -856,6 +856,13 @@ def place_live_entry_orders(
     }
 
 
+_EXIT_ATTEMPTED: set[str] = set()
+# ponytail: in-process only -- a server restart forgets which trades already
+# started an exit, so the first retry after a restart behaves like a first
+# attempt (places every leg fresh) instead of checking the book first.
+# Upgrade path: persist the "exit started" flag on the trade row itself.
+
+
 def place_live_exit_orders(
     client: DhanClient,
     option: dict[str, Any],
@@ -876,7 +883,43 @@ def place_live_exit_orders(
             raise RuntimeError(exit_ok.reason)
 
     legs = list(option.get("legs") or [])
-    base_id = uuid.uuid4().hex[:10]
+    trade_id = str(trade.get("id") or "") if trade is not None else ""
+
+    if trade_id:
+        # Deterministic per trade -- a retry reuses the same ids, so a leg
+        # already on Dhan's book is recognised instead of re-sent. Fits
+        # Dhan's 30-char correlationId limit; repeated ids are accepted.
+        base_id = trade_id.replace("-", "")[:12]
+        is_retry = trade_id in _EXIT_ATTEMPTED
+        _EXIT_ATTEMPTED.add(trade_id)
+    else:
+        base_id = uuid.uuid4().hex[:10]
+        is_retry = False
+
+    existing_by_correlation: dict[str, dict[str, Any]] = {}
+    if is_retry:
+        try:
+            book = client.list_today_orders()
+        except Exception:
+            try:
+                from index_ai import notify
+
+                notify.alert(
+                    f"An exit for trade {trade_id} could not be confirmed on Dhan's order "
+                    "book and will be retried once it can be read again — nothing was sent.",
+                    key=f"exit-unknown:{trade_id}",
+                )
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"Dhan order book unreadable — exit retry held for trade {trade_id}"
+            ) from None
+        for row in book:
+            parsed_row = normalize_order_response(row)
+            cid = str(parsed_row.get("correlationId") or "")
+            if cid:
+                existing_by_correlation[cid] = parsed_row
+
     responses: list[dict[str, Any]] = []
 
     if legs:
@@ -884,17 +927,26 @@ def place_live_exit_orders(
             leg_tx = str(leg.get("transaction_type") or "SELL").upper()
             exit_tx = "BUY" if leg_tx == "SELL" else "SELL"
             leg_seg = str(leg["segment"])
-            raw = client.place_market_order(
-                security_id=int(leg["security_id"]),
-                exchange_segment=leg_seg,
-                transaction_type=exit_tx,
-                quantity=int(leg.get("quantity") or quantity),
-                correlation_id=f"idxai-x-{base_id}-{idx}"[:30],
-                product_type=order_product_type_for_leg(
-                    transaction_type=exit_tx,
+            correlation_id = f"idxai-x-{base_id}-{idx}"[:30]
+            existing = existing_by_correlation.get(correlation_id)
+            if existing is not None and effective_order_status(existing) not in _REJECTED_STATUSES:
+                responses.append({"leg": leg, "exit_side": exit_tx, "response": existing})
+                continue
+            try:
+                raw = _place_or_settle(
+                    client,
+                    correlation_id=correlation_id,
+                    security_id=int(leg["security_id"]),
                     exchange_segment=leg_seg,
-                ),
-            )
+                    transaction_type=exit_tx,
+                    quantity=int(leg.get("quantity") or quantity),
+                    product_type=order_product_type_for_leg(
+                        transaction_type=exit_tx,
+                        exchange_segment=leg_seg,
+                    ),
+                )
+            except _OutcomeUnknown as exc:
+                raise RuntimeError(f"Dhan exit order outcome unknown: {exc}") from exc
             parsed = normalize_order_response(raw)
             responses.append({"leg": leg, "exit_side": exit_tx, "response": parsed})
             if not order_response_ok(raw):
@@ -905,17 +957,28 @@ def place_live_exit_orders(
 
     exit_side = "SELL" if str(option.get("transaction_type") or "BUY").upper() == "BUY" else "BUY"
     single_seg = str(option["segment"])
-    raw = client.place_market_order(
-        security_id=int(option["security_id"]),
-        exchange_segment=single_seg,
-        transaction_type=exit_side,
-        quantity=int(quantity),
-        correlation_id=f"idxai-x-{base_id}"[:30],
-        product_type=order_product_type_for_leg(
-            transaction_type=exit_side,
+    correlation_id = f"idxai-x-{base_id}"[:30]
+    existing = existing_by_correlation.get(correlation_id)
+    if existing is not None and effective_order_status(existing) not in _REJECTED_STATUSES:
+        return {
+            "response": existing,
+            "order_ids": [existing.get("orderId")] if existing.get("orderId") else [],
+        }
+    try:
+        raw = _place_or_settle(
+            client,
+            correlation_id=correlation_id,
+            security_id=int(option["security_id"]),
             exchange_segment=single_seg,
-        ),
-    )
+            transaction_type=exit_side,
+            quantity=int(quantity),
+            product_type=order_product_type_for_leg(
+                transaction_type=exit_side,
+                exchange_segment=single_seg,
+            ),
+        )
+    except _OutcomeUnknown as exc:
+        raise RuntimeError(f"Dhan exit order outcome unknown: {exc}") from exc
     parsed = normalize_order_response(raw)
     if not order_response_ok(raw):
         raise RuntimeError(f"Dhan rejected exit order: {order_status_label(raw)}")
