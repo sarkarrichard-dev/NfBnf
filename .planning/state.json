@@ -1,0 +1,63 @@
+{
+  "contract": "1.0.0",
+  "flavor": "core",
+  "milestone": null,
+  "phases": [
+    {
+      "number": "1",
+      "name": "Strategy Fixes",
+      "status": "pending"
+    },
+    {
+      "number": "2",
+      "name": "Order Placing & Tracking",
+      "status": "pending"
+    },
+    {
+      "number": "3",
+      "name": "Exit Optimisation",
+      "status": "pending"
+    },
+    {
+      "number": "4",
+      "name": "Dashboard UI/UX",
+      "status": "pending"
+    },
+    {
+      "number": "5",
+      "name": "Tenant Isolation Foundation",
+      "status": "pending"
+    },
+    {
+      "number": "6",
+      "name": "Broker Connection & Credential Vault",
+      "status": "pending"
+    },
+    {
+      "number": "7",
+      "name": "Per-Subscriber Trading Safety",
+      "status": "pending"
+    },
+    {
+      "number": "8",
+      "name": "Subscriber Reporting & Notifications",
+      "status": "pending"
+    },
+    {
+      "number": "9",
+      "name": "Subscription Billing",
+      "status": "pending"
+    },
+    {
+      "number": "10",
+      "name": "Compliance & Go-Live Gate",
+      "status": "pending"
+    }
+  ],
+  "next": {
+    "command": "/gsd:progress --next",
+    "label": "Advance to the next step (plan phase 1)",
+    "reason": "Phase 1 of 10 — needs a plan"
+  },
+  "updated_at": "2026-09-30T05:48:15.533Z"
+}
