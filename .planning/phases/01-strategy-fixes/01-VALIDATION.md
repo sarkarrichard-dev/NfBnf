@@ -36,14 +36,19 @@ created: "2026-09-30"
 
 ## Per-Task Verification Map
 
-Task IDs are assigned by the planner (not yet run when this file was written) — rows below are keyed by requirement until plans exist.
+Task IDs assigned by the planner (2026-09-30).
 
-| Requirement | Behavior | Test Type | Automated Command | File Exists | Status |
-|-------------|----------|-----------|-------------------|-------------|--------|
-| STRAT-01 | Tightened gate still returns correct `StrategySignal` shape for known fixtures | unit | `pytest tests/test_buy_strategy.py tests/test_breakout.py tests/test_candlestick_patterns.py -x` | ✅ (3 files exist, 11 tests total) | ⬜ pending |
-| STRAT-01 | NIFTY buy-lane live win rate reported correctly from scorecard after tuning | manual / dashboard read | n/a — reads `strategy_performance.strategy_scorecard()` filtered to `instrument=="NIFTY"`, `strategy.startswith("candlestick_buy")` | manual-only: real trading days must elapse | ⬜ pending |
-| STRAT-02 | A parameter change only ships through watching→observing→ready | unit (existing) | `pytest tests/test_strategy_learning.py -x` | ✅ | ⬜ pending |
-| STRAT-03 | Strategy Lab / viability verdicts correctly flagged pre/post cutover | unit (existing) + new | `pytest tests/test_strategy_lab.py -x` (existing); new candidate needs its own test | ✅ existing / ❌ Wave 0 for the new candidate | ⬜ pending |
+| Task | Requirement | Behavior | Test Type | Automated Command | File Exists | Status |
+|------|-------------|----------|-----------|-------------------|-------------|--------|
+| 01-01 T1 (tracer) | STRAT-01, STRAT-02 | CPR-direction gate inert when off, blocks counter-trend when on; live buy lane replays on real chain | unit + real-data CLI | `python -m pytest tests/test_buy_strategy.py tests/test_strategy_lab.py -q` then `python -m index_ai.strategy_lab NIFTY` | ✅ files exist; new tests added in-task | ⬜ pending |
+| 01-01 T2 | STRAT-01 | Replay has no look-ahead, degrades on missing data, maps directions, never runs from the dashboard endpoint; gate symmetric | unit | `python -m pytest tests/test_buy_strategy.py tests/test_strategy_lab.py tests/test_strategy_learning.py -q` | ✅ | ⬜ pending |
+| 01-02 T1 | STRAT-03 | Buy-lane viability reads UNMEASURED, sell rows unchanged | unit | `python -m pytest tests/test_options_cpr.py -q -k viability` | ✅ | ⬜ pending |
+| 01-02 T2 | STRAT-01, STRAT-02 | `strategy_scorecard(since=...)` counts only trades after the cut-off; default unchanged | unit | `python -m pytest tests/test_strategy_performance.py tests/test_strategy_learning.py -q` | ✅ | ⬜ pending |
+| 01-03 T1 | STRAT-01, STRAT-03 | OI-wall room gate inert when off, blocks buys into a near wall when on; full tuned bundle | unit | `python -m pytest tests/test_buy_strategy.py tests/test_breakout.py tests/test_candlestick_patterns.py tests/test_strategy_lab.py -q` | ✅ | ⬜ pending |
+| 01-03 T2 | STRAT-01 | Dashboard panel shows the two buy switches | build | `npm --prefix dashboard run build` and `npx tsc --noEmit` in dashboard/ | ✅ | ⬜ pending |
+| 01-03 T3 | STRAT-01 | Three-index real-chain sanity run recorded with plain read | real-data CLI | `python -m index_ai.strategy_lab` | n/a | ⬜ pending |
+| 01-04 T3 | STRAT-01, STRAT-02 | Baseline and switch-on recorded; measuring command works | CLI | `python -c "...strategy_scorecard(since=...)..."` (full text in 01-04-PLAN.md) | n/a | ⬜ pending |
+| — | STRAT-02 | Ladder thresholds untouched | unit (existing) | `python -m pytest tests/test_strategy_learning.py -q` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -51,8 +56,8 @@ Task IDs are assigned by the planner (not yet run when this file was written) �
 
 ## Wave 0 Requirements
 
-- [ ] A test for the new `strategy_lab.py` candidate that wraps `evaluate_buy_signal` — covers STRAT-01's D-08 sanity check and STRAT-03
-- [ ] No fixture currently exists asserting `viability.py`'s buy-lane `OBSERVED_GROSS_PER_TRADE` values carry a "stale/pre-cutover" flag once that re-validation lands — needed if the plan chooses to flag rather than re-run those numbers (STRAT-03)
+- [ ] A test for the new `strategy_lab.py` candidate that wraps `evaluate_buy_signal` — covers STRAT-01's D-08 sanity check and STRAT-03 (created inside 01-01 T1/T2, tests first in T2)
+- [ ] A test asserting the buy-lane viability rows are gone (UNMEASURED, gross None) — created inside 01-02 T1 (the plan removes the Black-Scholes-proxy buy rows rather than keeping them with a flag)
 
 ---
 

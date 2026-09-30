@@ -52,7 +52,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. The buy lane's measured live win rate has moved up from its current baseline (see `memory/strategy-findings.md` for the starting numbers) — reported in rupees and win-rate points, not abstract terms
   2. No strategy-parameter change ships without going through the 15-trade observe-only / 40-trade human-approved-suggestion ladder, even under time pressure
   3. Every Strategy Lab verdict dated before 2026-09-23 is either re-validated against real option-chain data or explicitly flagged as pre-cutover and untrustworthy for absolute numbers
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Tracer: CPR-direction buy gate (off by default) + live buy lane replayed on the real recorded chain, NIFTY first (wave 1)
+- [ ] 01-02-PLAN.md — Retire the Black-Scholes-proxy buy-lane viability numbers; scorecard `since` cut-off to judge tuned entries on their own trades (wave 1)
+- [ ] 01-03-PLAN.md — OI-wall room gate + 3-bar breakout confirmation in the tuned bundle, dashboard switch rows, three-index real-chain sanity check (wave 2)
+- [ ] 01-04-PLAN.md — Richard's go/hold decision, .env switch-on for paper, baseline and measuring recipe recorded (wave 3, checkpoints)
 
 ### Phase 2: Order Placing & Tracking
 **Goal**: The order-placement and position-tracking code survives the specific failure modes already flagged as untested — a cancel racing a placement, a broker disconnect mid-position, a websocket drop under load.
@@ -159,7 +165,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Strategy Fixes | 0/TBD | Not started | - |
+| 1. Strategy Fixes | 0/4 | Planned | - |
 | 2. Order Placing & Tracking | 0/TBD | Not started | - |
 | 3. Exit Optimisation | 0/TBD | Not started | - |
 | 4. Dashboard UI/UX | 0/TBD | Not started | - |
