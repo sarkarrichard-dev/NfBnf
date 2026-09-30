@@ -1933,11 +1933,19 @@ def _close_trade_by_id_sync(trade_id: str, cfg: AppSettings) -> dict[str, Any]:
 def _close_all_trades_sync(cfg: AppSettings) -> dict[str, Any]:
     """Close-all — same worker-thread reasoning as _close_trade_by_id_sync,
     for the whole loop (open_trades() is a DB read; each trade needs its own
-    LTP fetch and close)."""
+    LTP fetch and close). Waits for any entry mid-placement to finish and be
+    journalled first (ORD-01) — otherwise a trade being placed right now
+    would not be in open_trades() yet and Close-all would miss it entirely.
+    """
+    from index_ai.execution_safety import wait_for_inflight_entries
+
+    wait_for_inflight_entries()
     open_now = open_trades()
     results = {str(t["id"]): _close_trade_by_id_sync(str(t["id"]), cfg) for t in open_now}
     failed = {
-        k: v for k, v in results.items() if v.get("status") not in {"CLOSED", "ALREADY_CLOSED"}
+        k: v
+        for k, v in results.items()
+        if v.get("status") not in {"CLOSED", "ALREADY_CLOSED", "CANCELLED"}
     }
     return {"ok": not failed, "attempted": len(open_now), "results": results}
 

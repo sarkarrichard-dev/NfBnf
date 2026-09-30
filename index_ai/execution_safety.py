@@ -589,3 +589,21 @@ def validate_live_order_payload(
 
 def acquire_execution_lock(instrument_key: str) -> threading.Lock:
     return _instrument_lock(instrument_key)
+
+
+def wait_for_inflight_entries() -> None:
+    """Barrier for Close-all (ORD-01): returns once every entry that was being
+    placed when this was called has finished and been journalled, so a trade
+    that was mid-placement is guaranteed to already be in ``open_trades()`` by
+    the time the caller reads it. Takes a snapshot of the currently-known
+    per-instrument locks (the same locks ``execute_plan``/``settle_pending_
+    entry`` hold while placing or cancelling), then acquires and immediately
+    releases each in turn -- a lock held by an in-flight placement blocks this
+    call until that placement finishes recording its trade. Creates no lock of
+    its own and holds nothing once it returns; called with no instrument locks
+    held, it returns at once."""
+    with _GLOBAL_EXECUTE_LOCK:
+        locks = list(_INSTRUMENT_LOCKS.values())
+    for lock in locks:
+        with lock:
+            pass

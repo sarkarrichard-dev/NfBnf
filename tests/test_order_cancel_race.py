@@ -7,10 +7,13 @@ transport faults, never a hand-rolled stub of the client itself.
 
 from __future__ import annotations
 
+import threading
+import time
+
 import httpx
 import pytest
 
-from _fake_brokers import BrokerReplay, fake_dhan_client, load_traffic
+from _fake_brokers import Block, BrokerReplay, fake_dhan_client, load_traffic
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -1282,3 +1285,261 @@ def test_exit_with_no_trade_keeps_random_correlation_ids(monkeypatch) -> None:
     assert len(cids) == 2
     assert cids[0] != cids[1]
     assert replay.count("GET", "/v2/orders") == 0
+
+
+# ── Plan 02-04 Task 2: Close-all while an entry is being placed ──
+
+
+def _entry_leg_option(**overrides) -> dict:
+    base = dict(
+        instrument="NIFTY",
+        security_id=54321,
+        segment="NSE_FNO",
+        transaction_type="BUY",
+        option_type="CALL",
+        strike=25000,
+        quantity=65,
+        ltp=100.0,
+    )
+    base.update(overrides)
+    return base
+
+
+def _stub_execute_plan_deps(monkeypatch) -> None:
+    import index_ai.executor as executor_mod
+    from index_ai.execution_safety import SafetyCheck
+
+    monkeypatch.setattr(
+        executor_mod, "validate_execution_plan", lambda **k: SafetyCheck(True, "ok", "ok")
+    )
+    monkeypatch.setattr(executor_mod, "score_trade_setup", lambda *a, **k: {})
+    monkeypatch.setattr(executor_mod, "score_setup_hf", lambda *a, **k: {})
+    monkeypatch.setattr(executor_mod, "extract_features", lambda *a, **k: {})
+    monkeypatch.setattr(executor_mod, "build_setup_narrative", lambda *a, **k: "")
+
+
+def _stub_race_test_common(monkeypatch, settings) -> None:
+    monkeypatch.setattr("index_ai.config.settings", lambda: settings)
+    monkeypatch.setattr(
+        "index_ai.risk.kill_switch_state", lambda r: {"active": False, "reasons": []}
+    )
+    monkeypatch.setattr("index_ai.market_clock.is_entry_session_timestamp", lambda when=None: True)
+    monkeypatch.setattr("index_ai.notify.send", lambda *a, **k: None)
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+
+
+def test_close_all_race_fill_wins_closes_the_entry(monkeypatch) -> None:
+    import index_ai.server as server_mod
+    from index_ai.executor import ExecutionPlan, execute_plan
+
+    _stub_execute_plan_deps(monkeypatch)
+    _bypass_live_order_payload_check(monkeypatch)
+    _fix_base_id(monkeypatch, "2222222222")
+
+    settings = _live_settings()
+    _stub_race_test_common(monkeypatch, settings)
+    monkeypatch.setattr(server_mod, "_live_index_price", lambda *a, **k: 24000.0)
+
+    block = Block()
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.fault("POST", "/v2/orders", block)
+    replay.script(
+        "POST",
+        "/v2/orders",
+        {"orderId": "900", "orderStatus": "TRADED", "filledQty": 65, "quantity": 65},
+    )
+    replay.script(
+        "GET",
+        "/v2/orders/900",
+        {"orderId": "900", "orderStatus": "TRADED", "filledQty": 65, "quantity": 65},
+    )
+    replay.script(
+        "GET", "/v2/trades", [{"orderId": "900", "tradedQuantity": 65, "tradedPrice": 100.0}]
+    )
+
+    client = fake_dhan_client(replay, monkeypatch)
+    monkeypatch.setattr(server_mod, "DhanClient", lambda *a, **k: client)
+
+    plan = ExecutionPlan(
+        allowed=True,
+        mode="LIVE",
+        reason="ok",
+        option=_entry_leg_option(),
+        signal={"action": "BUY_CALL", "confidence": 0.7, "price": 24000},
+    )
+
+    a_result: dict = {}
+
+    def _run_a() -> None:
+        a_result.update(execute_plan(plan, settings, client))
+
+    thread_a = threading.Thread(target=_run_a)
+    thread_a.start()
+    assert block.entered.wait(timeout=10.0), "entry placement never reached the blocked POST"
+
+    b_result: dict = {}
+
+    def _run_b() -> None:
+        b_result.update(server_mod._close_all_trades_sync(settings))
+
+    thread_b = threading.Thread(target=_run_b)
+    thread_b.start()
+    time.sleep(0.5)
+    assert thread_b.is_alive(), "Close-all must wait for the in-flight entry, not run past it"
+
+    block.release.set()
+    thread_a.join(timeout=15.0)
+    thread_b.join(timeout=15.0)
+    assert not thread_a.is_alive(), "entry placement thread did not finish"
+    assert not thread_b.is_alive(), "Close-all thread did not finish"
+
+    assert a_result.get("status") == "LIVE_TRADED"
+    trade_id = a_result["trade_id"]
+    assert trade_id in b_result.get("results", {})
+    assert b_result["results"][trade_id]["status"] == "CLOSED"
+    assert replay.count("POST", "/v2/orders") == 2  # one entry + one exit
+
+
+def test_close_all_race_still_pending_cancels_entry(monkeypatch) -> None:
+    import index_ai.dhan_orders as dhan_orders_mod
+    import index_ai.server as server_mod
+    from index_ai.executor import ExecutionPlan, execute_plan
+
+    _stub_execute_plan_deps(monkeypatch)
+    _bypass_live_order_payload_check(monkeypatch)
+    _fix_base_id(monkeypatch, "3333333333")
+    # Deterministic, fast confirm-wait: makes the order-terminal poll resolve
+    # after exactly one call instead of depending on real wall-clock timing
+    # across DHAN_ORDER_CONFIRM_SEC's multi-poll window -- the behavior under
+    # test (the order never becomes terminal during the confirm wait) is
+    # identical either way, just countable.
+    monkeypatch.setattr(dhan_orders_mod, "_confirm_wait_seconds", lambda: 0.01)
+
+    settings = _live_settings()
+    _stub_race_test_common(monkeypatch, settings)
+    monkeypatch.setattr(server_mod, "_live_index_price", lambda *a, **k: 24000.0)
+
+    block = Block()
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.fault("POST", "/v2/orders", block)
+    replay.script(
+        "POST", "/v2/orders", {"orderId": "901", "orderStatus": "PENDING", "quantity": 65}
+    )
+    pending_row = {"orderId": "901", "orderStatus": "PENDING", "quantity": 65}
+    cancelled_row = {"orderId": "901", "orderStatus": "CANCELLED", "quantity": 65}
+    # Call 1: confirm_placed_orders' single poll. Call 2: settle's pre-cancel
+    # check. Both PENDING. Call 3: settle's post-cancel re-check -- CANCELLED
+    # (sticky once only one item remains).
+    replay.script("GET", "/v2/orders/901", pending_row, pending_row, cancelled_row)
+    replay.script("GET", "/v2/orders", [pending_row], [cancelled_row])
+    replay.script("GET", "/v2/trades", [])
+    replay.script("DELETE", "/v2/orders/901", {"orderId": "901", "orderStatus": "CANCELLED"})
+
+    client = fake_dhan_client(replay, monkeypatch)
+    monkeypatch.setattr(server_mod, "DhanClient", lambda *a, **k: client)
+
+    plan = ExecutionPlan(
+        allowed=True,
+        mode="LIVE",
+        reason="ok",
+        option=_entry_leg_option(),
+        signal={"action": "BUY_CALL", "confidence": 0.7, "price": 24000},
+    )
+
+    a_result: dict = {}
+
+    def _run_a() -> None:
+        a_result.update(execute_plan(plan, settings, client))
+
+    thread_a = threading.Thread(target=_run_a)
+    thread_a.start()
+    assert block.entered.wait(timeout=10.0), "entry placement never reached the blocked POST"
+
+    b_result: dict = {}
+
+    def _run_b() -> None:
+        b_result.update(server_mod._close_all_trades_sync(settings))
+
+    thread_b = threading.Thread(target=_run_b)
+    thread_b.start()
+    time.sleep(0.5)
+    assert thread_b.is_alive(), "Close-all must wait for the in-flight entry, not run past it"
+
+    block.release.set()
+    thread_a.join(timeout=15.0)
+    thread_b.join(timeout=15.0)
+    assert not thread_a.is_alive(), "entry placement thread did not finish"
+    assert not thread_b.is_alive(), "Close-all thread did not finish"
+
+    assert a_result.get("status") == "LIVE_PENDING"
+    trade_id = a_result["trade_id"]
+    assert trade_id in b_result.get("results", {})
+    assert b_result["results"][trade_id]["status"] == "CANCELLED"
+    assert replay.count("POST", "/v2/orders") == 1
+    assert replay.count("DELETE", "/v2/orders/901") == 1
+
+
+def test_close_all_counts_cancelled_as_success(monkeypatch) -> None:
+    import index_ai.server as server_mod
+
+    monkeypatch.setattr("index_ai.exit.option_ltp_with_retry", lambda *a, **k: 10.0)
+    monkeypatch.setattr("index_ai.notify.send", lambda *a, **k: None)
+
+    option = _single_leg_pending_option(
+        broker_order_ids=[],
+        broker_orders={"order_ids": [], "unconfirmed_correlation_ids": ["idxai-xyz"]},
+    )
+    _record_pending_trade(option)
+    settings = _live_settings()
+
+    replay = BrokerReplay(load_traffic("dhan_rest"))
+    replay.script("GET", "/v2/orders", [])
+    replay.script("GET", "/v2/trades", [])
+    client = fake_dhan_client(replay, monkeypatch)
+    monkeypatch.setattr(server_mod, "DhanClient", lambda *a, **k: client)
+    monkeypatch.setattr(server_mod, "_live_index_price", lambda *a, **k: None)
+
+    result = server_mod._close_all_trades_sync(settings)
+
+    assert result["ok"] is True
+    assert result["attempted"] == 1
+    statuses = {v["status"] for v in result["results"].values()}
+    assert statuses == {"CANCELLED"}
+
+
+def test_close_all_no_open_trades_is_a_quick_noop() -> None:
+    import index_ai.server as server_mod
+
+    settings = _live_settings()
+    result = server_mod._close_all_trades_sync(settings)
+    assert result == {"ok": True, "attempted": 0, "results": {}}
+
+
+def test_wait_for_inflight_entries_returns_at_once_when_idle() -> None:
+    from index_ai.execution_safety import wait_for_inflight_entries
+
+    start = time.monotonic()
+    wait_for_inflight_entries()
+    assert time.monotonic() - start < 1.0
+
+
+def test_wait_for_inflight_entries_blocks_while_lock_held() -> None:
+    from index_ai.execution_safety import acquire_execution_lock, wait_for_inflight_entries
+
+    lock = acquire_execution_lock("NIFTY")
+    lock.acquire()
+    finished = threading.Event()
+
+    def _waiter() -> None:
+        wait_for_inflight_entries()
+        finished.set()
+
+    t = threading.Thread(target=_waiter)
+    t.start()
+    time.sleep(0.3)
+    try:
+        assert not finished.is_set(), "wait_for_inflight_entries must block while the lock is held"
+    finally:
+        lock.release()
+    t.join(timeout=5.0)
+    assert finished.is_set()
