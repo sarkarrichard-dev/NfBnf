@@ -76,6 +76,21 @@ trusting a result is the thing that must not slip.
   "brain" model), each trained only on the real live journal — crypto's
   historical-backtest tuner is explicitly not trusted as ground truth per
   Richard's standing instruction.
+- ✓ The India buy lane's confidence ladder (~15 trades observe-only, ~40+
+  trades human-approved suggestion, never auto-apply to a net-positive
+  strategy) is real, enforced code (`index_ai/strategy_learning.py`), not just
+  a process rule — confirmed by Phase 1 (STRAT-02).
+- ✓ Stale, pre-real-data buy-lane numbers retired from
+  `options_cpr/viability.py` (the 2026-08-29 Black-Scholes-proxy figures now
+  read `UNMEASURED` instead of masquerading as measured); `strategy_scorecard`
+  gained a `since=` cutoff so a tuned entry set can be judged on only its own
+  trades, not blended with the old baseline (Phase 1, STRAT-03).
+- ✓ A real option-chain replay instrument for the India buy lane
+  (`index_ai/strategy_lab.py`'s `live_buy_lane`/`live_buy_lane_tuned`
+  candidates) — runs the live, un-mocked `evaluate_buy_signal` against
+  recorded real bid/ask/OI data (`market_log.chain`, since 2026-09-23), not a
+  Black-Scholes proxy. This is buy-lane-only so far; the sell lane's
+  `options_cpr` backtest tooling still uses the proxy.
 
 ### Active
 
@@ -89,10 +104,17 @@ trusting a result is the thing that must not slip.
 - [ ] Adopting this GSD phase-based planning process itself, replacing pure
   turn-by-turn requests for future work (this document is the first artifact
   of that adoption).
-- [ ] Continued strategy discovery and measurement per (strategy, instrument) —
-  the option **buy** lane specifically is the acknowledged weak point (needs
-  real work to reach Richard's ≥65% precision bar; selling is where his edge
-  and comfort are).
+- [ ] The option **buy** lane's real win rate still has not moved toward
+  Richard's ≥65% precision bar — still the acknowledged weak point. Phase 1
+  (2026-09-30) built two off-by-default tightening gates
+  (`BUY_BLOCK_CONTRA_CPR`, `BUY_BLOCK_INTO_OI_WALL`) and the real-chain replay
+  instrument above, then ran a ~1-week real-data sanity check: NIFTY and
+  BANKNIFTY both came out worse (win rate and net rupees) with the tuned
+  bundle; only SENSEX improved, and the two gates weren't isolated from each
+  other in that run. Richard's call: **Hold** — neither switch goes on for
+  paper yet. Next attempt, if any, should test the CPR-direction gate alone
+  before ever bundling in the OI-wall gate (01-03's own suggestion). Full
+  numbers: `.planning/phases/01-strategy-fixes/01-03-SUMMARY.md`.
 - [ ] Moving the app off Richard's own PC onto a personal-use AWS EC2 instance
   with a static Elastic IP — explicitly the *small* version of this move (just
   relocating the existing single-tenant app), separate from and not blocked on
@@ -189,9 +211,10 @@ re-deriving them from scratch.
 | Crypto sized by universal `$ margin per position`, India by lots | A NIFTY lot has cultural meaning; a crypto "lot" doesn't, and contract values differ wildly per coin, so a dollar budget is the only sizing that's comparable across coins | ✓ Good — implemented |
 | Live-only testing for crypto — no historical backtest trusted as ground truth | Richard explicitly rejected trusting downloaded historical candles for strategy tuning; only the real live journal counts | ✓ Good — standing rule, enforced (nightly auto-tuner off by default) |
 | India index sell lane is 2-leg hedged credit spreads only, no naked, no sideways/iron-condor | Fewer legs means lower real brokerage/STT/slippage, and it matches how Richard actually trades directionally | ✓ Good — standing rule (one deliberate crypto-side exception: the new BTC straddle test) |
+| Hold on the buy-lane tightening gates (`BUY_BLOCK_CONTRA_CPR`, `BUY_BLOCK_INTO_OI_WALL`) rather than switching on for paper | Real-chain sanity check (1 week, 6-9 trades/index) showed NIFTY and BANKNIFTY worse on both win rate and net rupees; only SENSEX improved, and the two gates weren't isolated from each other in that run — not proof either way, but the one index Richard weighs first got worse | ✓ Good — matches the project's core value (never treat a strategy as ready before it's measured); test the CPR gate alone next if revisited |
 
 ---
-*Last updated: 2026-09-30 after initialization — Richard has not yet reviewed this draft; corrections expected.*
+*Last updated: 2026-09-30 after Phase 1 (Strategy Fixes).*
 
 ## Evolution
 
