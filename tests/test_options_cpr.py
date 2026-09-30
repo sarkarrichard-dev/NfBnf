@@ -199,8 +199,14 @@ def test_viability_blocks_structures_that_cannot_cover_their_costs(monkeypatch, 
     assert n.verdict == NOT_VIABLE and b.verdict == NOT_VIABLE
     # an explicit positive gross that clears the floor is viable
     assert viability("NIFTY", "sell", gross_per_trade=400.0).verdict in (VIABLE, MARGINAL)
-    # a lane with negative gross edge is never viable
-    assert viability("NIFTY", "buy").verdict == NOT_VIABLE
+    # buy-lane rows were removed 2026-09-30 (STRAT-03, Black-Scholes-proxy
+    # backtest not trustworthy) — every index reports UNMEASURED, no rupee edge
+    for key in ("NIFTY", "BANKNIFTY", "SENSEX"):
+        v = viability(key, "buy")
+        assert v.verdict == UNMEASURED
+        assert v.gross_per_trade_rupees is None
+    # an explicitly supplied buy-lane gross is still judged on its own merits
+    assert viability("NIFTY", "buy", gross_per_trade=-51.0).verdict == NOT_VIABLE
     # an unmeasured spread must not produce a confident verdict
     monkeypatch.delenv("SLIPPAGE_HALF_SPREAD_POINTS_SENSEX", raising=False)
     assert viability("SENSEX", "sell").verdict == UNMEASURED
