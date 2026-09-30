@@ -62,7 +62,7 @@ Plans:
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Tracer: CPR-direction buy gate (off by default) + live buy lane replayed on the real recorded chain, NIFTY first (wave 1)
-- [ ] 01-02-PLAN.md — Retire the Black-Scholes-proxy buy-lane viability numbers; scorecard `since` cut-off to judge tuned entries on their own trades (wave 1)
+- [x] 01-02-PLAN.md — Retire the Black-Scholes-proxy buy-lane viability numbers; scorecard `since` cut-off to judge tuned entries on their own trades (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 

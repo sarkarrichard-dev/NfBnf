@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 1
 current_phase_name: Strategy Fixes
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-09-30T06:37:39.840Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-09-30T11:52:48.655Z"
 last_activity: 2026-09-30
 last_activity_desc: Phase 1 execution started
-state_head: 35a73abfa264ee3604769ee34fb2be6fd338df00
+state_head: f97569196f13b98e8e6db3b4ec5722cec7b35bbb
 progress:
   total_phases: 10
   completed_phases: 0
   total_plans: 4
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-09-30)
 ## Current Position
 
 Phase: 1 (Strategy Fixes) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-09-30 — Phase 1 execution started
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P01 | 35 min | 2 tasks | 5 files |
+| Phase 01-strategy-fixes P02 | 25 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,8 @@ Recent decisions affecting current work:
 - Roadmap (2026-09-30, same day): Richard asked to add strategy fixes, order placing/tracking, exit optimisation, and dashboard UI/UX. Grounded these in `.planning/codebase/CONCERNS.md`'s already-documented gaps rather than inventing new scope. Placed as Phases 1-4, ahead of the subscription build-out — get the product itself right before building the machinery to sell it — with the subscription phases renumbered 5-10. Phases 1-4 have no dependencies on each other or on Phase 5, so could run in parallel if preferred; flagged in ROADMAP.md, not assumed.
 - [Phase 1]: Buy-lane-only CPR-direction gate (BUY_BLOCK_CONTRA_CPR), default off; global cpr_narrow/wide width thresholds untouched since they also drive the frozen, net-positive NIFTY sell lane — D-05/D-10 and the confidence ladder: never touch a frozen strategy, never let a tuning change reach real money by default
 - [Phase 1]: strategy_lab's two new live-buy-lane candidates are ON_DEMAND-excluded from run()'s default name set — keeps GET /api/strategy-lab's per-call cost unchanged; proven by a test that makes the adapter raise if called during a default run
+- [Phase 1]: Buy-lane viability rows removed outright from OBSERVED_GROSS_PER_TRADE (not flagged/zeroed) so no code path can hand out a fabricated buy-lane rupee figure; UNMEASURED is now the only reachable verdict unless gross is explicitly supplied — STRAT-03 required the proxy backtest numbers stop being presented as measured; deletion is the only guarantee against reintroduction
+- [Phase 1]: strategy_scorecard/_india_rows since is keyword-only with a no-op default and no endpoint exposes it (server.py untouched) — Keeps the cut-off an internal measuring instrument, not a public promotion path, per the plan's STRAT-02 prohibition
 
 ### Pending Todos
 
@@ -92,6 +95,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-30T06:37:39.814Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-09-30T11:52:48.633Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None
