@@ -26,6 +26,7 @@ say so and this gets reordered.
 ## Phases
 
 **Phase Numbering:**
+
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
@@ -45,114 +46,152 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Phase Details
 
 ### Phase 1: Strategy Fixes
+
 **Goal**: The option buy lane's real, live-journal win rate moves toward Richard's ≥65% precision bar, and every strategy-parameter change stays on the existing confidence ladder rather than being shortcut.
 **Depends on**: Nothing (first phase)
 **Requirements**: STRAT-01, STRAT-02, STRAT-03
 **Success Criteria** (what must be TRUE):
+
   1. The buy lane's measured live win rate has moved up from its current baseline (see `memory/strategy-findings.md` for the starting numbers) — reported in rupees and win-rate points, not abstract terms
   2. No strategy-parameter change ships without going through the 15-trade observe-only / 40-trade human-approved-suggestion ladder, even under time pressure
   3. Every Strategy Lab verdict dated before 2026-09-23 is either re-validated against real option-chain data or explicitly flagged as pre-cutover and untrustworthy for absolute numbers
+
 **Plans**: 4 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 01-01-PLAN.md — Tracer: CPR-direction buy gate (off by default) + live buy lane replayed on the real recorded chain, NIFTY first (wave 1)
 - [ ] 01-02-PLAN.md — Retire the Black-Scholes-proxy buy-lane viability numbers; scorecard `since` cut-off to judge tuned entries on their own trades (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 01-03-PLAN.md — OI-wall room gate + 3-bar breakout confirmation in the tuned bundle, dashboard switch rows, three-index real-chain sanity check (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 01-04-PLAN.md — Richard's go/hold decision, .env switch-on for paper, baseline and measuring recipe recorded (wave 3, checkpoints)
 
 ### Phase 2: Order Placing & Tracking
+
 **Goal**: The order-placement and position-tracking code survives the specific failure modes already flagged as untested — a cancel racing a placement, a broker disconnect mid-position, a websocket drop under load.
 **Depends on**: Nothing
 **Requirements**: ORD-01, ORD-02, ORD-03, ORD-04
 **Success Criteria** (what must be TRUE):
+
   1. A test proves a cancel issued while an order is still being placed produces neither a duplicate order nor an orphaned one
   2. A test proves a position is correctly reconciled (no stale or duplicate entry) after a simulated broker disconnection
   3. The Dhan websocket reconnecting mid-scan-cycle does not silently drop tick data a stop-trigger depends on — verified under a simulated busy cycle (20+ concurrent candles)
   4. When the tick feed lags or drops, stop triggering visibly falls back to candle-based evaluation, and this behavior is documented, not just known by whoever wrote it
+
 **Plans**: TBD
 
 ### Phase 3: Exit Optimisation
+
 **Goal**: Trailing-stop tuning is kept current against live data instead of frozen at a one-time 2026-09-24/28 tune, and the codebase has exactly one trailing-stop implementation, not two contradictory ones.
 **Depends on**: Nothing
 **Requirements**: EXIT-01, EXIT-02, EXIT-03
 **Success Criteria** (what must be TRUE):
+
   1. Current trailing-stop point values for every index and both lanes have been re-checked against recent live-journal data, with the comparison shown in rupees/win-rate, and a repeatable way to re-check them again later
   2. `premium_trail.py`'s percent-of-premium code path no longer exists in the codebase, and nothing still imports it
   3. A monitoring signal fires if trail-stop hit rate or win rate drifts meaningfully from its last validated baseline, so a bad tune surfaces immediately rather than weeks later in the scorecard
+
 **Plans**: TBD
 
 ### Phase 4: Dashboard UI/UX
+
 **Goal**: The dashboard shows what's actually happening (which crypto pairs are really live, whether market data is flowing) without anyone having to read server logs, and stays on the existing visual bar while doing it.
 **Depends on**: Nothing
 **Requirements**: UIUX-01, UIUX-02, UIUX-03
 **Success Criteria** (what must be TRUE):
+
   1. After arming crypto live, the dashboard shows exactly which (strategy, coin) pairs are live vs. still paper — no log-reading required
   2. A Data Health view shows tick age, option-chain snapshot age, measured spread age, and Dhan websocket status, so a missed trade or a stop that didn't fire can be diagnosed from the dashboard alone
   3. Every new/changed dashboard element passes the ui-consistency-reviewer's existing checks (design tokens, corner-radius, mono/tabular-nums on data) — no regressions on the existing visual bar
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 5: Tenant Isolation Foundation
+
 **Goal**: Each subscriber's trading runs in its own isolated environment — separate risk state, sizing, and kill switch — so one subscriber's activity never reads or writes another's.
 **Depends on**: Nothing (first subscription phase)
 **Requirements**: ISOL-01, ISOL-02, ISOL-03, ISOL-04
 **Success Criteria** (what must be TRUE):
+
   1. Two subscribers' trades, risk state, and kill switches are provably separate — a test proves one subscriber's kill-switch trip never appears on another subscriber's account
   2. Subscriber can set their own position size (lots for India, $ margin for crypto) as an absolute value, safe under concurrent updates from multiple subscribers at once
   3. Subscriber can pause their own account's automated trading without affecting any other subscriber's trading
   4. When a subscriber's risk gate tightens their exposure, that subscriber sees the tightened state plainly on their own dashboard rather than it being applied silently
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 6: Broker Connection & Credential Vault
+
 **Goal**: A subscriber can securely connect their own broker account, with identity verified and credentials protected per subscriber.
 **Depends on**: Phase 5
 **Requirements**: BROK-01, BROK-02, BROK-03
 **Success Criteria** (what must be TRUE):
+
   1. Subscriber can enter their own Dhan (India) or Delta Exchange India (crypto) API key/secret through a connect-broker form, never a shared account
   2. The system checks the entered credentials against the broker's own account-info endpoint before accepting the connection, catching a wrong-account mistake at connect time
   3. Broker credentials are stored encrypted and scoped to that one subscriber only, never written to a shared `.env` file
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 7: Per-Subscriber Trading Safety
+
 **Goal**: Every subscriber starts safe by default and can only arm real-money trading through the same explicit, two-lock process — scoped to their account alone.
 **Depends on**: Phase 5, Phase 6
 **Requirements**: SAFE-01, SAFE-02, SAFE-03
 **Success Criteria** (what must be TRUE):
+
   1. A newly connected subscriber account starts in Paper mode by default
   2. Going live for one subscriber requires both independent locks (trading mode + live-trading flag) plus the exact arming phrase, and arms only that subscriber's account
   3. Switching a subscriber back to Paper disarms live trading for that subscriber immediately, with no exception
+
 **Plans**: TBD
 
 ### Phase 8: Subscriber Reporting & Notifications
+
 **Goal**: A subscriber can see and be notified about their own trading activity, broken out the same way the internal scorecard already works.
 **Depends on**: Phase 5, Phase 6, Phase 7
 **Requirements**: REPT-01, REPT-02, REPT-03
 **Success Criteria** (what must be TRUE):
+
   1. Subscriber can view their own live P&L and trade history on their dashboard, and only their own
   2. Subscriber sees a per-(strategy, instrument) breakdown of their results instead of one blended equity curve
   3. Subscriber is notified via Telegram or an in-dashboard feed when their own trades open/close or a risk-gate/kill-switch event affects their account
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 9: Subscription Billing
+
 **Goal**: A subscriber can pay for, and manage, their own recurring subscription.
 **Depends on**: Phase 5
 **Requirements**: BILL-01, BILL-02, BILL-03
 **Success Criteria** (what must be TRUE):
+
   1. Subscriber can subscribe to the one recurring paid plan
   2. Subscriber can cancel their own subscription at any time
   3. A failed payment is retried automatically and the subscriber is notified rather than silently dropped
+
 **Plans**: TBD
 
 ### Phase 10: Compliance & Go-Live Gate
+
 **Goal**: The platform meets the legal requirements that must be true before any non-Richard subscriber trades real money.
 **Depends on**: Phase 6, Phase 7
 **Requirements**: COMP-01, COMP-02
 **Success Criteria** (what must be TRUE):
+
   1. Every subscriber's live trading traffic egresses through the platform's own whitelisted static IP, satisfying the SEBI static-IP requirement
   2. Every strategy shows a plain-language disclosure of what conditions trigger a trade, on a dedicated disclosure screen, before a subscriber can enable it
+
 **Plans**: TBD
 **UI hint**: yes
 
