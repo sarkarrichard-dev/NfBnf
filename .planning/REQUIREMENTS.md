@@ -3,13 +3,70 @@
 **Defined:** 2026-09-30
 **Core Value:** Never presents a strategy as ready for real money until it has been measured — against real broker charges, on the real live journal — to actually make money.
 
-Scope: the first paying outside subscriber. Full detail and reasoning behind
-every line here lives in `.planning/research/FEATURES.md` (the research this
-was drawn from) and `.planning/PROJECT.md`.
+Scope: getting the existing product itself solid (strategy quality, order
+handling, exits, dashboard UX) and getting it ready for the first paying
+outside subscriber. Full detail and reasoning behind the subscription-related
+lines lives in `.planning/research/FEATURES.md`; the product-quality lines
+are grounded in `.planning/codebase/CONCERNS.md` and this project's own
+memory (`strategy-findings.md`, `strategy-analysis-and-simplification-directive.md`).
 
 ## v1 Requirements
 
 Requirements for the first outside subscriber. Each maps to a roadmap phase.
+
+### Strategy Fixes (STRAT)
+
+- [ ] **STRAT-01**: The option buy lane's entries are reworked to raise its
+  real (live-journal) win rate toward Richard's ≥65% precision bar — the
+  acknowledged weak lane (`memory/strategy-findings.md`,
+  `memory/strategy-analysis-and-simplification-directive.md`).
+- [ ] **STRAT-02**: Any strategy-parameter change goes through the existing
+  confidence ladder (~15 trades observe-only, ~40+ trades human-approved
+  suggestion) — no shortcutting the ladder to ship a "fix" faster.
+- [ ] **STRAT-03**: Strategy Lab verdicts (COLLECTING/PASSING/DROPPED) are
+  re-validated against the real recorded option-chain data available since
+  2026-09-23 — anything scored before that date used the Black-Scholes proxy
+  and is not trustworthy as-is (`.planning/codebase/CONCERNS.md`).
+
+### Order Placing & Tracking (ORD)
+
+- [ ] **ORD-01**: Order placement handles a cancel-issued-while-placing race
+  without creating a duplicate or an orphaned order (currently untested,
+  `.planning/codebase/CONCERNS.md` — money-path edge cases).
+- [ ] **ORD-02**: A position is correctly reconciled after a broker
+  disconnection — no stale or duplicate position left in the journal.
+- [ ] **ORD-03**: The Dhan websocket reconnects and recovers missed ticks
+  during a busy scan cycle (20+ concurrent candles) without silently
+  dropping data a stop-trigger depends on.
+- [ ] **ORD-04**: Tick-driven stop triggering degrades safely to the
+  candle-based fallback when the tick feed lags or drops, and this fallback
+  behavior is documented, not just known by whoever wrote it.
+
+### Exit Optimisation (EXIT)
+
+- [ ] **EXIT-01**: Trailing-stop point values (NIFTY/BANKNIFTY/SENSEX, buy
+  and sell lanes) are re-validated against recent live-journal data on a
+  recurring basis instead of staying a one-time hardcoded tune from
+  2026-09-24/28.
+- [ ] **EXIT-02**: The dead `premium_trail.py` percent-of-premium code path
+  is removed so there is exactly one, unambiguous trailing-stop
+  implementation in the codebase.
+- [ ] **EXIT-03**: A monitoring signal exists if trail-stop hit rate or win
+  rate drifts meaningfully from its last validated baseline, so a bad tune
+  is caught rather than discovered weeks later in the scorecard.
+
+### Dashboard UI/UX (UIUX)
+
+- [ ] **UIUX-01**: The dashboard shows which (strategy, coin) pairs are
+  actually live vs. paper after arming crypto — today this requires reading
+  server logs to find out (`.planning/codebase/CONCERNS.md`).
+- [ ] **UIUX-02**: A "Data Health" view shows tick age, option-chain
+  snapshot age, measured spread age, and Dhan websocket status, so a missed
+  trade or a stop that didn't fire can be diagnosed without reading logs.
+- [ ] **UIUX-03**: Every dashboard change continues to meet QuantHawk's
+  existing visual bar — design tokens (not raw colors), correct
+  corner-radius, mono/tabular-nums on data — the standard the
+  ui-consistency-reviewer already enforces.
 
 ### Broker Connection (BROK)
 
@@ -137,30 +194,46 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BROK-01 | Phase 2 | Pending |
-| BROK-02 | Phase 2 | Pending |
-| BROK-03 | Phase 2 | Pending |
-| ISOL-01 | Phase 1 | Pending |
-| ISOL-02 | Phase 1 | Pending |
-| ISOL-03 | Phase 1 | Pending |
-| ISOL-04 | Phase 1 | Pending |
-| SAFE-01 | Phase 3 | Pending |
-| SAFE-02 | Phase 3 | Pending |
-| SAFE-03 | Phase 3 | Pending |
-| REPT-01 | Phase 4 | Pending |
-| REPT-02 | Phase 4 | Pending |
-| REPT-03 | Phase 4 | Pending |
-| BILL-01 | Phase 5 | Pending |
-| BILL-02 | Phase 5 | Pending |
-| BILL-03 | Phase 5 | Pending |
-| COMP-01 | Phase 6 | Pending |
-| COMP-02 | Phase 6 | Pending |
+| STRAT-01 | Phase 1 | Pending |
+| STRAT-02 | Phase 1 | Pending |
+| STRAT-03 | Phase 1 | Pending |
+| ORD-01 | Phase 2 | Pending |
+| ORD-02 | Phase 2 | Pending |
+| ORD-03 | Phase 2 | Pending |
+| ORD-04 | Phase 2 | Pending |
+| EXIT-01 | Phase 3 | Pending |
+| EXIT-02 | Phase 3 | Pending |
+| EXIT-03 | Phase 3 | Pending |
+| UIUX-01 | Phase 4 | Pending |
+| UIUX-02 | Phase 4 | Pending |
+| UIUX-03 | Phase 4 | Pending |
+| BROK-01 | Phase 6 | Pending |
+| BROK-02 | Phase 6 | Pending |
+| BROK-03 | Phase 6 | Pending |
+| ISOL-01 | Phase 5 | Pending |
+| ISOL-02 | Phase 5 | Pending |
+| ISOL-03 | Phase 5 | Pending |
+| ISOL-04 | Phase 5 | Pending |
+| SAFE-01 | Phase 7 | Pending |
+| SAFE-02 | Phase 7 | Pending |
+| SAFE-03 | Phase 7 | Pending |
+| REPT-01 | Phase 8 | Pending |
+| REPT-02 | Phase 8 | Pending |
+| REPT-03 | Phase 8 | Pending |
+| BILL-01 | Phase 9 | Pending |
+| BILL-02 | Phase 9 | Pending |
+| BILL-03 | Phase 9 | Pending |
+| COMP-01 | Phase 10 | Pending |
+| COMP-02 | Phase 10 | Pending |
 
 **Coverage:**
-- v1 requirements: 18 total
-- Mapped to phases: 18
+- v1 requirements: 31 total
+- Mapped to phases: 31
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-30*
-*Last updated: 2026-09-30 after roadmap creation — all 18 v1 requirements mapped across 6 phases, see `.planning/ROADMAP.md`*
+*Last updated: 2026-09-30 — added Strategy Fixes / Order Placing & Tracking /
+Exit Optimisation / Dashboard UI-UX (Richard, same day) as Phases 1-4, ahead
+of the subscription build-out (now Phases 5-10). All 31 v1 requirements
+mapped, see `.planning/ROADMAP.md`.*
