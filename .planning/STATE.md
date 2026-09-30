@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 2
 current_phase_name: Order Placing & Tracking
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-09-30T18:20:43.998Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-09-30T21:58:18.741Z"
 last_activity: 2026-09-30
 last_activity_desc: Phase 2 execution started
-state_head: 0a0c292dc41ad8f630a35cf8768ac9e2ed95fd3a
+state_head: 17e73e36d8b032aa7846a5181281cfc84492da34
 progress:
   total_phases: 10
   completed_phases: 1
   total_plans: 11
-  completed_plans: 6
+  completed_plans: 7
   percent: 10
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-09-30)
 ## Current Position
 
 Phase: 2 (Order Placing & Tracking) — EXECUTING
-Plan: 3 of 7
+Plan: 4 of 7
 Status: Ready to execute
 Last activity: 2026-09-30 — Phase 2 execution started
 
@@ -64,6 +64,7 @@ Progress: [█░░░░░░░░░] 10%
 | Phase 01 P04 | 10 min | 1 tasks | 1 files |
 | Phase 02 P01 | 45 min | 2 tasks | 9 files |
 | Phase 02 P02 | 55 min | 2 tasks | 3 files |
+| Phase 02-order-placing-tracking P03 | 55 min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,9 @@ Recent decisions affecting current work:
 - [Phase 2]: Crypto lost-entry settlement: Delta-unreachable simulated via scripted HTTP 500 rather than queued transport faults, avoiding httpx's internal GET-retry loop needing multiple fault entries
 - [Phase 2]: Crypto Close-all/Close now read open keys under _STATE_LOCK so a position mid-placement is never missed (ORD-01); no new lock introduced
 - [Phase 2]: A Delta outage on a held crypto position is held and escalated after 180s (UNCLEAR_ALERT_SECONDS) instead of being read as closed; reconcile retries next scan instead of marking the day done when unreadable (ORD-02)
+- [Phase 2]: 02-03: Dhan correlationId field name confirmed against real captured traffic before coding find_order_by_correlation -- no assumption risk carried into ORD-01/ORD-02 India settlement
+- [Phase 2]: 02-03: place_live_entry_orders' alert+re-raise wrapping covers the immediate order_response_ok rejection check as well as the two confirmation calls, since the plan's own behavior spec requires an alert for a hedge-accepted/short-rejected partial entry
+- [Phase 2]: 02-03: _EXIT_ATTEMPTED is a bare in-process set (no persistence) -- documented ceiling is a server restart forgets it; upgrade path is persisting the flag on the trade row
 
 ### Pending Todos
 
@@ -107,6 +111,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-30T18:20:43.620Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-09-30T21:58:18.477Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None

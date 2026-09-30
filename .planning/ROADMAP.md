@@ -94,7 +94,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 02-02-PLAN.md — Crypto: Close-all during placement, Delta outage handling, 180 s stuck-position alert, reconcile retry (ORD-01, ORD-02)
-- [ ] 02-03-PLAN.md — Dhan: no re-sent order after a lost reply (entries and exits), cancel_order, every accepted order journalled (ORD-01, ORD-02)
+- [x] 02-03-PLAN.md — Dhan: no re-sent order after a lost reply (entries and exits), cancel_order, every accepted order journalled (ORD-01, ORD-02)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
