@@ -84,7 +84,7 @@ Plans:
   3. The Dhan websocket reconnecting mid-scan-cycle does not silently drop tick data a stop-trigger depends on — verified under a simulated busy cycle (20+ concurrent candles)
   4. When the tick feed lags or drops, stop triggering visibly falls back to candle-based evaluation, and this behavior is documented, not just known by whoever wrote it
 
-**Plans**: 2/7 plans executed
+**Plans**: 4/7 plans executed
 
 Plans:
 **Wave 1**
@@ -98,7 +98,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-04-PLAN.md — Dhan: Close / Close-all / stop on a still-pending entry cancels it under the placement lock (ORD-01)
+- [x] 02-04-PLAN.md — Dhan: Close / Close-all / stop on a still-pending entry cancels it under the placement lock (ORD-01)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -231,7 +231,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Strategy Fixes | 4/4 | Complete    | 2026-09-30 |
-| 2. Order Placing & Tracking | 2/7 | In Progress|  |
+| 2. Order Placing & Tracking | 4/7 | In Progress|  |
 | 3. Exit Optimisation | 0/TBD | Not started | - |
 | 4. Dashboard UI/UX | 0/TBD | Not started | - |
 | 5. Tenant Isolation Foundation | 0/TBD | Not started | - |

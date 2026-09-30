@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 2
 current_phase_name: Order Placing & Tracking
 status: executing
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-09-30T21:58:18.741Z"
+stopped_at: Completed 02-04-PLAN.md
+last_updated: "2026-09-30T22:21:53.702Z"
 last_activity: 2026-09-30
 last_activity_desc: Phase 2 execution started
-state_head: 17e73e36d8b032aa7846a5181281cfc84492da34
+state_head: bfd544148ad76e9b6a313ad55a07ffa2bcf2e60a
 progress:
   total_phases: 10
   completed_phases: 1
   total_plans: 11
-  completed_plans: 7
+  completed_plans: 8
   percent: 10
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-09-30)
 ## Current Position
 
 Phase: 2 (Order Placing & Tracking) — EXECUTING
-Plan: 4 of 7
+Plan: 5 of 7
 Status: Ready to execute
 Last activity: 2026-09-30 — Phase 2 execution started
 
@@ -65,6 +65,7 @@ Progress: [█░░░░░░░░░] 10%
 | Phase 02 P01 | 45 min | 2 tasks | 9 files |
 | Phase 02 P02 | 55 min | 2 tasks | 3 files |
 | Phase 02-order-placing-tracking P03 | 55 min | 3 tasks | 6 files |
+| Phase 02 P04 | 22 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,8 @@ Recent decisions affecting current work:
 - [Phase 2]: 02-03: Dhan correlationId field name confirmed against real captured traffic before coding find_order_by_correlation -- no assumption risk carried into ORD-01/ORD-02 India settlement
 - [Phase 2]: 02-03: place_live_entry_orders' alert+re-raise wrapping covers the immediate order_response_ok rejection check as well as the two confirmation calls, since the plan's own behavior spec requires an alert for a hedge-accepted/short-rejected partial entry
 - [Phase 2]: 02-03: _EXIT_ATTEMPTED is a bare in-process set (no persistence) -- documented ceiling is a server restart forgets it; upgrade path is persisting the flag on the trade row
+- [Phase 2]: 02-04: settle_pending_entry cancels a still-working India entry under the per-instrument lock, re-reading Dhan's order book strictly after the cancel attempt (never trusting the DELETE reply) to decide CANCELLED vs LIVE_TRADED vs UNRESOLVED
+- [Phase 2]: 02-04: wait_for_inflight_entries adds no new lock -- it snapshots and acquires/releases the existing per-instrument locks so India Close-all waits for an in-flight entry placement before reading open_trades()
 
 ### Pending Todos
 
@@ -111,6 +114,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-30T21:58:18.477Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-09-30T22:21:53.403Z
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None
