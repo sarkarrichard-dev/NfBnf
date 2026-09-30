@@ -1,21 +1,14 @@
 ---
-status: testing
+status: complete
 phase: 01-strategy-fixes
 source: [01-VERIFICATION.md]
 started: 2026-09-30T12:52:38Z
-updated: 2026-09-30T13:05:00Z
+updated: 2026-09-30T13:10:00Z
 ---
 
 ## Current Test
 
-number: 1
-name: Whether to revisit the buy-lane tightening trial
-expected: |
-  A recorded decision (this phase already has one: Hold, 2026-09-30). If revisited
-  and switched on, `strategy_scorecard(since=FLIP)` per the recipe in
-  `01-04-SUMMARY.md` becomes the path to close STRAT-01.
-awaiting: none — Richard answered directly in chat this session, before this UAT
-  file was created (see result below)
+[testing complete]
 
 ## Tests
 
