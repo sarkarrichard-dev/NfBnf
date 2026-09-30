@@ -160,13 +160,18 @@ def _finish(key: tuple[str, str, str], b: dict[str, Any], currency: str) -> dict
     }
 
 
-def _india_rows() -> list[dict[str, Any]]:
+def _india_rows(since: str | None = None) -> list[dict[str, Any]]:
+    """India rows, cut off at the later of the data epoch and ``since`` — the
+    later cut-off always wins (a ``since`` before the epoch is a no-op).
+    ``since`` isolates the tuned NIFTY buy entries (D-06/D-07) so they're
+    judged on their own trades, not diluted by the pre-switch ones."""
     from index_ai.learning import recent_trades
 
     epoch = data_epoch()
+    cutoff = max((e for e in (epoch, since) if e), default=None)
     buckets: dict[tuple[str, str, str], dict[str, Any]] = defaultdict(_blank_bucket)
     for t in recent_trades(limit=1_000_000):
-        if t.get("pnl") is None or not _after_epoch(t.get("created_at"), epoch):
+        if t.get("pnl") is None or not _after_epoch(t.get("created_at"), cutoff):
             continue
         strat = _india_strategy(t)
         inst = str(t.get("instrument") or "?")
@@ -289,8 +294,12 @@ def _totals(rows: list[dict[str, Any]], currency: str) -> dict[str, Any]:
     }
 
 
-def strategy_scorecard() -> dict[str, Any]:
-    india = sorted(_india_rows(), key=lambda r: (r["strategy"], r["instrument"], r["mode"]))
+def strategy_scorecard(since: str | None = None) -> dict[str, Any]:
+    """since scores only India trades from that IST time on — used to judge a
+    changed config (e.g. the tuned NIFTY buy entries) on its own trades,
+    without pre-switch trades diluting the numbers. Crypto and commodities
+    rows are unaffected; the dashboard calls this with no argument."""
+    india = sorted(_india_rows(since), key=lambda r: (r["strategy"], r["instrument"], r["mode"]))
     crypto = sorted(_crypto_rows(), key=lambda r: (r["strategy"], r["instrument"], r["mode"]))
     commodities = sorted(
         _commodities_rows(), key=lambda r: (r["strategy"], r["instrument"], r["mode"])
@@ -404,14 +413,25 @@ def crypto_live_pair_table() -> list[dict[str, Any]]:
             continue
         pair = (row["strategy"], row["instrument"])
         strat = ready.get(row["strategy"]) or {}
-        why = (None if pair in allowed
-               else f"strategy not ready: {strat.get('why_not')}" if not strat.get("ready")
-               else f"only {row['trades']} trades on this coin (needs {CRYPTO_PAIR_MIN_TRADES})"
-               if row["trades"] < CRYPTO_PAIR_MIN_TRADES
-               else f"losing on this coin (${row['net']:.2f})")
-        out.append({"strategy": row["strategy"], "coin": row["instrument"],
-                    "trades": row["trades"], "net_usd": row["net"],
-                    "goes_live": pair in allowed, "why_not": why})
+        why = (
+            None
+            if pair in allowed
+            else f"strategy not ready: {strat.get('why_not')}"
+            if not strat.get("ready")
+            else f"only {row['trades']} trades on this coin (needs {CRYPTO_PAIR_MIN_TRADES})"
+            if row["trades"] < CRYPTO_PAIR_MIN_TRADES
+            else f"losing on this coin (${row['net']:.2f})"
+        )
+        out.append(
+            {
+                "strategy": row["strategy"],
+                "coin": row["instrument"],
+                "trades": row["trades"],
+                "net_usd": row["net"],
+                "goes_live": pair in allowed,
+                "why_not": why,
+            }
+        )
     return out
 
 
