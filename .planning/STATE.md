@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 current_phase: 1
 current_phase_name: Strategy Fixes
-status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-09-30T12:12:03.730Z"
+status: verifying
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-09-30T12:32:02.689Z"
 last_activity: 2026-09-30
 last_activity_desc: Phase 1 execution started
-state_head: ce8151bc959b6a1fdf2c65c4955f3fb3a6423a2e
+state_head: 3954a3c00ae171ddf8cca6fab3a4df58bcb32ded
 progress:
   total_phases: 10
   completed_phases: 0
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-09-30)
 
 Phase: 1 (Strategy Fixes) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-09-30 — Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -61,6 +61,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01 P01 | 35 min | 2 tasks | 5 files |
 | Phase 01-strategy-fixes P02 | 25 min | 2 tasks | 4 files |
 | Phase 01-strategy-fixes P03 | 25 min | 3 tasks | 6 files |
+| Phase 01 P04 | 10 min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,7 @@ Recent decisions affecting current work:
 - [Phase 1]: strategy_scorecard/_india_rows since is keyword-only with a no-op default and no endpoint exposes it (server.py untouched) — Keeps the cut-off an internal measuring instrument, not a public promotion path, per the plan's STRAT-02 prohibition
 - [Phase 1]: OI-wall room gate (BUY_BLOCK_INTO_OI_WALL, default off) added symmetrically to the buy lane; WALL_ROOM_PCT=0.10% chosen to match each index's own buy-trail distance (NIFTY 25 / BANKNIFTY 55 / SENSEX 80 points)
 - [Phase 1]: strategy_lab.LIVE_BUY_TUNED now carries the full bundle (CPR-direction gate + OI-wall gate + 3 confirmed breakout closes); real 3-index chain replay shows NIFTY and BANKNIFTY worse on both win rate and net rupees, SENSEX better on net despite lower win rate -- recommendation to plan 01-04 is Hold, sample too thin (6-9 trades/index) and the two switches weren't isolated from each other
+- [Phase 1]: [Phase 1] Richard's decision on buy-lane tightening (01-03's tuned bundle): Hold -- NIFTY and BANKNIFTY got worse on win rate and net rupees over ~1 week real-chain data, SENSEX improved but the two switches weren't isolated from each other in that run; neither BUY_BLOCK_CONTRA_CPR nor BUY_BLOCK_INTO_OI_WALL goes on for paper trading
 
 ### Pending Todos
 
@@ -99,6 +101,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-30T12:12:03.689Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-09-30T12:32:02.655Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None

@@ -56,7 +56,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. No strategy-parameter change ships without going through the 15-trade observe-only / 40-trade human-approved-suggestion ladder, even under time pressure
   3. Every Strategy Lab verdict dated before 2026-09-23 is either re-validated against real option-chain data or explicitly flagged as pre-cutover and untrustworthy for absolute numbers
 
-**Plans**: 1/4 plans executed
+**Plans**: 4/4 plans executed
 
 Plans:
 **Wave 1**
@@ -70,7 +70,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-04-PLAN.md — Richard's go/hold decision, .env switch-on for paper, baseline and measuring recipe recorded (wave 3, checkpoints)
+- [x] 01-04-PLAN.md — Richard's go/hold decision, .env switch-on for paper, baseline and measuring recipe recorded (wave 3, checkpoints)
 
 ### Phase 2: Order Placing & Tracking
 
@@ -204,7 +204,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Strategy Fixes | 1/4 | In Progress|  |
+| 1. Strategy Fixes | 4/4 | In Progress|  |
 | 2. Order Placing & Tracking | 0/TBD | Not started | - |
 | 3. Exit Optimisation | 0/TBD | Not started | - |
 | 4. Dashboard UI/UX | 0/TBD | Not started | - |

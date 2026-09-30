@@ -20,7 +20,7 @@ Requirements for the first outside subscriber. Each maps to a roadmap phase.
   real (live-journal) win rate toward Richard's ≥65% precision bar — the
   acknowledged weak lane (`memory/strategy-findings.md`,
   `memory/strategy-analysis-and-simplification-directive.md`).
-- [ ] **STRAT-02**: Any strategy-parameter change goes through the existing
+- [x] **STRAT-02**: Any strategy-parameter change goes through the existing
   confidence ladder (~15 trades observe-only, ~40+ trades human-approved
   suggestion) — no shortcutting the ladder to ship a "fix" faster.
 - [x] **STRAT-03**: Strategy Lab verdicts (COLLECTING/PASSING/DROPPED) are
@@ -195,7 +195,7 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | STRAT-01 | Phase 1 | Pending |
-| STRAT-02 | Phase 1 | Pending |
+| STRAT-02 | Phase 1 | Complete |
 | STRAT-03 | Phase 1 | Complete |
 | ORD-01 | Phase 2 | Pending |
 | ORD-02 | Phase 2 | Pending |
