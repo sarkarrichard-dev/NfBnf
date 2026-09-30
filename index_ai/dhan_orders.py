@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
@@ -11,6 +12,8 @@ import httpx
 
 from index_ai.config import AppSettings
 from index_ai.dhan import DhanClient
+
+logger = logging.getLogger(__name__)
 
 _REJECTED_STATUSES = frozenset({"REJECTED", "CANCELLED", "EXPIRED"})
 _FILLED_STATUSES = frozenset({"TRADED", "PART_TRADED"})
@@ -1517,66 +1520,98 @@ def verify_trade_against_positions(
 _EXTERNAL_CLOSE_GRACE_SEC = 300
 
 
+def _alert_sync_unreachable(count: int) -> None:
+    try:
+        from index_ai import notify
+
+        notify.alert(
+            f"Dhan did not answer, so {count} open live trade(s) could not be "
+            "confirmed. Nothing in the journal was changed, and this will be "
+            "checked again on the next scan.",
+            key="reconcile:unreachable",
+        )
+    except Exception:
+        pass
+
+
 def sync_open_live_trades(client: DhanClient) -> int:
+    from index_ai.execution_safety import acquire_execution_lock
     from index_ai.learning import live_trades_for_broker_sync, reject_live_trade
 
-    book_index = build_order_book_index(client)
-    trade_fill_index = build_trade_fill_index(client)
-    position_index = build_position_index(client)
+    trades = live_trades_for_broker_sync()
+    if not trades:
+        return 0
+
+    try:
+        book_index = build_order_book_index(client, strict=True)
+        trade_fill_index = build_trade_fill_index(client, strict=True)
+        position_index = build_position_index(client, strict=True)
+    except Exception as exc:
+        # D-07: a failed read is never "Dhan shows nothing" — abort before
+        # touching a single row. Only genuinely open rows (pnl still None)
+        # count toward the alert; today's already-zeroed false rejects don't.
+        logger.warning("Dhan unreachable during live sync: %s", exc)
+        still_open = sum(1 for t in trades if t.get("pnl") is None)
+        if still_open:
+            _alert_sync_unreachable(still_open)
+        return 0
+
     updated = 0
-    for trade in live_trades_for_broker_sync():
-        before_status = str(trade.get("status") or "")
-        before_pnl = trade.get("pnl")
-        after_trade = sync_trade_broker_status(
-            trade,
-            client,
-            book_index=book_index,
-            trade_fill_index=trade_fill_index,
-        )
-        if str(after_trade.get("status") or "").upper() == "LIVE_TRADED":
-            ok, pos_reason = verify_trade_against_positions(after_trade, position_index)
-            if not ok:
-                trade_id = str(after_trade.get("id") or "")
+    for trade in trades:
+        instrument_key = str(trade.get("instrument") or "NIFTY")
+        with acquire_execution_lock(instrument_key):
+            before_status = str(trade.get("status") or "")
+            before_pnl = trade.get("pnl")
+            after_trade = sync_trade_broker_status(
+                trade,
+                client,
+                book_index=book_index,
+                trade_fill_index=trade_fill_index,
+            )
+            if str(after_trade.get("status") or "").upper() == "LIVE_TRADED":
+                ok, pos_reason = verify_trade_against_positions(after_trade, position_index)
+                if not ok:
+                    trade_id = str(after_trade.get("id") or "")
 
-                from index_ai.market_clock import now_ist, parse_ist_datetime
+                    from index_ai.market_clock import now_ist, parse_ist_datetime
 
-                entered = parse_ist_datetime(after_trade.get("created_at"))
-                age_sec = (now_ist() - entered).total_seconds() if entered else 0.0
+                    entered = parse_ist_datetime(after_trade.get("created_at"))
+                    age_sec = (now_ist() - entered).total_seconds() if entered else 0.0
 
-                if entered and age_sec > _EXTERNAL_CLOSE_GRACE_SEC:
-                    from index_ai.config import settings
-                    from index_ai.exit import close_open_trade
+                    if entered and age_sec > _EXTERNAL_CLOSE_GRACE_SEC:
+                        from index_ai.config import settings
+                        from index_ai.exit import close_open_trade
 
-                    result = close_open_trade(
-                        after_trade,
-                        client=client,
-                        app_settings=settings(),
-                        reason="closed outside the system — Dhan shows no matching "
-                        "position (likely closed manually, a bracket stop, or a "
-                        "liquidation)",
-                        skip_broker_exit=True,
-                    )
-                    after_trade = {**after_trade, **result}
-                else:
-                    option = dict(after_trade.get("option") or {})
-                    from index_ai.learning import sanitize_rejected_option
+                        result = close_open_trade(
+                            after_trade,
+                            client=client,
+                            app_settings=settings(),
+                            reason="closed outside the system — Dhan shows no matching "
+                            "position (likely closed manually, a bracket stop, or a "
+                            "liquidation)",
+                            skip_broker_exit=True,
+                        )
+                        after_trade = {**after_trade, **result}
+                    else:
+                        option = dict(after_trade.get("option") or {})
+                        from index_ai.learning import sanitize_rejected_option
 
-                    option = sanitize_rejected_option(option)
-                    reject_live_trade(
-                        trade_id,
-                        pos_reason or "No matching broker positions for journal legs",
-                        option=option,
-                    )
-                    after_trade = {
-                        **after_trade,
-                        "status": "LIVE_REJECTED",
-                        "pnl": 0.0,
-                        "option": option,
-                    }
-        if (
-            str(after_trade.get("status") or "") != before_status
-            or after_trade.get("pnl") != before_pnl
-            or after_trade.get("option") != trade.get("option")
-        ):
-            updated += 1
+                        option = sanitize_rejected_option(option)
+                        reject_live_trade(
+                            trade_id,
+                            pos_reason or "No matching broker positions for journal legs",
+                            option=option,
+                        )
+                        after_trade = {
+                            **after_trade,
+                            "status": "LIVE_REJECTED",
+                            "pnl": 0.0,
+                            "option": option,
+                        }
+            if (
+                str(after_trade.get("status") or "") != before_status
+                or after_trade.get("pnl") != before_pnl
+                or after_trade.get("option") != trade.get("option")
+            ):
+                updated += 1
     return updated

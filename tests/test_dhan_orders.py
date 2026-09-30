@@ -180,15 +180,15 @@ def test_sync_rejects_live_traded_without_positions(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "index_ai.dhan_orders.build_order_book_index",
-        lambda _c: {
+        lambda _c, **_k: {
             "1": {"orderId": "1", "orderStatus": "TRADED", "filledQty": 30, "quantity": 30}
         },
     )
     monkeypatch.setattr(
         "index_ai.dhan_orders.build_trade_fill_index",
-        lambda _c: {"1": {"orderId": "1", "tradedQuantity": 30, "tradedPrice": 100.0}},
+        lambda _c, **_k: {"1": {"orderId": "1", "tradedQuantity": 30, "tradedPrice": 100.0}},
     )
-    monkeypatch.setattr("index_ai.dhan_orders.build_position_index", lambda _c: {})
+    monkeypatch.setattr("index_ai.dhan_orders.build_position_index", lambda _c, **_k: {})
 
     updated = sync_open_live_trades(object())
     assert updated >= 1
@@ -230,15 +230,15 @@ def test_sync_closes_aged_position_gone_from_broker(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "index_ai.dhan_orders.build_order_book_index",
-        lambda _c: {
+        lambda _c, **_k: {
             "1": {"orderId": "1", "orderStatus": "TRADED", "filledQty": 30, "quantity": 30}
         },
     )
     monkeypatch.setattr(
         "index_ai.dhan_orders.build_trade_fill_index",
-        lambda _c: {"1": {"orderId": "1", "tradedQuantity": 30, "tradedPrice": 100.0}},
+        lambda _c, **_k: {"1": {"orderId": "1", "tradedQuantity": 30, "tradedPrice": 100.0}},
     )
-    monkeypatch.setattr("index_ai.dhan_orders.build_position_index", lambda _c: {})
+    monkeypatch.setattr("index_ai.dhan_orders.build_position_index", lambda _c, **_k: {})
     monkeypatch.setattr("index_ai.config.settings", lambda: object())
 
     def fake_close(trade, *, client, app_settings, reason, skip_broker_exit=False, **_kw):
