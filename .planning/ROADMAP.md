@@ -56,12 +56,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. No strategy-parameter change ships without going through the 15-trade observe-only / 40-trade human-approved-suggestion ladder, even under time pressure
   3. Every Strategy Lab verdict dated before 2026-09-23 is either re-validated against real option-chain data or explicitly flagged as pre-cutover and untrustworthy for absolute numbers
 
-**Plans**: 4 plans
+**Plans**: 1/4 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Tracer: CPR-direction buy gate (off by default) + live buy lane replayed on the real recorded chain, NIFTY first (wave 1)
+- [x] 01-01-PLAN.md — Tracer: CPR-direction buy gate (off by default) + live buy lane replayed on the real recorded chain, NIFTY first (wave 1)
 - [ ] 01-02-PLAN.md — Retire the Black-Scholes-proxy buy-lane viability numbers; scorecard `since` cut-off to judge tuned entries on their own trades (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -204,7 +204,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Strategy Fixes | 0/4 | Planned | - |
+| 1. Strategy Fixes | 1/4 | In Progress|  |
 | 2. Order Placing & Tracking | 0/TBD | Not started | - |
 | 3. Exit Optimisation | 0/TBD | Not started | - |
 | 4. Dashboard UI/UX | 0/TBD | Not started | - |
