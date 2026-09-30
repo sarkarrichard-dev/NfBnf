@@ -90,6 +90,9 @@ Set in `.env` (see `.env.example`; **restart the server** after edits). The dash
 | `BUY_MIN_LEG_OI` | `0` | Min OI on the chosen buy leg (0 = off) |
 | `BUY_MIN_LEG_VOLUME` | `0` | Min volume on the chosen buy leg (0 = off) |
 | `BUY_BLOCK_CONTRA_OI` | `true` | Skip a buy when the ATM OI bias fights the direction |
+| `BUY_BLOCK_CONTRA_CPR` | `false` | Skip a buy against the CPR day direction or on a sideways CPR day (buy lane only) |
+| `BUY_BLOCK_INTO_OI_WALL` | `false` | Skip a buy when the opposing OI wall is closer than about one trail distance (0.1% of the index) |
+| `ENTRY_CONFIRMATION_BARS` | `2` | Closes that must hold beyond the range before a breakout buy counts |
 | `REQUIRE_SUPERTREND_ALIGN` | `true` | Block buys against Supertrend |
 | `REQUIRE_BREAKOUT_TAG` | `false` | Require Break Res/Sup for buys |
 

@@ -27,6 +27,8 @@ export function StrategyTuningPanel({ strategy }: Props) {
     ['Credit sell only when sideways', data.auto_credit_sideways_only ? 'Yes' : 'No'],
     ['Breakout', data.breakout_lookback],
     ['Confirm bars', data.entry_confirmation_bars],
+    ['Buy: skip against CPR', data.buy_block_contra_cpr ? 'On' : 'Off'],
+    ['Buy: skip into OI wall', data.buy_block_into_oi_wall ? 'On' : 'Off'],
     ['Supertrend', `${data.supertrend_period} / ${data.supertrend_multiplier}`],
     ['Credit sell confidence gate', data.credit_confidence_gate],
     ['Credit sell stop %', data.credit_stop_loss_pct],
