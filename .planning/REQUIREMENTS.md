@@ -135,34 +135,32 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 
 ## Traceability
 
-Filled in during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BROK-01 | — | Pending |
-| BROK-02 | — | Pending |
-| BROK-03 | — | Pending |
-| ISOL-01 | — | Pending |
-| ISOL-02 | — | Pending |
-| ISOL-03 | — | Pending |
-| ISOL-04 | — | Pending |
-| SAFE-01 | — | Pending |
-| SAFE-02 | — | Pending |
-| SAFE-03 | — | Pending |
-| REPT-01 | — | Pending |
-| REPT-02 | — | Pending |
-| REPT-03 | — | Pending |
-| BILL-01 | — | Pending |
-| BILL-02 | — | Pending |
-| BILL-03 | — | Pending |
-| COMP-01 | — | Pending |
-| COMP-02 | — | Pending |
+| BROK-01 | Phase 2 | Pending |
+| BROK-02 | Phase 2 | Pending |
+| BROK-03 | Phase 2 | Pending |
+| ISOL-01 | Phase 1 | Pending |
+| ISOL-02 | Phase 1 | Pending |
+| ISOL-03 | Phase 1 | Pending |
+| ISOL-04 | Phase 1 | Pending |
+| SAFE-01 | Phase 3 | Pending |
+| SAFE-02 | Phase 3 | Pending |
+| SAFE-03 | Phase 3 | Pending |
+| REPT-01 | Phase 4 | Pending |
+| REPT-02 | Phase 4 | Pending |
+| REPT-03 | Phase 4 | Pending |
+| BILL-01 | Phase 5 | Pending |
+| BILL-02 | Phase 5 | Pending |
+| BILL-03 | Phase 5 | Pending |
+| COMP-01 | Phase 6 | Pending |
+| COMP-02 | Phase 6 | Pending |
 
 **Coverage:**
 - v1 requirements: 18 total
-- Mapped to phases: 0
-- Unmapped: 18 ⚠️ (roadmap not yet created)
+- Mapped to phases: 18
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-30*
-*Last updated: 2026-09-30 after initial definition, drawn from `.planning/research/FEATURES.md`*
+*Last updated: 2026-09-30 after roadmap creation — all 18 v1 requirements mapped across 6 phases, see `.planning/ROADMAP.md`*
