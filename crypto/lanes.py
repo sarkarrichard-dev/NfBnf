@@ -429,6 +429,16 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
             key = f"{strat}:{sym}"
             slot = dict(st.get(key) or {})
             prev_strategy_state = slot.get("strategy")
+            # A previous scan's entry whose outcome Delta couldn't answer
+            # either (D-07) — re-check before anything else touches this
+            # slot. A disarm must not strand an unresolved real order, so
+            # this runs even if `live` is false for the rest of this scan.
+            if slot.get("unclear_entry") and client is not None and client.has_credentials:
+                if _resolve_unclear_entry(
+                    client, slot, strat, sym, contract, s, fx, now_utc, events
+                ):
+                    st[key] = slot
+                    continue
             # outside the lane window with nothing open to manage → don't even
             # run the strategy: stepping it would churn its internal state
             # (armed levels, trade counters, traded-pivot lists) for an entry
@@ -614,9 +624,10 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
                 slot["strategy"] = prev_strategy_state
 
             st[key] = slot
-            if action == "enter" and slot.get("position"):
-                # a fresh position must survive a crash before the batched
-                # end-of-loop save; a plain indicator-state tick can wait for it.
+            if action == "enter" and (slot.get("position") or slot.get("unclear_entry")):
+                # a fresh position (or an unresolved order that must not be
+                # resent) must survive a crash before the batched end-of-loop
+                # save; a plain indicator-state tick can wait for it.
                 try:
                     journal.save_state(st)
                 except OSError:
@@ -722,6 +733,130 @@ def _reap_exchange_close(client, slot: dict, strat: str, sym: str, fx: float, ev
             close_ev["price"],
         )
     return True
+
+
+def _live_position_dict(
+    *,
+    strat,
+    sym,
+    side,
+    day,
+    mode,
+    entry_price,
+    entry_price_source,
+    entry_time,
+    size,
+    contract_value,
+    leverage,
+    margin_total_usd,
+    stop_price,
+    opened_at,
+    order_id,
+    entry_reason,
+    features,
+):
+    """The one shape a live/paper position dict is built in — used both by a
+    fresh entry (_apply_entry) and by adopting a position Delta confirms
+    filled after its own reply was lost (_resolve_unclear_entry)."""
+    return {
+        "strategy": strat,
+        "asset": sym,
+        "side": side,
+        "day": day,
+        "mode": mode,
+        "entry_price": entry_price,
+        "entry_price_source": entry_price_source,
+        "entry_time": entry_time,
+        "size": size,
+        "contract_value": contract_value,
+        "leverage": leverage,
+        "margin_total_usd": margin_total_usd,
+        "notional_usd": round(size * contract_value * entry_price, 2),
+        "stop_price": stop_price,
+        "opened_at": opened_at,
+        "order_id": order_id,
+        "entry_reason": entry_reason,
+        "features": features,
+    }
+
+
+def _resolve_unclear_entry(
+    client: DeltaClient,
+    slot: dict[str, Any],
+    strat: str,
+    sym: str,
+    contract,
+    s,
+    fx: float,
+    now_utc: datetime,
+    events: list[dict[str, Any]],
+) -> bool:
+    """Re-checks a previous scan's unresolved (Delta-unreachable) live entry
+    before this slot does anything else this scan. Returns True when the
+    slot must be skipped entirely this scan (still unresolved — the strategy
+    is not stepped, no new entry can happen); False once resolved (adopted
+    or cleared) — the caller lets the normal per-slot flow continue."""
+    marker = slot["unclear_entry"]
+    settle = executor.settle_entry(
+        client,
+        client_order_id=marker["client_order_id"],
+        product_id=marker.get("product_id", contract.product_id),
+    )
+    if settle["verdict"] == "UNKNOWN":
+        events.append(
+            {
+                "strategy": strat,
+                "asset": sym,
+                "event": "wait",
+                "reason": "an unconfirmed order on Delta is being re-checked",
+            }
+        )
+        return True
+    if settle["verdict"] == "NOT_PLACED":
+        del slot["unclear_entry"]
+        logger.info("crypto unclear entry for %s %s cleared — never existed on Delta", strat, sym)
+        return False
+
+    # FILLED — adopt it as a real live position. Note: its exits rely on the
+    # hold cap, the exchange bracket stop (reaped once Delta shows flat) and
+    # a manual Close — the strategy's own state never saw this entry, so its
+    # signal-based exit logic has no idea a position exists to close.
+    fp, fq = None, 0.0
+    try:
+        fp, fq = executor.fill_report(client, settle["order_id"])
+    except Exception:
+        logger.warning("crypto fill lookup failed while adopting %s %s", strat, sym, exc_info=True)
+    entry_price = fp if fp else float(marker["signal_price"])
+    entry_price_source = "fill" if fp else "signal"
+    size = int(fq) if fq and fq >= 1 else max(1, int(marker["size"]))
+    pos = _live_position_dict(
+        strat=strat,
+        sym=sym,
+        side=marker["side"],
+        day=marker["day"],
+        mode="live",
+        entry_price=entry_price,
+        entry_price_source=entry_price_source,
+        entry_time=marker["entry_time"],
+        size=size,
+        contract_value=contract.contract_value,
+        leverage=marker["leverage"],
+        margin_total_usd=marker["margin_total_usd"],
+        stop_price=marker["stop_price"],
+        opened_at=now_utc.isoformat(),
+        order_id=settle["order_id"],
+        entry_reason=marker["entry_reason"],
+        features={},
+    )
+    slot["position"] = pos
+    del slot["unclear_entry"]
+    notify.crypto_opened(pos)
+    notify.crypto_alert(
+        f"✅ <b>CRYPTO LIVE ENTRY CONFIRMED</b> — {sym} {marker['side'].upper()}\n"
+        "The order did fill on Delta and is now tracked normally.",
+        key=f"c-adopted:{sym}:{strat}",
+    )
+    return False
 
 
 def _apply_entry(
@@ -838,10 +973,36 @@ def _apply_entry(
                         key=f"c-lost:{sym}:{strat}",
                     )
                 elif settle["verdict"] == "UNKNOWN":
-                    # Delta itself could not be reached either — treat as not
-                    # placed so nothing is ever resent; a future settlement
-                    # (Task 2) re-checks and adopts or clears this.
-                    reject_reason = "Delta unreachable — outcome unknown"
+                    # Delta itself could not be reached either (D-07). Hold the
+                    # slot — record nothing, never resend — and re-check every
+                    # scan via _resolve_unclear_entry until Delta answers.
+                    new_state["position"] = None
+                    slot["unclear_entry"] = {
+                        "since": now_utc.isoformat(),
+                        "client_order_id": coid,
+                        "product_id": contract.product_id,
+                        "side": side,
+                        "size": sr.size,
+                        "leverage": sr.leverage,
+                        "margin_total_usd": sr.margin_total_usd,
+                        "stop_price": bracket_stop_price(entry_px, side, _trail_cfg_for(strat, s)),
+                        "signal_price": entry_px,
+                        "entry_time": ev.get("ts"),
+                        "day": day,
+                        "entry_reason": ev.get("reason"),
+                    }
+                    ev.update(
+                        event="live_unconfirmed",
+                        reason="Delta unreachable — outcome unknown, re-checking every scan",
+                    )
+                    notify.crypto_alert(
+                        f"⚠️ <b>CRYPTO LIVE ENTRY</b> — {sym} {side.upper()}\n"
+                        "Delta did not answer when placing this order, so it is treated "
+                        "as NOT placed and no second order will be sent; the system "
+                        "re-checks Delta every scan.",
+                        key=f"c-unclear:{sym}:{strat}",
+                    )
+                    return
                 # NOT_PLACED falls straight into the rejected path below with
                 # the original exception text — nothing filled, nothing to undo.
             if resp is None:
@@ -871,26 +1032,25 @@ def _apply_entry(
             if settled_filled is not None:
                 fill_size = max(1, int(settled_filled))
 
-    pos = {
-        "strategy": strat,
-        "asset": sym,
-        "side": side,
-        "day": day,
-        "mode": "live" if live else "paper",
-        "entry_price": entry_px,
-        "entry_price_source": entry_src,
-        "entry_time": ev.get("ts"),
-        "size": fill_size,
-        "contract_value": contract.contract_value,
-        "leverage": sr.leverage,
-        "margin_total_usd": sr.margin_total_usd,
-        "notional_usd": round(fill_size * contract.contract_value * entry_px, 2),
-        "stop_price": bracket_stop_price(entry_px, side, _trail_cfg_for(strat, s)),
-        "opened_at": now_utc.isoformat(),
-        "order_id": order_id,
-        "entry_reason": ev.get("reason"),
-        "features": snapshot,
-    }
+    pos = _live_position_dict(
+        strat=strat,
+        sym=sym,
+        side=side,
+        day=day,
+        mode="live" if live else "paper",
+        entry_price=entry_px,
+        entry_price_source=entry_src,
+        entry_time=ev.get("ts"),
+        size=fill_size,
+        contract_value=contract.contract_value,
+        leverage=sr.leverage,
+        margin_total_usd=sr.margin_total_usd,
+        stop_price=bracket_stop_price(entry_px, side, _trail_cfg_for(strat, s)),
+        opened_at=now_utc.isoformat(),
+        order_id=order_id,
+        entry_reason=ev.get("reason"),
+        features=snapshot,
+    )
     slot["position"] = pos
     ev.update(
         size=fill_size,

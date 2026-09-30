@@ -273,14 +273,41 @@ def settle_entry(client: DeltaClient, *, client_order_id: str, product_id: int) 
     if row is None:
         out["verdict"] = "NOT_PLACED"
         return out
+
+    def _unfilled(r: dict[str, Any]) -> float:
+        try:
+            return abs(float(r.get("unfilled_size") or 0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    state = str(row.get("state") or "").lower()
+    if state in {"open", "pending"} and _unfilled(row) > 0:
+        # Still working on Delta — cancel it. A cancel can lose the race to a
+        # fill (the order completes between our lookup and the DELETE); the
+        # RE-READ decides the outcome, never the cancel call's own reply.
+        oid = row.get("id")
+        try:
+            if oid is not None:
+                client.cancel_order(int(oid), product_id)
+        except DeltaError:
+            pass
+        out["cancelled"] = True
+        try:
+            row = find_order(client, coid, product_id)
+        except DeltaError as exc:
+            out["error"] = str(exc)
+            return out
+        if row is None:
+            out["verdict"] = "NOT_PLACED"
+            return out
+
     oid = row.get("id")
     out["order_id"] = f"{product_id}:{oid}" if oid is not None else None
     try:
         size = abs(float(row.get("size") or 0))
-        unfilled = abs(float(row.get("unfilled_size") or 0))
     except (TypeError, ValueError):
-        size = unfilled = 0.0
-    out["filled"] = max(0.0, size - unfilled)
+        size = 0.0
+    out["filled"] = max(0.0, size - _unfilled(row))
     out["verdict"] = "FILLED" if out["filled"] > 0 else "NOT_PLACED"
     return out
 
@@ -411,5 +438,84 @@ if __name__ == "__main__":  # self-check — mocked client, no network, no journ
     assert res["verdict"] == "FILLED" and res["order_id"] == "27:55" and res["filled"] == 3.0
     res2 = settle_entry(sc, client_order_id="nope", product_id=27)
     assert res2["verdict"] == "NOT_PLACED"
+
+    # settle_entry: a still-open order is cancelled, then the re-read decides
+    class _CancelWinsClient:
+        def __init__(self):
+            self.cancels = []
+            self._calls = 0
+
+        def open_orders(self):
+            self._calls += 1
+            if self._calls == 1:
+                return [
+                    {
+                        "id": 9,
+                        "product_id": 27,
+                        "client_order_id": "x",
+                        "size": 2,
+                        "unfilled_size": 2,
+                        "state": "open",
+                    }
+                ]
+            return []  # cancelled -- no longer open
+
+        def order_history(self):
+            return [
+                {
+                    "id": 9,
+                    "product_id": 27,
+                    "client_order_id": "x",
+                    "size": 2,
+                    "unfilled_size": 2,
+                    "state": "cancelled",
+                }
+            ]
+
+        def cancel_order(self, order_id, product_id):
+            self.cancels.append((order_id, product_id))
+
+    cw = _CancelWinsClient()
+    res3 = settle_entry(cw, client_order_id="x", product_id=27)
+    assert res3["verdict"] == "NOT_PLACED" and res3["cancelled"] is True and cw.cancels == [(9, 27)]
+
+    class _FillWinsClient:
+        """The cancel loses the race -- DeltaError on cancel, re-read shows filled."""
+
+        def __init__(self):
+            self._calls = 0
+
+        def open_orders(self):
+            self._calls += 1
+            if self._calls == 1:
+                return [
+                    {
+                        "id": 10,
+                        "product_id": 27,
+                        "client_order_id": "y",
+                        "size": 2,
+                        "unfilled_size": 2,
+                        "state": "open",
+                    }
+                ]
+            return []
+
+        def order_history(self):
+            return [
+                {
+                    "id": 10,
+                    "product_id": 27,
+                    "client_order_id": "y",
+                    "size": 2,
+                    "unfilled_size": 0,
+                    "state": "closed",
+                }
+            ]
+
+        def cancel_order(self, order_id, product_id):
+            raise DeltaError("DELETE /v2/orders: HTTP 400 — already filled", status=400)
+
+    res4 = settle_entry(_FillWinsClient(), client_order_id="y", product_id=27)
+    assert res4["verdict"] == "FILLED" and res4["filled"] == 2.0 and res4["order_id"] == "27:10"
 
     print("crypto.executor self-check ok")
