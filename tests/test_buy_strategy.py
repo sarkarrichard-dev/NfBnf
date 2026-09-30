@@ -110,3 +110,68 @@ def test_contra_cpr_gate_blocks_counter_trend_buys_only_when_on(monkeypatch) -> 
     with_trend = evaluate_buy_signal(frame, previous, _regime("TRENDING_BULL"))
     assert with_trend.action == "BUY_CALL"
     assert with_trend.entry_quality == "breakout_resistance"
+
+
+def _breakdown_candles() -> pd.DataFrame:
+    """Mirror of _breakout_candles: a flat range around 100, then two bars
+    confirming a real breakdown below it."""
+    rows = [{"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0} for _ in range(25)]
+    rows.append({"open": 100.0, "high": 100.0, "low": 94.0, "close": 95.0})
+    rows.append({"open": 95.0, "high": 96.0, "low": 92.0, "close": 93.0})
+    return pd.DataFrame(rows)
+
+
+def test_contra_cpr_gate_bear_mirror(monkeypatch) -> None:
+    """The bear branch mirrors the bull branch exactly: a real breakdown
+    pattern blocked only when CPR reads TRENDING_BULL or SIDEWAYS, and only
+    when the switch is on."""
+    monkeypatch.setenv("REQUIRE_SUPERTREND_ALIGN", "false")
+    monkeypatch.setenv("BUY_BLOCK_CONTRA_CPR", "true")
+    reload_strategy_params()
+    previous = pd.DataFrame(
+        [
+            {"open": 100, "high": 103, "low": 97, "close": 100},
+            {"open": 100, "high": 103, "low": 97, "close": 101},
+        ]
+    )
+    frame = _breakdown_candles()
+
+    blocked = evaluate_buy_signal(frame, previous, _regime("TRENDING_BULL"))
+    assert blocked.action == "NO_TRADE"
+    assert blocked.entry_quality == "cpr_contra_filter"
+
+    with_trend = evaluate_buy_signal(frame, previous, _regime("TRENDING_BEAR"))
+    assert with_trend.action == "BUY_PUT"
+    assert with_trend.entry_quality == "breakdown_support"
+
+
+def test_contra_cpr_gate_sideways_engulfing_and_mixed_pass(monkeypatch) -> None:
+    """Sideways blocks a reversal pattern too once the switch is on (the
+    existing cpr_sideways_veto only covers the two breakout-continuation
+    patterns); MIXED is never blocked regardless of the switch."""
+    monkeypatch.setenv("REQUIRE_SUPERTREND_ALIGN", "false")
+    reload_strategy_params()
+    previous = pd.DataFrame(
+        [
+            {"open": 100, "high": 103, "low": 97, "close": 100},
+            {"open": 100, "high": 103, "low": 97, "close": 101},
+        ]
+    )
+    rows = [{"open": 23920.0, "high": 23930.0, "low": 23900.0, "close": 23920.0} for _ in range(27)]
+    rows.append({"open": 23920.0, "high": 23925.0, "low": 23900.0, "close": 23905.0})  # bearish
+    rows.append({"open": 23900.0, "high": 23935.0, "low": 23895.0, "close": 23930.0})  # engulfs it
+    engulfing = pd.DataFrame(rows)
+
+    unset = evaluate_buy_signal(engulfing, previous, _regime("SIDEWAYS"))
+    assert unset.action == "BUY_CALL"
+
+    monkeypatch.setenv("BUY_BLOCK_CONTRA_CPR", "true")
+    reload_strategy_params()
+
+    blocked = evaluate_buy_signal(engulfing, previous, _regime("SIDEWAYS"))
+    assert blocked.action == "NO_TRADE"
+    assert blocked.entry_quality == "cpr_contra_filter"
+
+    mixed = evaluate_buy_signal(_breakout_candles(), previous, _regime("MIXED"))
+    assert mixed.action == "BUY_CALL"
+    assert mixed.entry_quality == "breakout_resistance"

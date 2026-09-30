@@ -2,6 +2,7 @@ import calendar
 import math
 from datetime import datetime, timedelta
 
+import pandas as pd
 import pytest
 
 from index_ai import market_log, strategy_lab
@@ -358,3 +359,145 @@ def test_live_buy_lane_replays_the_real_buy_signal(db, monkeypatch, tmp_path):
     default_names = {r["strategy"] for r in strategy_lab.run(["NIFTY"], [SESSION])["rows"]}
     assert "live_buy_lane" not in default_names
     assert "live_buy_lane_tuned" not in default_names
+
+
+def _write_prev_day(tmp_path, monkeypatch, *, rows=375, start="2026-09-23T09:15:00", px0=23400.0):
+    """Point strategy_lab.candle_cache at a scratch cache and write one prior
+    session's worth of 1m candles -- the shared prior-day fixture every
+    live_buy_lane test needs, so no test reads the real memory/candles."""
+    monkeypatch.setattr(strategy_lab.candle_cache, "CACHE_ROOT", tmp_path / "candles")
+    monkeypatch.setenv("CANDLE_INTERVAL_MINUTES", "1")
+    prev_dir = tmp_path / "candles" / "NIFTY_1m"
+    prev_dir.mkdir(parents=True)
+    t0 = datetime.fromisoformat(start)
+    lines = ["datetime,open,high,low,close,volume"]
+    for i in range(rows):
+        t = t0 + timedelta(minutes=i)
+        px = px0 + 0.5 * i
+        lines.append(f"{t.isoformat()},{px},{px + 1},{px - 1},{px},1000")
+    (prev_dir / "2026-09-23.csv").write_text("\n".join(lines), encoding="utf-8")
+
+
+def test_live_buy_lane_missing_prior_day_returns_no_trades(db, monkeypatch, tmp_path):
+    """No NIFTY_1m CSV for the prior date -- degrade to no trades, never raise."""
+    monkeypatch.setattr(strategy_lab.candle_cache, "CACHE_ROOT", tmp_path / "candles")
+    _day([23500 + 5 * i for i in range(60)], start="09:15")
+    assert strategy_lab.run_session("live_buy_lane", "NIFTY", SESSION) == []
+
+
+def test_live_buy_read_no_look_ahead_and_builds_correct_inputs(monkeypatch, tmp_path):
+    """The frame handed to evaluate_buy_signal only contains bars that fully
+    closed by the snapshot time, and the OI context is built from that
+    snapshot's real strikes -- not a candle-range guess."""
+    import types
+
+    _write_prev_day(tmp_path, monkeypatch)
+    _ticks([23400 + 0.1 * i for i in range(12)], start="09:15", step_s=30)
+
+    snap = [
+        {"strike": 23300.0, "opt_type": "PE", "oi": 5e5, "spot": 23400.0},
+        {"strike": 23300.0, "opt_type": "CE", "oi": 2e5, "spot": 23400.0},
+        {"strike": 23700.0, "opt_type": "CE", "oi": 9e5, "spot": 23400.0},
+        {"strike": 23700.0, "opt_type": "PE", "oi": 1e5, "spot": 23400.0},
+    ]
+
+    calls = []
+
+    def recorder(frame, prev, regime, *, params, oi):
+        calls.append((frame, prev, regime, params, oi))
+        return types.SimpleNamespace(action="NO_TRADE")
+
+    monkeypatch.setattr(strategy_lab, "evaluate_buy_signal", recorder)
+
+    ts = f"{SESSION}T09:18:30+05:30"
+    result = strategy_lab._live_buy_read(
+        "NIFTY", SESSION, ts, snap, {}, strategy_lab.get_strategy_params()
+    )
+    assert result == 0  # NO_TRADE -> 0
+    assert len(calls) == 1
+    frame, prev, regime, params, oi = calls[0]
+    assert not prev.empty
+    assert frame["end"].max() <= pd.Timestamp(ts)
+    assert pd.Timestamp(f"{SESSION}T09:19:00+05:30") not in set(frame["end"])
+    assert oi.max_put_oi_strike == 23300.0
+    assert oi.max_call_oi_strike == 23700.0
+
+
+def test_live_buy_read_value_error_returns_zero_not_a_crash(monkeypatch, tmp_path):
+    """Too few candles early in the session: evaluate_buy_signal's real
+    ValueError must degrade to "no trade", not propagate."""
+    _write_prev_day(tmp_path, monkeypatch, rows=5)
+    _ticks([23400.0, 23401.0], start="09:15", step_s=30)
+
+    def boom(*a, **k):
+        raise ValueError("Need at least 23 intraday candles for buy signal.")
+
+    monkeypatch.setattr(strategy_lab, "evaluate_buy_signal", boom)
+    snap = [{"strike": 23400.0, "opt_type": "CE", "oi": 1, "spot": 23400.0}]
+    ts = f"{SESSION}T09:16:00+05:30"
+    result = strategy_lab._live_buy_read(
+        "NIFTY", SESSION, ts, snap, {}, strategy_lab.get_strategy_params()
+    )
+    assert result == 0
+
+
+def test_live_buy_lane_direction_mapping(db, monkeypatch, tmp_path):
+    """BUY_CALL opens a CE leg, BUY_PUT a PE leg, NO_TRADE opens nothing --
+    driven by the real run_session/CANDIDATES wiring, evaluate_buy_signal
+    mocked only to pick the direction deterministically."""
+    import types
+
+    _write_prev_day(tmp_path, monkeypatch)
+    _ticks([23400 + 0.5 * i for i in range(400)])
+    _day([23500 + 5 * i for i in range(60)], start="09:15")
+
+    monkeypatch.setattr(
+        strategy_lab,
+        "evaluate_buy_signal",
+        lambda *a, **k: types.SimpleNamespace(action="BUY_CALL"),
+    )
+    calls = strategy_lab.run_session("live_buy_lane", "NIFTY", SESSION)
+    assert calls and calls[0]["legs"][0].startswith("BUY") and calls[0]["legs"][0].endswith("CE")
+
+    monkeypatch.setattr(
+        strategy_lab, "evaluate_buy_signal", lambda *a, **k: types.SimpleNamespace(action="BUY_PUT")
+    )
+    puts = strategy_lab.run_session("live_buy_lane", "NIFTY", SESSION)
+    assert puts and puts[0]["legs"][0].startswith("BUY") and puts[0]["legs"][0].endswith("PE")
+
+    monkeypatch.setattr(
+        strategy_lab,
+        "evaluate_buy_signal",
+        lambda *a, **k: types.SimpleNamespace(action="NO_TRADE"),
+    )
+    assert strategy_lab.run_session("live_buy_lane", "NIFTY", SESSION) == []
+
+
+def test_default_run_never_evaluates_live_buy_candidates(db, monkeypatch):
+    """T-01-03: the dashboard's GET /api/strategy-lab calls run() with no
+    names -- that path must never touch _live_buy_read (it's lazy and
+    ON_DEMAND-excluded), so a crashing replacement must never fire."""
+    _day([23500 + 5 * i for i in range(60)], start="09:15")
+
+    def boom(*a, **k):
+        raise AssertionError("live_buy_lane must not run in the default endpoint call")
+
+    monkeypatch.setattr(strategy_lab, "_live_buy_read", boom)
+    result = strategy_lab.run(["NIFTY"], [SESSION])
+    assert result["rows"]
+
+
+def test_live_buy_wrappers_pass_the_right_params():
+    """_live_buy reads today's real settings; _live_buy_tuned overrides only
+    LIVE_BUY_TUNED's keys via dataclasses.replace."""
+    captured = {}
+
+    def fake_read(params):
+        captured["v"] = params.buy_block_contra_cpr
+        return 0
+
+    sig = {"live_buy": fake_read}
+    strategy_lab._live_buy(sig)
+    assert captured["v"] is False
+    strategy_lab._live_buy_tuned(sig)
+    assert captured["v"] is True
