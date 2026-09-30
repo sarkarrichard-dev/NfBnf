@@ -77,6 +77,13 @@ class StrategyParams:
     buy_min_leg_oi: int = 0
     buy_min_leg_volume: int = 0
     buy_block_contra_oi: bool = True
+    # Buy lane only: no buying against the CPR day direction or on a
+    # SIDEWAYS CPR day (env BUY_BLOCK_CONTRA_CPR). Phase 1, 2026-09-30;
+    # default off so the paper lane is unchanged until switched on. The
+    # global cpr_narrow/wide width thresholds also drive the sell lane and
+    # position_exits.py, so they stay untouched -- this is a new gate, not a
+    # retune of those.
+    buy_block_contra_cpr: bool = False
     # Richard, 2026-09-16: pick the strike itself by its Greeks, not just OI +
     # volume — a strike near the target delta actually moves with the index;
     # a far-OTM strike can sit at the busiest volume and still barely react.
@@ -176,6 +183,7 @@ def get_strategy_params() -> StrategyParams:
         buy_min_leg_oi=_int("BUY_MIN_LEG_OI", 0),
         buy_min_leg_volume=_int("BUY_MIN_LEG_VOLUME", 0),
         buy_block_contra_oi=_bool("BUY_BLOCK_CONTRA_OI", True),
+        buy_block_contra_cpr=_bool("BUY_BLOCK_CONTRA_CPR", False),
         buy_use_greeks_strike_selection=_bool("BUY_USE_GREEKS_STRIKE_SELECTION", True),
         buy_target_delta_low=_float("BUY_TARGET_DELTA_LOW", 0.35),
         buy_target_delta_high=_float("BUY_TARGET_DELTA_HIGH", 0.55),
@@ -281,6 +289,7 @@ def strategy_tuning_summary() -> dict[str, object]:
         "buy_min_leg_oi": p.buy_min_leg_oi,
         "buy_min_leg_volume": p.buy_min_leg_volume,
         "buy_block_contra_oi": p.buy_block_contra_oi,
+        "buy_block_contra_cpr": p.buy_block_contra_cpr,
         "credit_profit_target_pct": p.credit_profit_target_pct,
         "credit_stop_loss_pct": p.credit_stop_loss_pct,
         "credit_stop_loss_pct_high_vol": p.credit_stop_loss_pct_high_vol,
@@ -351,6 +360,7 @@ def strategy_tuning_summary() -> dict[str, object]:
             "BUY_MIN_LEG_OI",
             "BUY_MIN_LEG_VOLUME",
             "BUY_BLOCK_CONTRA_OI",
+            "BUY_BLOCK_CONTRA_CPR",
             "BUY_VOLUME_LOOKBACK_BARS",
             "CREDIT_WING_STRIKES",
             "CREDIT_SHORT_STRIKE_STEPS",

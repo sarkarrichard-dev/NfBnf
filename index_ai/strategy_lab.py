@@ -23,20 +23,30 @@ Verdict per (strategy, index), on Richard's readiness bar:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable
-
+import dataclasses
+import functools
+import json
 import math
+import sys
 from bisect import bisect_right
+from dataclasses import dataclass
+from datetime import date, timedelta
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
 
-from index_ai import market_log
+from index_ai import candle_cache, market_log
 from index_ai.charges import leg_charge_rupees
-from index_ai.instruments import market_lot_size
+from index_ai.config import candle_interval_minutes
+from index_ai.instruments import get_instrument, market_lot_size
+from index_ai.options_oi import analyze_option_chain
 from index_ai.strategies import oi_signals
+from index_ai.strategies.buy_strategy import evaluate_buy_signal
 from index_ai.strategies.candlestick_sr import intraday_candle_trend
+from index_ai.strategies.cpr_regime import analyze_cpr_regime
+from index_ai.strategies.strategy import add_indicators
+from index_ai.strategies.strategy_params import get_strategy_params
 
 ENTRY_FROM, ENTRY_UNTIL, SQUARE_OFF = "09:30", "14:30", "15:10"
 MAX_TRADES_PER_DAY = 2
@@ -46,15 +56,15 @@ HEDGE_STRIKES = 4  # long leg sits 4 strikes beyond the short one
 # (instruments._buy_scalp_trail).
 BUY_TRAIL_POINTS = {"NIFTY": 25.0, "BANKNIFTY": 55.0, "SENSEX": 80.0}
 MIN_TRADES, MIN_DAYS = 30, 14
-BUY_MIN_WIN_RATE = 0.65   # Richard's bar for option buying, on top of net > 0
-PA_BARS = 6        # today's own 5m candles the structure read looks at (30 min)
+BUY_MIN_WIN_RATE = 0.65  # Richard's bar for option buying, on top of net > 0
+PA_BARS = 6  # today's own 5m candles the structure read looks at (30 min)
 # "Options are expensive": at-the-money implied vol (what option prices assume
 # the index will move, annualised %) vs the move the index is actually making
 # today (5m closes, annualised the same way). Sellers are paid that gap -- the
 # best-documented edge in index options. Needs an hour of today's candles.
 VRP_MIN_RATIO = 1.2
 VRP_MIN_BARS = 12
-_BARS_PER_YEAR = 75 * 252          # 5m bars in a 09:15-15:30 session x trading days
+_BARS_PER_YEAR = 75 * 252  # 5m bars in a 09:15-15:30 session x trading days
 
 # "Switch to next expiry when the current one's premium is thin" (Richard,
 # 2026-09-23). Thin = at-the-money premium (avg of CE and PE) below this, in
@@ -63,7 +73,7 @@ _BARS_PER_YEAR = 75 * 252          # 5m bars in a 09:15-15:30 session x trading 
 # expiry is next month (monthly-only), so expect it to behave differently.
 THIN_ATM_PREMIUM = {"NIFTY": 40.0, "BANKNIFTY": 95.0, "SENSEX": 130.0}
 NEXT_EXPIRY_SWITCH = {"pa_structure_next_spread"}
-_NEXT_MAX_AGE_S = 180              # a next-expiry quote older than this isn't used
+_NEXT_MAX_AGE_S = 180  # a next-expiry quote older than this isn't used
 
 Direction = Callable[[dict[str, Any]], int]  # signal read -> +1 up, -1 down, 0 none
 
@@ -96,6 +106,22 @@ def _wall_bounce(sig: dict[str, Any]) -> int:
 def _rich(rule: Direction) -> Direction:
     """Same direction rule, but only when options are expensive vs today's move."""
     return lambda sig: rule(sig) if (sig.get("iv_rv") or 0) >= VRP_MIN_RATIO else 0
+
+
+# The live option-buy lane's own entry rules (D-03/D-08/D-09), replayed
+# on the recorded chain instead of a new signal reader -- see
+# _live_buy_read below. LIVE_BUY_TUNED is the one lever this plan adds
+# (plan 01-03 adds the others); "tuned" just means today's params with
+# these overrides applied via dataclasses.replace.
+LIVE_BUY_TUNED: dict[str, Any] = {"buy_block_contra_cpr": True}
+
+
+def _live_buy(sig: dict[str, Any]) -> int:
+    return sig["live_buy"](get_strategy_params())
+
+
+def _live_buy_tuned(sig: dict[str, Any]) -> int:
+    return sig["live_buy"](dataclasses.replace(get_strategy_params(), **LIVE_BUY_TUNED))
 
 
 # name -> (lane, direction rule, plain description)
@@ -153,7 +179,27 @@ CANDIDATES: dict[str, tuple[str, Direction, str]] = {
         _structure,
         "pa_structure_spread, but sold on next expiry when this expiry's ATM premium is thin",
     ),
+    # D-08/D-09: the live buy lane's own evaluate_buy_signal, replayed on the
+    # real recorded chain -- not a new signal, a sanity check of the existing
+    # one. On-demand only (see ON_DEMAND below): /api/strategy-lab's default
+    # run() never evaluates these, so the dashboard's per-call cost is
+    # unchanged.
+    "live_buy_lane": (
+        "buy",
+        _live_buy,
+        "The live option-buy lane's own entry rules at today's settings, replayed on the recorded chain -- buys the ATM option",
+    ),
+    "live_buy_lane_tuned": (
+        "buy",
+        _live_buy_tuned,
+        "live_buy_lane, but no buying against the CPR day direction or on a sideways CPR day",
+    ),
 }
+
+# Evaluated only when explicitly requested via run(..., names=...) -- not by
+# the dashboard's GET /api/strategy-lab, which always calls run() with no
+# names and only ever exercises the candidates below.
+ON_DEMAND = frozenset({"live_buy_lane", "live_buy_lane_tuned"})
 
 
 @dataclass
@@ -164,8 +210,8 @@ class _Pos:
     basis: float  # credit received / premium paid, points
     charges: float = 0.0
     next_expiry: bool = False
-    anchor: float = 0.0          # buys: best index price since entry
-    seen_to: str = ""            # buys: index path already walked up to here
+    anchor: float = 0.0  # buys: best index price since entry
+    seen_to: str = ""  # buys: index path already walked up to here
 
 
 def _quotes(snap: oi_signals.Snapshot) -> dict[tuple[float, str], dict[str, Any]]:
@@ -220,8 +266,6 @@ def _exit_prices(pos: _Pos, q: dict) -> list[float] | None:
     return out
 
 
-
-
 def _trail_hit(pos: _Pos, path: pd.Series, until: str, dist: float, spot: float) -> bool:
     """Walk the real index ticks since the last check (or just this snapshot's
     spot when no ticks were recorded); move the anchor with each new best
@@ -260,20 +304,43 @@ def _index_path(instrument: str, session: str) -> pd.Series:
     idx = pd.to_datetime([r[0] for r in rows], unit="s").tz_localize("Asia/Kolkata")
     px = pd.Series([float(r[1]) for r in rows], index=idx).sort_index()
     day = pd.Timestamp(session, tz="Asia/Kolkata")
-    return px[(px.index >= day + pd.Timedelta(hours=9, minutes=15))
-              & (px.index < day + pd.Timedelta(hours=15, minutes=30))]
+    return px[
+        (px.index >= day + pd.Timedelta(hours=9, minutes=15))
+        & (px.index < day + pd.Timedelta(hours=15, minutes=30))
+    ]
 
 
-def _bars_5m(instrument: str, session: str) -> pd.DataFrame:
-    """Today's 5m OHLC for the index, from _index_path (exchange time)."""
+def _bars_5m(instrument: str, session: str, minutes: int = 5) -> pd.DataFrame:
+    """Today's ``minutes``-wide OHLC for the index, from _index_path (exchange
+    time). Default 5m for the existing candidates; the live buy lane replay
+    passes the active candle interval (usually 1m) instead."""
     px = _index_path(instrument, session)
     if px.empty:
         return pd.DataFrame(columns=["open", "high", "low", "close", "end"])
-    bars = px.resample("5min", origin="start_day", offset="15min").agg(
-        ["first", "max", "min", "last"]).dropna()
+    bars = (
+        px.resample(f"{minutes}min", origin="start_day", offset="15min")
+        .agg(["first", "max", "min", "last"])
+        .dropna()
+    )
     bars.columns = ["open", "high", "low", "close"]
-    bars["end"] = bars.index + pd.Timedelta(minutes=5)
+    bars["end"] = bars.index + pd.Timedelta(minutes=minutes)
     return bars
+
+
+def _prev_day(instrument: str, session: str) -> pd.DataFrame:
+    """The prior session's cached intraday candles (for previous_day_cpr) --
+    an empty frame, never a raise, when nothing is cached that far back."""
+    day = date.fromisoformat(session)
+    cached = candle_cache.load_cached_range(
+        instrument,
+        candle_interval_minutes(),
+        from_date=day - timedelta(days=10),
+        to_date=day - timedelta(days=1),
+    )
+    if cached.empty:
+        return cached
+    latest = pd.to_datetime(cached["datetime"]).dt.date.max()
+    return cached[pd.to_datetime(cached["datetime"]).dt.date == latest].reset_index(drop=True)
 
 
 def _pullback_read(structure: str, done: pd.DataFrame) -> int:
@@ -283,9 +350,19 @@ def _pullback_read(structure: str, done: pd.DataFrame) -> int:
     if structure not in ("UP", "DOWN") or len(done) < 2:
         return 0
     prev, last = done.iloc[-2], done.iloc[-1]
-    if structure == "UP" and prev["close"] < prev["open"] and last["close"] > last["open"]             and last["close"] > prev["high"]:
+    if (
+        structure == "UP"
+        and prev["close"] < prev["open"]
+        and last["close"] > last["open"]
+        and last["close"] > prev["high"]
+    ):
         return 1
-    if structure == "DOWN" and prev["close"] > prev["open"] and last["close"] < last["open"]             and last["close"] < prev["low"]:
+    if (
+        structure == "DOWN"
+        and prev["close"] > prev["open"]
+        and last["close"] < last["open"]
+        and last["close"] < prev["low"]
+    ):
         return -1
     return 0
 
@@ -321,11 +398,67 @@ def _iv_rv(snap: oi_signals.Snapshot, done: pd.DataFrame) -> float | None:
     return round(sum(ivs) / len(ivs) / rv, 3)
 
 
-def signals(instrument: str, session: str,
-            snaps: list[tuple[str, oi_signals.Snapshot]]) -> list[dict[str, Any] | None]:
+def _live_buy_read(
+    instrument: str,
+    session: str,
+    ts: str,
+    snap: oi_signals.Snapshot,
+    ctx: dict[str, Any],
+    params: Any,
+) -> int:
+    """Replay the live buy lane's own evaluate_buy_signal at this snapshot --
+    same frame/regime construction order strategy_router.evaluate_dual_
+    opportunities uses. ``ctx`` caches the per-session bars/prev-day lookup
+    across every snapshot's call (set once, on the first call). Returns 0
+    (no trade) on missing prior-day data, too few completed candles, or the
+    ValueError evaluate_buy_signal raises early in the session -- never
+    raises itself."""
+    if "bars" not in ctx:
+        ctx["bars"] = _bars_5m(instrument, session, minutes=int(candle_interval_minutes()))
+        ctx["prev"] = _prev_day(instrument, session)
+    bars, prev = ctx["bars"], ctx["prev"]
+    if prev.empty or not len(bars):
+        return 0
+    # ponytail: the live scanner also sees the still-forming bar; the lab
+    # deliberately only uses bars that have fully closed by this snapshot
+    # (no look-ahead).
+    done = bars[bars["end"] <= pd.Timestamp(ts)]
+    if done.empty:
+        return 0
+    frame = add_indicators(
+        done.reset_index(drop=True), fast=params.ema_fast_period, slow=params.ema_slow_period
+    )
+    row = frame.iloc[-1]
+    regime = analyze_cpr_regime(
+        frame,
+        prev,
+        price=float(row["close"]),
+        ema_fast=float(row["ema_fast"]),
+        ema_slow=float(row["ema_slow"]),
+    )
+    rows: dict[str, dict[str, Any]] = {}
+    for r in snap:
+        rows.setdefault(str(r["strike"]), {})[r["opt_type"].lower()] = {"oi": r.get("oi") or 0}
+    chain = {"data": {"oc": rows}}
+    oi = analyze_option_chain(
+        chain, spot=float(snap[0]["spot"] or 0), instrument=get_instrument(instrument)
+    )
+    try:
+        sig = evaluate_buy_signal(frame, prev, regime, params=params, oi=oi)
+    except ValueError:
+        return 0
+    return {"BUY_CALL": 1, "BUY_PUT": -1}.get(sig.action, 0)
+
+
+def signals(
+    instrument: str, session: str, snaps: list[tuple[str, oi_signals.Snapshot]]
+) -> list[dict[str, Any] | None]:
     """OI read per snapshot, plus ``structure``: UP/DOWN/RANGE from today's
-    completed 5m candles up to that moment (no peeking at the bar in progress)."""
+    completed 5m candles up to that moment (no peeking at the bar in progress).
+    ``live_buy`` is a lazy callable (one evaluate_buy_signal call costs about
+    15 ms) -- only run_session's on-demand live_buy_lane* candidates call it."""
     bars = _bars_5m(instrument, session)
+    ctx: dict[str, Any] = {}
     out: list[dict[str, Any] | None] = [None]
     for ts, snap in snaps[1:]:
         sig = oi_signals.read(snaps[0][1], snap, session)
@@ -334,6 +467,7 @@ def signals(instrument: str, session: str,
         sig["iv_rv"] = _iv_rv(snap, done)
         sig["pullback"] = _pullback_read(sig["structure"], done)
         sig["wall_bounce"] = _wall_bounce_read(snap, done, sig)
+        sig["live_buy"] = functools.partial(_live_buy_read, instrument, session, ts, snap, ctx)
         out.append(sig)
     return out
 
@@ -376,7 +510,8 @@ def run_session(
     from index_ai.strategies.credit_spread import SELL_TRAIL_POINTS
 
     trail_dist = (BUY_TRAIL_POINTS if lane == "buy" else SELL_TRAIL_POINTS).get(
-        instrument.upper(), 25.0 if lane == "buy" else 40.0)
+        instrument.upper(), 25.0 if lane == "buy" else 40.0
+    )
     trades: list[dict[str, Any]] = []
     pos: _Pos | None = None
     for i in range(1, len(snaps)):
@@ -403,8 +538,11 @@ def run_session(
                 # numbers). Exits at this snapshot's real quotes once the index
                 # touched the stop since the last one -- snapshots are ~90s
                 # apart and live checks every 20s, so a little pessimistic.
-                why = ("trail stop" if _trail_hit(pos, path, ts, trail_dist,
-                                                  float(snap[0]["spot"] or 0)) else None)
+                why = (
+                    "trail stop"
+                    if _trail_hit(pos, path, ts, trail_dist, float(snap[0]["spot"] or 0))
+                    else None
+                )
             if why:
                 pos.charges += sum(
                     cost(p, _flip(side)) for (_, _, side, _), p in zip(pos.legs, prices)
@@ -438,7 +576,7 @@ def run_session(
         if name in NEXT_EXPIRY_SWITCH and _thin(instrument, snap):
             use = _next_at(ts)
             if use is None:
-                continue          # thin here and no fresh next-expiry quote: no trade
+                continue  # thin here and no fresh next-expiry quote: no trade
             q = _quotes(use)
         legs = _open(lane, direction, use)
         fills = [_fill(q.get((k, t)), side) for k, t, side in legs] if legs else None
@@ -462,8 +600,18 @@ def run_session(
     return trades
 
 
-def run(instruments: list[str], sessions: list[str]) -> dict[str, Any]:
-    """Every candidate x index x recorded day, plus a verdict per pair."""
+def run(
+    instruments: list[str], sessions: list[str], names: list[str] | None = None
+) -> dict[str, Any]:
+    """Every candidate x index x recorded day, plus a verdict per pair.
+
+    ``names`` defaults to every registered candidate EXCEPT ``ON_DEMAND``
+    (the live_buy_lane* candidates) -- this is what GET /api/strategy-lab
+    calls with no names, so its per-request cost is unchanged. Pass
+    ``names=sorted(ON_DEMAND)`` (or include them explicitly) to evaluate
+    those too, e.g. from the CLI below.
+    """
+    names = list(names) if names else [n for n in CANDIDATES if n not in ON_DEMAND]
     trades: list[dict[str, Any]] = []
     for inst in instruments:
         for session in sessions:
@@ -471,11 +619,12 @@ def run(instruments: list[str], sessions: list[str]) -> dict[str, Any]:
             if len(snaps) < 2:
                 continue
             sigs = signals(inst, session, snaps)
-            for name in CANDIDATES:
+            for name in names:
                 trades += run_session(name, inst, session, snaps, sigs)
 
     rows = []
-    for name, (lane, _, desc) in CANDIDATES.items():
+    for name in names:
+        lane, _, desc = CANDIDATES[name]
         for inst in instruments:
             mine = [t for t in trades if t["strategy"] == name and t["instrument"] == inst.upper()]
             n, days = len(mine), len({t["session"] for t in mine})
@@ -509,3 +658,22 @@ def run(instruments: list[str], sessions: list[str]) -> dict[str, Any]:
         "rows": rows,
         "recent_trades": sorted(trades, key=lambda t: t["exited"], reverse=True)[:50],
     }
+
+
+if __name__ == "__main__":
+    _instruments = [a.upper() for a in sys.argv[1:]] or ["NIFTY", "BANKNIFTY", "SENSEX"]
+    with market_log.connect() as _db:
+        _sessions = [r[0] for r in _db.execute("SELECT DISTINCT session FROM chain ORDER BY 1")]
+    _result = run(_instruments, _sessions, names=sorted(ON_DEMAND))
+    print(
+        json.dumps(
+            {
+                "sessions": _sessions,
+                "baseline": {k: getattr(get_strategy_params(), k) for k in LIVE_BUY_TUNED},
+                "tuned": LIVE_BUY_TUNED,
+                "rows": _result["rows"],
+            },
+            indent=1,
+            default=str,
+        )
+    )

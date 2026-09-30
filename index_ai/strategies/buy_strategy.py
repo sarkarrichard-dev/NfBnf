@@ -144,6 +144,15 @@ def evaluate_buy_signal(
                 ema_spread_pct=0.0,
                 **base_fields,
             )
+        if cfg.buy_block_contra_cpr and regime.day_bias in {"TRENDING_BEAR", "SIDEWAYS"}:
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=f"{setup['reason']} — CPR reads {regime.day_bias}, long skipped.",
+                confidence=0.0,
+                entry_quality="cpr_contra_filter",
+                ema_spread_pct=0.0,
+                **base_fields,
+            )
         if ema_fast < ema_slow:
             conf = max(0.55, conf - 0.05)
         return StrategySignal(
@@ -161,6 +170,15 @@ def evaluate_buy_signal(
                 reason=f"{setup['reason']} — Supertrend bullish, short skipped.",
                 confidence=0.0,
                 entry_quality="st_filter",
+                ema_spread_pct=0.0,
+                **base_fields,
+            )
+        if cfg.buy_block_contra_cpr and regime.day_bias in {"TRENDING_BULL", "SIDEWAYS"}:
+            return StrategySignal(
+                action="NO_TRADE",
+                reason=f"{setup['reason']} — CPR reads {regime.day_bias}, short skipped.",
+                confidence=0.0,
+                entry_quality="cpr_contra_filter",
                 ema_spread_pct=0.0,
                 **base_fields,
             )

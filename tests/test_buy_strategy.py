@@ -79,3 +79,34 @@ def test_reversal_patterns_are_not_gated_by_sideways_cpr(monkeypatch) -> None:
     result = evaluate_buy_signal(frame, previous, _regime("SIDEWAYS"))
     assert result.action == "BUY_CALL"
     assert result.entry_quality == "bullish_engulfing"
+
+
+def test_contra_cpr_gate_blocks_counter_trend_buys_only_when_on(monkeypatch) -> None:
+    """D-03: a real breakout pattern, bullish, but CPR itself reads
+    TRENDING_BEAR -- with BUY_BLOCK_CONTRA_CPR unset (default) the paper lane
+    is unchanged, so this still fires. Only with the switch on does it block,
+    and only against the trend/sideways -- a with-trend day still fires."""
+    monkeypatch.setenv("REQUIRE_SUPERTREND_ALIGN", "false")
+    reload_strategy_params()
+    previous = pd.DataFrame(
+        [
+            {"open": 100, "high": 103, "low": 97, "close": 100},
+            {"open": 100, "high": 103, "low": 97, "close": 101},
+        ]
+    )
+    frame = _breakout_candles()
+
+    unset = evaluate_buy_signal(frame, previous, _regime("TRENDING_BEAR"))
+    assert unset.action == "BUY_CALL"
+    assert unset.entry_quality == "breakout_resistance"
+
+    monkeypatch.setenv("BUY_BLOCK_CONTRA_CPR", "true")
+    reload_strategy_params()
+
+    blocked = evaluate_buy_signal(frame, previous, _regime("TRENDING_BEAR"))
+    assert blocked.action == "NO_TRADE"
+    assert blocked.entry_quality == "cpr_contra_filter"
+
+    with_trend = evaluate_buy_signal(frame, previous, _regime("TRENDING_BULL"))
+    assert with_trend.action == "BUY_CALL"
+    assert with_trend.entry_quality == "breakout_resistance"
