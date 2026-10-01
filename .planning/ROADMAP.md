@@ -33,7 +33,7 @@ say so and this gets reordered.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Strategy Fixes** - Raise the option buy lane's real win rate, keep every parameter change on the confidence ladder, re-validate Strategy Lab verdicts against real option-chain data (completed 2026-09-30)
-- [ ] **Phase 2: Order Placing & Tracking** - Close the untested money-path edge cases: cancel-while-placing races, broker-disconnect reconciliation, websocket reconnection, tick-feed fallback
+- [x] **Phase 2: Order Placing & Tracking** - Close the untested money-path edge cases: cancel-while-placing races, broker-disconnect reconciliation, websocket reconnection, tick-feed fallback (completed 2026-10-01)
 - [ ] **Phase 3: Exit Optimisation** - Re-validate trailing-stop tuning against live data, remove the dead percent-of-premium code path, add drift monitoring
 - [ ] **Phase 4: Dashboard UI/UX** - Surface which crypto pairs are actually live, add a Data Health view, hold every change to the existing visual bar
 - [ ] **Phase 5: Tenant Isolation Foundation** - Per-subscriber risk state, sizing, kill switch, and pause control, fully separated from every other subscriber's
@@ -231,7 +231,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Strategy Fixes | 4/4 | Complete    | 2026-09-30 |
-| 2. Order Placing & Tracking | 7/7 | In Progress|  |
+| 2. Order Placing & Tracking | 7/7 | Complete    | 2026-10-01 |
 | 3. Exit Optimisation | 0/TBD | Not started | - |
 | 4. Dashboard UI/UX | 0/TBD | Not started | - |
 | 5. Tenant Isolation Foundation | 0/TBD | Not started | - |
