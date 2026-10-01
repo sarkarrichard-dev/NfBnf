@@ -43,7 +43,7 @@ Requirements for the first outside subscriber. Each maps to a roadmap phase.
 - [x] **ORD-03**: The Dhan websocket reconnects and recovers missed ticks
   during a busy scan cycle (20+ concurrent candles) without silently
   dropping data a stop-trigger depends on.
-- [ ] **ORD-04**: Tick-driven stop triggering degrades safely to the
+- [x] **ORD-04**: Tick-driven stop triggering degrades safely to the
   candle-based fallback when the tick feed lags or drops, and this fallback
   behavior is documented, not just known by whoever wrote it.
 
@@ -205,7 +205,7 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 | ORD-01 | Phase 2 | Complete |
 | ORD-02 | Phase 2 | Complete |
 | ORD-03 | Phase 2 | Complete |
-| ORD-04 | Phase 2 | Pending |
+| ORD-04 | Phase 2 | Complete |
 | EXIT-01 | Phase 3 | Pending |
 | EXIT-02 | Phase 3 | Pending |
 | EXIT-03 | Phase 3 | Pending |
