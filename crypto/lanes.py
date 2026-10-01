@@ -1111,8 +1111,11 @@ def _apply_entry(
 
 def _known_strategies() -> set[str]:
     """Every strategy the current code can run — anything else in the state file
-    is a leftover from a removed strategy (e.g. candle_renko)."""
-    return {"ny_n_break", "ichimoku", "cpr_trend"} | set(_SIMPLE)
+    is a leftover from a removed strategy (e.g. candle_renko). btc_daily_straddle
+    is managed by crypto/btc_straddle.py, not this module's per-(strategy, coin)
+    loop, but its state-file slots live in the same st dict this prunes — omitting
+    it here crashes _build_exit_row (no "side" key on a 2-leg straddle position)."""
+    return {"ny_n_break", "ichimoku", "cpr_trend", "btc_daily_straddle"} | set(_SIMPLE)
 
 
 def _close_slot_at_mark(st, key, client, fx, now_utc, events, reason) -> None:

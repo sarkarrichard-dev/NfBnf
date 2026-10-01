@@ -116,8 +116,13 @@ def test_ny_n_break_enters_on_the_rebreak():
     assert fired and fired["side"] == "long"
     # default (2026-09-23): session end no longer closes it -- stop/trail/max-hold do
     kept, ev = nb.step(
-        "BTCUSD", df5, df15, state=dict(state), cfg=nb.NBreakConfig(),
-        in_session=False, session_date="2026-09-07",
+        "BTCUSD",
+        df5,
+        df15,
+        state=dict(state),
+        cfg=nb.NBreakConfig(),
+        in_session=False,
+        session_date="2026-09-07",
     )
     assert ev["event"] != "exit" and kept["position"]
     # with signal exits switched back on, session end forces the exit
@@ -177,7 +182,9 @@ def paper_env(tmp_path, monkeypatch):
     import dataclasses
 
     _orig_nb = lanes._nb_cfg
-    monkeypatch.setattr(lanes, "_nb_cfg", lambda st: dataclasses.replace(_orig_nb(st), signal_exits=True))
+    monkeypatch.setattr(
+        lanes, "_nb_cfg", lambda st: dataclasses.replace(_orig_nb(st), signal_exits=True)
+    )
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
     monkeypatch.setenv("CRYPTO_NBREAK_ALLROUND", "false")  # these tests exercise the NY-window gate
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")
@@ -619,3 +626,45 @@ def test_prune_removed_strategy_closes_and_drops_the_orphan_slot(paper_env, monk
     assert "candle_renko:BTCUSD" not in st  # slot dropped
     rows = [r for r in journal.recent() if r["strategy"] == "candle_renko"]
     assert len(rows) == 1 and rows[0]["exit_reason"] == "strategy removed"
+
+
+def test_prune_removed_strategy_leaves_btc_straddle_slot_alone(paper_env, monkeypatch):
+    """Regression: btc_daily_straddle's 2-leg position has no "side" key, so
+    treating it as an orphaned (removed) strategy crashed _build_exit_row with
+    KeyError('side') every scan cycle (found live 2026-10-01, ~18:01 IST, right
+    after the straddle opened its first position of the day)."""
+    df5 = paper_env["df5"]
+    flat = df5.assign(close=130.0, open=130.0, high=131.0, low=129.0)
+    monkeypatch.setattr(lanes.market_data, "candles", lambda *a, **k: flat)
+    monkeypatch.setattr(lanes.market_data, "ticker", lambda *a, **k: {"mark_price": 83800.0})
+    monkeypatch.setattr(lanes, "in_ny_window", lambda *a, **k: False)
+
+    journal.save_state(
+        {
+            "btc_daily_straddle:BTCUSD": {
+                "position": {
+                    "venue": "delta",
+                    "day": "2026-10-01",
+                    "strategy": "btc_daily_straddle",
+                    "asset": "BTCUSD",
+                    "call_symbol": "C-BTC-83800-021026",
+                    "put_symbol": "P-BTC-83800-021026",
+                    "strike": 83800.0,
+                    "size": 10,
+                    "entry_spot": 83892.5,
+                    "call_entry": 771.58,
+                    "put_entry": 480.49,
+                    "opened_at": "2026-10-01T12:30:00+00:00",
+                    "entry_time": "2026-10-01T12:30:00+00:00",
+                    "mode": "paper",
+                }
+            }
+        }
+    )
+    lanes.scan_crypto_paper()
+
+    st = journal.load_state()
+    assert "btc_daily_straddle:BTCUSD" in st  # slot survives, not pruned
+    assert st["btc_daily_straddle:BTCUSD"]["position"]["strike"] == 83800.0
+    rows = [r for r in journal.recent() if r.get("strategy") == "btc_daily_straddle"]
+    assert rows == []  # never force-closed
