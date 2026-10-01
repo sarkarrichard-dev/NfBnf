@@ -179,6 +179,43 @@ Exits were too early with a 1-point index trail. New logic per index:
 
 Square-off still closes open positions in the last minutes of the session (IST).
 
+## Stop checks: live ticks and the 20-second fallback
+
+A trade's stop is checked in three layers, so one layer going quiet never means
+the stop stops being watched:
+
+1. **Every tick** — only when `ENABLE_TICK_FEED=true` and the live Dhan tick
+   stream is actually flowing. The stop is checked the instant a real traded
+   price crosses it — no waiting for the next scheduled check.
+2. **Every 20 seconds, whenever the market is open** — always, regardless of
+   whether the tick feed is on, off, or stuck. This re-prices the index from
+   Dhan's own REST price and checks the stop again from scratch. This is the
+   fallback: it does not depend on the tick feed in any way.
+3. **Every 90 seconds, the full scan** — also refreshes the candle-based
+   Supertrend stop used by credit (selling) trades.
+
+**When ticks lag or stop arriving:** the 20-second check keeps closing any
+trade whose stop has been crossed, so the worst-case extra delay is about 20
+seconds instead of instant — it never just waits for ticks to come back. The
+feed also reconnects on its own: after 90 seconds of silence, on any error,
+or right away if Dhan sends an explicit disconnect message. It resubscribes
+automatically, and any ticks it did receive before a drop are still saved to
+the tick log — nothing already received is lost.
+
+**The dashboard's Ticks pill, top bar, next to "Dhan OK":**
+
+- **Ticks live** (green) — the feed is on and flowing; stops react to every tick.
+- **Ticks: fallback** (amber) — the feed is on but down right now while the
+  market is open; stops are being checked every 20 seconds instead.
+- **Ticks idle** — the feed is on but down while the market is closed (normal
+  after hours, not a warning).
+- **Ticks off** — `ENABLE_TICK_FEED` is off; stops always run on the
+  20-second check only.
+
+**Where to look if something seems wrong:** `GET /api/tick-feed` — connected,
+stalled, seconds since the last tick, reconnect count, the last error, and
+`on_tick_errors` (failures inside the stop-trigger handler itself).
+
 ## Execution safety (finance-grade gates)
 
 Every entry and live exit passes centralized checks in `index_ai/execution_safety.py`:
@@ -187,7 +224,9 @@ Every entry and live exit passes centralized checks in `index_ai/execution_safet
 - **Structure**: action must match option legs (iron condor = 4 legs, spreads = 2, single buy = 1).
 - **Quantity**: each leg matches NSE lot × dashboard lots (1–10).
 - **Duplicates**: no second open position on the same index + mode.
-- **Live**: requires `ALLOW_LIVE_TRADING`, Dhan token, kill switch clear; exits only on **LIVE_TRADED** with broker fill proof.
+- **Live**: requires `ALLOW_LIVE_TRADING`, Dhan token, kill switch clear. Closing a trade whose entry order is still pending at Dhan cancels that order first and exits only if it actually filled before the cancel landed — it is not assumed closed just because **LIVE_TRADED** was expected.
+- **Lost replies**: an order whose confirmation never came back is looked up in Dhan's own order book by our own order tag, never re-sent blind.
+- **Reconciliation**: mismatches between our journal and Dhan's own book, and any order left unresolved, are sent to Telegram.
 - **Lock**: per-index mutex so two scans cannot double-post orders.
 
 The scanner uses the **plan** from `plan_instrument` (not a bypass). Live orders are validated again immediately before each Dhan API call.
