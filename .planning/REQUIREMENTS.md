@@ -40,7 +40,7 @@ Requirements for the first outside subscriber. Each maps to a roadmap phase.
   `.planning/codebase/CONCERNS.md` — money-path edge cases).
 - [x] **ORD-02**: A position is correctly reconciled after a broker
   disconnection — no stale or duplicate position left in the journal.
-- [ ] **ORD-03**: The Dhan websocket reconnects and recovers missed ticks
+- [x] **ORD-03**: The Dhan websocket reconnects and recovers missed ticks
   during a busy scan cycle (20+ concurrent candles) without silently
   dropping data a stop-trigger depends on.
 - [ ] **ORD-04**: Tick-driven stop triggering degrades safely to the
@@ -204,7 +204,7 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 | STRAT-03 | Phase 1 | Complete |
 | ORD-01 | Phase 2 | Complete |
 | ORD-02 | Phase 2 | Complete |
-| ORD-03 | Phase 2 | Pending |
+| ORD-03 | Phase 2 | Complete |
 | ORD-04 | Phase 2 | Pending |
 | EXIT-01 | Phase 3 | Pending |
 | EXIT-02 | Phase 3 | Pending |
