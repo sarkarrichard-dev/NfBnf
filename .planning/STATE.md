@@ -1,19 +1,19 @@
 ---
 gsd_state_version: 1.0
-current_phase: 2
-current_phase_name: Order Placing & Tracking
-status: verifying
-stopped_at: Completed 02-07-PLAN.md (final plan, Phase 2)
-last_updated: "2026-10-01T15:17:08.952Z"
-last_activity: 2026-09-30
-last_activity_desc: Phase 2 execution started
-state_head: 023d48ca6c46cf7def22b049ee969011ac570b05
+current_phase: 3
+current_phase_name: Exit Optimisation
+status: planning
+stopped_at: Phase 2 complete, ready to plan Phase 3
+last_updated: "2026-10-01T16:54:49.961Z"
+last_activity: 2026-10-01
+last_activity_desc: Phase 2 complete, transitioned to Phase 3
+state_head: c1b0db9e7dbc38c52367a1b7eaf500f88b1afd71
 progress:
   total_phases: 10
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 11
   completed_plans: 11
-  percent: 10
+  percent: 20
 ---
 
 # Project State
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-30)
 
 **Core value:** Never presents a strategy as ready for real money until it has been measured — against real broker charges, on the real live journal, not a backtest — to actually make money.
-**Current focus:** Phase 2 — Order Placing & Tracking
+**Current focus:** Phase 3 — Exit Optimisation
 
 ## Current Position
 
-Phase: 2 (Order Placing & Tracking) — EXECUTING
-Plan: 7 of 7
-Status: Phase complete — ready for verification
-Last activity: 2026-09-30 — Phase 2 execution started
+Phase: 3 — Exit Optimisation
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-10-01 — Phase 2 complete, transitioned to Phase 3
 
 Progress: [█░░░░░░░░░] 10%
 
@@ -38,7 +38,7 @@ Progress: [█░░░░░░░░░] 10%
 
 **Velocity:**
 
-- Total plans completed: 4
+- Total plans completed: 11
 - Average duration: - min
 - Total execution time: 0 hours
 
@@ -47,6 +47,7 @@ Progress: [█░░░░░░░░░] 10%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 4 | - | - |
+| 2 | 7 | - | - |
 
 **Recent Trend:**
 
@@ -103,6 +104,8 @@ Recent decisions affecting current work:
 - [Phase 2]: 02-06: a server disconnect packet now leaves the receive loop itself (not just the inner for-loop), so the feed reconnects at once via existing backoff instead of waiting out the 90s stall timer
 - [Phase 2]: [Phase 2]: 02-07: tested the ORD-04 fallback with the tick feed provably forced down (connected=False, stale last_tick_at) rather than relying on ENABLE_TICK_FEED alone -- proves a crossed stop still closes on the 20-second Dhan price check
 - [Phase 2]: [Phase 2]: 02-07: ui-consistency-reviewer's 7-point checklist applied manually to StatusPills.tsx (no Task/Agent tool in this execution context) -- no findings, documented in the SUMMARY for human confirmation
+- [Phase 2]: Mid-phase live incident (not part of the planned work): btc_daily_straddle's 2-leg position has no "side" key, crashing crypto/lanes.py's auto-prune loop every ~70s for 2+ hours once the straddle actually opened a position on 2026-10-01 -- fixed by adding it to _known_strategies(); server restarted to pick up the fix
+- [Phase 2]: Phase code review (02-REVIEW.md) then found the SAME gap still open on the manual Close/Close-all dashboard controls (CR-01) and a second, independent critical bug in Delta's client misclassifying a non-JSON 5xx response as a definite order rejection instead of unknown, skipping the settle-from-order-book path (CR-02) -- both fixed, plus 4 warnings (ALREADY_CLOSED mislabeled as BLOCKED, a lazy-lock barrier gap, a stale fixture README, a leaked IP in a committed fixture), each with a regression test, before the phase was marked complete
 
 ### Pending Todos
 
@@ -125,5 +128,5 @@ Items acknowledged and deferred at milestone close, most recent first:
 ## Session Continuity
 
 Last session: 2026-10-01T15:17:08.701Z
-Stopped at: Completed 02-07-PLAN.md (final plan, Phase 2)
+Stopped at: Phase 2 complete, ready to plan Phase 3
 Resume file: None

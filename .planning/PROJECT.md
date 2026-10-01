@@ -91,6 +91,25 @@ trusting a result is the thing that must not slip.
   recorded real bid/ask/OI data (`market_log.chain`, since 2026-09-23), not a
   Black-Scholes proxy. This is buy-lane-only so far; the sell lane's
   `options_cpr` backtest tooling still uses the proxy.
+- ✓ A lost order-placement reply (on Dhan or Delta — the broker accepted it
+  but the response never arrived) is settled by asking the broker's own
+  order book, never by re-sending the order — covers both the India/
+  commodities Dhan path and the crypto Delta path (Phase 2, ORD-01/ORD-02).
+  A cancel issued while an entry is still pending is handled the same way,
+  under the same per-instrument lock placement already holds, never a
+  second lock.
+- ✓ "Close all" (the emergency stop-everything dashboard control) waits for
+  any in-flight placement before reading open positions, on both brokers —
+  a position opened the instant Close-all is pressed is still caught.
+- ✓ A real broker disconnect during reconciliation aborts the whole sync
+  pass before touching a single journal row (never a partial, half-applied
+  reconcile), and alerts Richard on Telegram per drift issue found, matching
+  the pattern crypto already had.
+- ✓ The Dhan tick feed flushes any buffered ticks before a reconnect or
+  shutdown instead of silently dropping them, reconnects immediately on an
+  explicit disconnect message instead of waiting out a 90-second stall
+  timer, and the dashboard shows a live "Ticks: live / fallback" indicator
+  fed by the real feed state (Phase 2, ORD-03/ORD-04).
 
 ### Active
 
@@ -100,7 +119,16 @@ trusting a result is the thing that must not slip.
   added 2026-09-29/30) — sell the ATM call+put on Delta each evening, hold to
   next-day expiry. Deliberately naked/unhedged, the opposite of the project's
   usual 2-leg-hedged-only rule, tested anyway on Richard's explicit
-  instruction. Paper only; there is no live path for it yet.
+  instruction. Paper only; there is no live path for it yet. It has now
+  fired twice (2026-09-30, 2026-10-01) and worked correctly both times
+  (first one closed via take-profit for a real paper gain) — but the second
+  firing exposed a real bug: the straddle's 2-leg position has no "side"
+  key, which crashed the generic scanner cleanup loop every ~70 seconds for
+  over two hours before being caught and fixed (2026-10-01). A follow-up
+  code review of the fix then found the SAME gap still open on the manual
+  dashboard Close / Close-all controls (also since fixed). Manual close for
+  this strategy specifically is still not implemented — only the automatic
+  scan paths handle it.
 - [ ] Adopting this GSD phase-based planning process itself, replacing pure
   turn-by-turn requests for future work (this document is the first artifact
   of that adoption).
@@ -212,9 +240,11 @@ re-deriving them from scratch.
 | Live-only testing for crypto — no historical backtest trusted as ground truth | Richard explicitly rejected trusting downloaded historical candles for strategy tuning; only the real live journal counts | ✓ Good — standing rule, enforced (nightly auto-tuner off by default) |
 | India index sell lane is 2-leg hedged credit spreads only, no naked, no sideways/iron-condor | Fewer legs means lower real brokerage/STT/slippage, and it matches how Richard actually trades directionally | ✓ Good — standing rule (one deliberate crypto-side exception: the new BTC straddle test) |
 | Hold on the buy-lane tightening gates (`BUY_BLOCK_CONTRA_CPR`, `BUY_BLOCK_INTO_OI_WALL`) rather than switching on for paper | Real-chain sanity check (1 week, 6-9 trades/index) showed NIFTY and BANKNIFTY worse on both win rate and net rupees; only SENSEX improved, and the two gates weren't isolated from each other in that run — not proof either way, but the one index Richard weighs first got worse | ✓ Good — matches the project's core value (never treat a strategy as ready before it's measured); test the CPR gate alone next if revisited |
+| Crypto (Delta) order-placement fixes done first, ahead of Dhan, in Phase 2 | Crypto is the one aiming to arm real money soonest (~November 2026) — harden the path closer to carrying real risk first, even though Dhan has been live longer | ✓ Good — both brokers ended up fixed in the same phase anyway |
+| Real (read-only) broker traffic captured live from Richard's own Dhan/Delta accounts to build Phase 2's test fixtures, rather than fabricated data | More realistic than hand-rolled mocks for proving disconnect/cancel-race handling; capture tool is structurally GET-only (cannot place/cancel/modify) and redacts secrets before any fixture is written | ✓ Good — caught a real IP-whitelist account issue and a real PII leak in the first fixture (both handled: recorded as-is, then redacted) |
 
 ---
-*Last updated: 2026-09-30 after Phase 1 (Strategy Fixes).*
+*Last updated: 2026-10-01 after Phase 2 (Order Placing & Tracking).*
 
 ## Evolution
 
