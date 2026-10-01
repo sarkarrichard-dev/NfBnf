@@ -1,5 +1,6 @@
 import asyncio
 import struct
+import time
 
 import websockets
 import websockets.exceptions
@@ -196,6 +197,122 @@ def test_normal_stop_writes_tail_once_with_no_drop(monkeypatch):
     assert state.reconnects == 0
 
 
-# (Task 2's tests — server-disconnect, on_tick-failure and busy-scan-cycle —
-# are added by the next commit; tick_feed.py's disconnect/on_tick_errors
-# behavior lands with them.)
+def test_server_disconnect_reconnects_without_waiting_for_stall(monkeypatch):
+    events, state = _setup(monkeypatch)
+    disconnect_frame = struct.pack("<BHBI", CODE_DISCONNECT, 8, 0, 999)
+
+    stop = asyncio.Event()
+    sessions = [
+        [disconnect_frame, FakeDhanFeed.WAIT],
+        [FakeDhanFeed.WAIT],
+    ]
+    fake = FakeDhanFeed(sessions, events=events)
+    monkeypatch.setattr(websockets, "connect", fake.connect)
+
+    async def _main():
+        task = asyncio.create_task(tick_feed.run_feed("tok", "cid", stop=stop))
+        start = time.monotonic()
+        # poll until connection 2 opens (the reconnect), or give up after 10s
+        while len(fake.connections) < 2 and time.monotonic() - start < 10:
+            await asyncio.sleep(0.01)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 10, "feed waited for the 90s stall timer instead of reconnecting at once"
+        assert state.reconnects == 1
+        assert "disconnect" in (state.last_error or "")
+
+        stop.set()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_main())
+
+
+def test_on_tick_failure_is_counted_and_surfaced_but_tick_still_written(monkeypatch):
+    events, state = _setup(monkeypatch)
+    frames = _frames(12)
+    total_received = _packet_count(frames)
+
+    calls = {"n": 0}
+
+    def _flaky_on_tick(pkt):
+        calls["n"] += 1
+        if calls["n"] % 3 == 0:
+            raise ValueError("boom")
+
+    stop = asyncio.Event()
+    sessions = [[*frames, FakeDhanFeed.WAIT]]
+    fake = FakeDhanFeed(sessions, events=events)
+    monkeypatch.setattr(websockets, "connect", fake.connect)
+
+    async def _main():
+        task = asyncio.create_task(
+            tick_feed.run_feed("tok", "cid", on_tick=_flaky_on_tick, stop=stop)
+        )
+        start = time.monotonic()
+        while calls["n"] < total_received and time.monotonic() - start < 5:
+            await asyncio.sleep(0.01)
+
+        stop.set()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_main())
+
+    assert state.on_tick_errors > 0
+    assert "on_tick failed" in (state.last_error or "")
+    total_written = sum(len(rows) for name, rows in events if name == "flush")
+    assert total_written == total_received
+
+
+def test_busy_scan_cycle_no_tick_loss_and_resubscribes_on_reconnect(monkeypatch):
+    events, state = _setup(monkeypatch)
+    frames1 = _frames(15)
+    frames2 = _frames(15)
+
+    seen_by_on_tick: list[dict] = []
+
+    def _on_tick(pkt):
+        seen_by_on_tick.append(pkt)
+
+    stop = asyncio.Event()
+    sessions = [
+        [*frames1, websockets.exceptions.ConnectionClosedError(None, None)],
+        [*frames2, stop.set],
+    ]
+    fake = FakeDhanFeed(sessions, events=events)
+    monkeypatch.setattr(websockets, "connect", fake.connect)
+
+    def _busy_sync_block():
+        return sum(i * i for i in range(2000))
+
+    async def _scoring_task(n):
+        await asyncio.to_thread(_busy_sync_block)
+        _busy_sync_block()
+        return n
+
+    async def _main():
+        feed_task = asyncio.create_task(
+            tick_feed.run_feed("tok", "cid", on_tick=_on_tick, stop=stop)
+        )
+        results = await asyncio.gather(*(_scoring_task(i) for i in range(25)))
+        await asyncio.wait_for(feed_task, timeout=10)
+        return results
+
+    results = asyncio.run(_main())
+
+    assert len(results) == 25
+
+    total_received = _packet_count(frames1) + _packet_count(frames2)
+    assert len(seen_by_on_tick) == total_received
+    total_written = sum(len(rows) for name, rows in events if name == "flush")
+    assert total_written == total_received
+    assert state.reconnects == 1
+    # connection 2 (index 1) re-sent the subscribe message
+    assert fake.connections[1].sent, "connection 2 did not resend the subscribe message"

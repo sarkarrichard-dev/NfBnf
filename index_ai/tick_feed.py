@@ -133,6 +133,7 @@ class FeedState:
     packets: int = 0
     flushed: int = 0
     reconnects: int = 0
+    on_tick_errors: int = 0
     last_tick_at: float = 0.0
     last_error: str | None = None
     subscribed: list[str] = field(default_factory=list)
@@ -146,6 +147,7 @@ class FeedState:
             "packets": self.packets,
             "flushed_to_db": self.flushed,
             "reconnects": self.reconnects,
+            "on_tick_errors": self.on_tick_errors,
             "seconds_since_last_tick": round(age, 1) if age is not None else None,
             "stalled": bool(age is not None and age > STALL_SECONDS),
             "last_error": self.last_error,
@@ -234,7 +236,9 @@ async def run_feed(
         try:
             async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                 _state.connected = True
-                _state.last_error = None
+                # last_error is not reset here: a fresh connection succeeding right
+                # after a server disconnect would otherwise wipe that message before
+                # anyone sees it. It is genuinely the *last* error, not "current error".
                 _state.last_tick_at = time.monotonic()
                 backoff = 1.0
                 for i in range(0, len(subs), MAX_BATCH):
@@ -266,9 +270,11 @@ async def run_feed(
                             continue
                         packets = parse_packet(bytes(raw))
                         _state.packets += len(packets)
+                        disconnected = False
                         for pkt in packets:
                             if pkt["type"] == "disconnect":
-                                _state.last_error = "server sent disconnect"
+                                _state.last_error = "server sent disconnect — reconnecting"
+                                disconnected = True
                                 break
                             _state.ticks += 1
                             _state.last_tick_at = time.monotonic()
@@ -276,11 +282,19 @@ async def run_feed(
                             if on_tick:
                                 try:
                                     on_tick(pkt)
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    _state.on_tick_errors += 1
+                                    _state.last_error = (
+                                        f"on_tick failed: {type(exc).__name__}: {exc}"[:200]
+                                    )
                         if time.monotonic() - last_flush >= FLUSH_SECONDS or len(buffer) >= 500:
                             _state.flushed += await _flush(buffer, sec_map)
                             last_flush = time.monotonic()
+                        if disconnected:
+                            # leave the receive loop itself, not just this for-loop —
+                            # the stream is dead; waiting on it would sit until
+                            # STALL_SECONDS instead of reconnecting right away.
+                            break
                 finally:
                     _state.flushed += await _flush(buffer, sec_map)
         except Exception as exc:
