@@ -1,7 +1,42 @@
+import { useQuery } from '@tanstack/react-query'
 import { memo, useEffect, useState } from 'react'
+import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
 
 type Market = { message?: string; is_open?: boolean; phase?: string }
+type TickFeed = {
+  enabled?: boolean
+  connected?: boolean
+  stalled?: boolean
+  seconds_since_last_tick?: number | null
+}
+
+type PillSpec = { tone: 'idle' | 'good' | 'warn' | 'accent'; label: string; title: string }
+
+/** D-10: a small read of the existing GET /api/tick-feed, not a new panel —
+ *  the full tick-age/chain-age/spread-age Data Health view is Phase 4. */
+function tickFeedPill(feed: TickFeed | undefined, marketOpen?: boolean): PillSpec {
+  if (!feed) return { tone: 'idle', label: 'Ticks —', title: 'Tick feed status unavailable' }
+  if (!feed.enabled) {
+    return {
+      tone: 'idle',
+      label: 'Ticks off',
+      title: 'Live tick feed is switched off — stops are checked every 20 seconds from Dhan prices',
+    }
+  }
+  const down = !feed.connected || !!feed.stalled
+  if (!down) {
+    return { tone: 'good', label: 'Ticks live', title: 'Stops react to every live tick' }
+  }
+  if (marketOpen) {
+    return {
+      tone: 'warn',
+      label: 'Ticks: fallback',
+      title: 'Tick feed is down — stops are checked every 20 seconds from Dhan prices until it reconnects',
+    }
+  }
+  return { tone: 'idle', label: 'Ticks idle', title: 'Market closed' }
+}
 
 function istClock(): string {
   return new Date().toLocaleString('en-IN', {
@@ -57,7 +92,15 @@ export const StatusPills = memo(function StatusPills({
     return () => clearInterval(id)
   }, [])
 
+  const { data: tickFeed } = useQuery({
+    queryKey: ['tick-feed'],
+    queryFn: () => api<TickFeed>('/api/tick-feed'),
+    refetchInterval: 20_000,
+    staleTime: 10_000,
+  })
+
   const open = market?.is_open
+  const tf = tickFeedPill(tickFeed, open)
   return (
     <>
       <Pill title="Indian Standard Time">
@@ -69,6 +112,9 @@ export const StatusPills = memo(function StatusPills({
       </Pill>
       <Pill tone={dhanReady ? 'good' : 'warn'} title="Dhan broker connection">
         Dhan {dhanReady ? 'OK' : '—'}
+      </Pill>
+      <Pill tone={tf.tone} title={tf.title}>
+        {tf.label}
       </Pill>
     </>
   )
