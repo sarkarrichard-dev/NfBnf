@@ -85,31 +85,40 @@ def _decode(code: int, payload: bytes, segment: int, sec_id: int) -> dict[str, A
     base = {"exchange_segment": segment, "security_id": sec_id}
     try:
         if code == CODE_TICKER and len(payload) >= 8:
-            return {**base, "type": "ticker",
-                    "ltp": round(struct.unpack_from("<f", payload, 0)[0], 2),
-                    "ltt": struct.unpack_from("<I", payload, 4)[0]}
+            return {
+                **base,
+                "type": "ticker",
+                "ltp": round(struct.unpack_from("<f", payload, 0)[0], 2),
+                "ltt": struct.unpack_from("<I", payload, 4)[0],
+            }
         if code in (CODE_QUOTE, CODE_FULL) and len(payload) >= 42:
-            q = {**base, "type": "quote" if code == CODE_QUOTE else "full",
-                 "ltp": round(struct.unpack_from("<f", payload, 0)[0], 2),
-                 "ltq": struct.unpack_from("<H", payload, 4)[0],
-                 "ltt": struct.unpack_from("<I", payload, 6)[0],
-                 "atp": round(struct.unpack_from("<f", payload, 10)[0], 2),
-                 "volume": struct.unpack_from("<I", payload, 14)[0],
-                 "total_sell_quantity": struct.unpack_from("<I", payload, 18)[0],
-                 "total_buy_quantity": struct.unpack_from("<I", payload, 22)[0],
-                 "open": round(struct.unpack_from("<f", payload, 26)[0], 2),
-                 "close": round(struct.unpack_from("<f", payload, 30)[0], 2),
-                 "high": round(struct.unpack_from("<f", payload, 34)[0], 2),
-                 "low": round(struct.unpack_from("<f", payload, 38)[0], 2)}
+            q = {
+                **base,
+                "type": "quote" if code == CODE_QUOTE else "full",
+                "ltp": round(struct.unpack_from("<f", payload, 0)[0], 2),
+                "ltq": struct.unpack_from("<H", payload, 4)[0],
+                "ltt": struct.unpack_from("<I", payload, 6)[0],
+                "atp": round(struct.unpack_from("<f", payload, 10)[0], 2),
+                "volume": struct.unpack_from("<I", payload, 14)[0],
+                "total_sell_quantity": struct.unpack_from("<I", payload, 18)[0],
+                "total_buy_quantity": struct.unpack_from("<I", payload, 22)[0],
+                "open": round(struct.unpack_from("<f", payload, 26)[0], 2),
+                "close": round(struct.unpack_from("<f", payload, 30)[0], 2),
+                "high": round(struct.unpack_from("<f", payload, 34)[0], 2),
+                "low": round(struct.unpack_from("<f", payload, 38)[0], 2),
+            }
             if code == CODE_FULL and len(payload) >= 30:
                 q["oi"] = struct.unpack_from("<I", payload, 26)[0]
             return q
         if code == CODE_OI and len(payload) >= 4:
             return {**base, "type": "oi", "oi": struct.unpack_from("<I", payload, 0)[0]}
         if code == CODE_PREV_CLOSE and len(payload) >= 8:
-            return {**base, "type": "prev_close",
-                    "prev_close": round(struct.unpack_from("<f", payload, 0)[0], 2),
-                    "prev_oi": struct.unpack_from("<I", payload, 4)[0]}
+            return {
+                **base,
+                "type": "prev_close",
+                "prev_close": round(struct.unpack_from("<f", payload, 0)[0], 2),
+                "prev_oi": struct.unpack_from("<I", payload, 4)[0],
+            }
         if code == CODE_DISCONNECT:
             return {**base, "type": "disconnect"}
     except struct.error:
@@ -131,12 +140,16 @@ class FeedState:
     def as_dict(self) -> dict[str, Any]:
         age = (time.monotonic() - self.last_tick_at) if self.last_tick_at else None
         return {
-            "enabled": enabled(), "connected": self.connected,
-            "ticks": self.ticks, "packets": self.packets, "flushed_to_db": self.flushed,
+            "enabled": enabled(),
+            "connected": self.connected,
+            "ticks": self.ticks,
+            "packets": self.packets,
+            "flushed_to_db": self.flushed,
             "reconnects": self.reconnects,
             "seconds_since_last_tick": round(age, 1) if age is not None else None,
             "stalled": bool(age is not None and age > STALL_SECONDS),
-            "last_error": self.last_error, "subscribed": self.subscribed,
+            "last_error": self.last_error,
+            "subscribed": self.subscribed,
         }
 
 
@@ -156,8 +169,12 @@ def _subscription_list() -> list[dict[str, str]]:
             inst = get_instrument(key)
             if inst.underlying_security_id is None:
                 continue
-            out.append({"ExchangeSegment": inst.underlying_segment,
-                        "SecurityId": str(inst.underlying_security_id)})
+            out.append(
+                {
+                    "ExchangeSegment": inst.underlying_segment,
+                    "SecurityId": str(inst.underlying_security_id),
+                }
+            )
         except Exception:
             continue
     return out
@@ -222,36 +239,50 @@ async def run_feed(
                 backoff = 1.0
                 for i in range(0, len(subs), MAX_BATCH):
                     batch = subs[i : i + MAX_BATCH]
-                    await ws.send(json.dumps({"RequestCode": SUBSCRIBE_QUOTE,
-                                              "InstrumentCount": len(batch),
-                                              "InstrumentList": batch}))
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "RequestCode": SUBSCRIBE_QUOTE,
+                                "InstrumentCount": len(batch),
+                                "InstrumentList": batch,
+                            }
+                        )
+                    )
                 last_flush = time.monotonic()
-                while not (stop and stop.is_set()):
-                    try:
-                        raw = await asyncio.wait_for(ws.recv(), timeout=STALL_SECONDS)
-                    except asyncio.TimeoutError:
-                        _state.last_error = "no data — reconnecting"
-                        break
-                    if not isinstance(raw, (bytes, bytearray)):
-                        continue
-                    packets = parse_packet(bytes(raw))
-                    _state.packets += len(packets)
-                    for pkt in packets:
-                        if pkt["type"] == "disconnect":
-                            _state.last_error = "server sent disconnect"
+                # buffer lives across reconnects (declared outside this loop), so this
+                # finally makes a hard drop or a shutdown write what was received
+                # instead of holding it until some later connection's first flush. A
+                # second cancellation during that last write can still lose it
+                # (ponytail: acceptable ceiling — at most FLUSH_SECONDS of tick log,
+                # never a stop decision, since on_tick runs before buffering).
+                try:
+                    while not (stop and stop.is_set()):
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=STALL_SECONDS)
+                        except asyncio.TimeoutError:
+                            _state.last_error = "no data — reconnecting"
                             break
-                        _state.ticks += 1
-                        _state.last_tick_at = time.monotonic()
-                        buffer.append(pkt)
-                        if on_tick:
-                            try:
-                                on_tick(pkt)
-                            except Exception:
-                                pass
-                    if time.monotonic() - last_flush >= FLUSH_SECONDS or len(buffer) >= 500:
-                        _state.flushed += await _flush(buffer, sec_map)
-                        last_flush = time.monotonic()
-                await _flush(buffer, sec_map)
+                        if not isinstance(raw, (bytes, bytearray)):
+                            continue
+                        packets = parse_packet(bytes(raw))
+                        _state.packets += len(packets)
+                        for pkt in packets:
+                            if pkt["type"] == "disconnect":
+                                _state.last_error = "server sent disconnect"
+                                break
+                            _state.ticks += 1
+                            _state.last_tick_at = time.monotonic()
+                            buffer.append(pkt)
+                            if on_tick:
+                                try:
+                                    on_tick(pkt)
+                                except Exception:
+                                    pass
+                        if time.monotonic() - last_flush >= FLUSH_SECONDS or len(buffer) >= 500:
+                            _state.flushed += await _flush(buffer, sec_map)
+                            last_flush = time.monotonic()
+                finally:
+                    _state.flushed += await _flush(buffer, sec_map)
         except Exception as exc:
             _state.last_error = f"{type(exc).__name__}: {exc}"[:200]
         finally:
@@ -270,8 +301,20 @@ if __name__ == "__main__":  # ponytail self-check
     assert len(got) == 1 and got[0]["type"] == "ticker"
     assert got[0]["ltp"] == 24175.65 and got[0]["security_id"] == 13
 
-    quote_payload = struct.pack("<fHIfIIIffff", 24180.5, 50, 1756400001, 24170.0,
-                                123456, 700, 800, 24100.0, 24050.0, 24250.0, 24000.0)
+    quote_payload = struct.pack(
+        "<fHIfIIIffff",
+        24180.5,
+        50,
+        1756400001,
+        24170.0,
+        123456,
+        700,
+        800,
+        24100.0,
+        24050.0,
+        24250.0,
+        24000.0,
+    )
     quote = struct.pack("<BHBI", CODE_QUOTE, HEADER + len(quote_payload), 0, 13) + quote_payload
     q = parse_packet(quote)[0]
     assert q["type"] == "quote" and q["ltp"] == 24180.5 and q["volume"] == 123456

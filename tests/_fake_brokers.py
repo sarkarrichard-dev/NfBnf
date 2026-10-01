@@ -15,6 +15,7 @@ import mode puts ``tests/`` on ``sys.path``.
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import json
 import threading
@@ -24,6 +25,16 @@ from typing import Any
 import httpx
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "broker_traffic"
+
+
+def load_feed_frames() -> list[bytes]:
+    """Real, redacted Dhan tick-feed frames (``dhan_feed.jsonl``, plan 02-06,
+    D-03) decoded back to raw bytes. Missing fixture returns an empty list."""
+    return [
+        base64.b64decode(row["frame_b64"])
+        for row in load_traffic("dhan_feed")
+        if row.get("frame_b64")
+    ]
 
 
 def load_traffic(name: str) -> list[dict[str, Any]]:
@@ -293,3 +304,85 @@ def setup_live_crypto_lane(
         return {"position": None}, ev
 
     monkeypatch.setattr(lanes.nb, "step", _fake_step)
+
+
+# --- Dhan tick-feed fault injection (plan 02-06, D-04) -----------------------
+
+
+class FakeDhanFeed:
+    """Fake replacement for ``websockets.connect`` in ``tick_feed`` tests.
+
+    ``sessions`` is a list of per-connection item lists; each ``connect()``
+    call's ``__aenter__`` consumes the next session in order (recorded, with
+    an optional shared ``events`` list, so a test can compare connection
+    order against flush timing). An item is:
+
+    - ``bytes``/``bytearray``: returned by ``recv()``
+    - an exception instance or class: raised by ``recv()``
+    - ``FakeDhanFeed.WAIT``: ``recv()`` awaits forever (until cancelled —
+      e.g. by the caller's own ``asyncio.wait_for`` stall timeout)
+    - any other callable: called with no args (e.g. ``stop.set``), then
+      ``recv()`` moves on to the next item in the same call
+
+    A session that runs out of items raises
+    ``websockets.exceptions.ConnectionClosedOK(None, None)`` — ending a
+    session right after a callable that sets ``stop`` makes ``run_feed``
+    return promptly.
+    """
+
+    WAIT = object()
+
+    def __init__(self, sessions: list[list[Any]], events: list[tuple] | None = None) -> None:
+        self._sessions = list(sessions)
+        self._next_session = 0
+        self.events: list[tuple] = events if events is not None else []
+        self.connections: list["_FakeFeedConnection"] = []
+
+    def connect(self, url: str, **kwargs: Any) -> "_FakeFeedConnection":
+        return _FakeFeedConnection(self)
+
+
+class _FakeFeedConnection:
+    def __init__(self, feed: FakeDhanFeed) -> None:
+        self._feed = feed
+        self._session: list[Any] = []
+        self._pos = 0
+        self.sent: list[str] = []
+
+    async def __aenter__(self) -> "_FakeFeedConnection":
+        idx = self._feed._next_session
+        self._feed._next_session += 1
+        self._session = self._feed._sessions[idx]
+        self._feed.events.append(("connect", idx))
+        self._feed.connections.append(self)
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> bool:
+        return False
+
+    async def send(self, message: str) -> None:
+        self.sent.append(message)
+
+    async def recv(self) -> bytes:
+        import asyncio
+
+        import websockets.exceptions
+
+        while True:
+            if self._pos >= len(self._session):
+                raise websockets.exceptions.ConnectionClosedOK(None, None)
+            item = self._session[self._pos]
+            self._pos += 1
+            if isinstance(item, (bytes, bytearray)):
+                return bytes(item)
+            if item is FakeDhanFeed.WAIT:
+                await asyncio.Event().wait()  # never set — waits until cancelled
+                continue
+            if isinstance(item, BaseException):
+                raise item
+            if isinstance(item, type) and issubclass(item, BaseException):
+                raise item()
+            if callable(item):
+                item()
+                continue
+            raise AssertionError(f"unsupported FakeDhanFeed session item: {item!r}")
