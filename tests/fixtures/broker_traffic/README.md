@@ -11,8 +11,7 @@ network hop is faked.
 | File | Broker | Added by | Holds |
 |---|---|---|---|
 | `delta_rest.jsonl` | Delta Exchange | plan 02-01 | `GET /v2/wallet/balances`, `/v2/positions/margined`, `/v2/fills`, `/v2/orders` (open), `/v2/orders/history` |
-| `dhan_rest.jsonl` | Dhan | plan 02-03 | Dhan REST order/position/fund endpoints |
-| `dhan_journal_orders.jsonl` | Dhan | plan 02-03 | Real order rows extracted from the app's own SQLite journal (not a live capture — see `source` below) |
+| `dhan_rest.jsonl` | Dhan | plan 02-03 | Dhan REST order/position/fund endpoints, plus real order rows extracted from the app's own SQLite journal merged in (rows carry `"source": "journal"` — not a live capture, see `source` below) |
 | `dhan_feed.jsonl` | Dhan | plan 02-06 | Raw websocket feed frames, base64-encoded |
 
 ## Row schema

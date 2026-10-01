@@ -524,6 +524,68 @@ def test_close_all_reports_a_failure_without_stopping_the_rest(paper_env, monkey
     assert journal.load_state()["ak_roxx_pro:ETHUSD"]["position"] is not None  # untouched
 
 
+def test_close_position_manual_on_straddle_fails_cleanly_not_a_crash(paper_env, monkeypatch):
+    """CR-01 regression: btc_daily_straddle's 2-leg position has no "side" key
+    -- close_position_manual must return a clean {"ok": False, ...} for it,
+    never raise KeyError('side')."""
+    journal.save_state(
+        {
+            "btc_daily_straddle:BTCUSD": {
+                "position": {
+                    "venue": "delta",
+                    "strategy": "btc_daily_straddle",
+                    "asset": "BTCUSD",
+                    "call_symbol": "C-BTC-83800-021026",
+                    "put_symbol": "P-BTC-83800-021026",
+                    "strike": 83800.0,
+                    "size": 10,
+                    "entry_spot": 83892.5,
+                    "call_entry": 771.58,
+                    "put_entry": 480.49,
+                    "opened_at": "2026-10-01T12:30:00+00:00",
+                    "entry_time": "2026-10-01T12:30:00+00:00",
+                    "mode": "paper",
+                }
+            }
+        }
+    )
+    result = lanes.close_position_manual("btc_daily_straddle:BTCUSD")
+    assert result["ok"] is False
+    assert "not implemented" in result["error"]
+    # the slot is untouched -- no crash, no silent clear
+    assert journal.load_state()["btc_daily_straddle:BTCUSD"]["position"]["strike"] == 83800.0
+
+
+def test_close_all_skips_straddle_cleanly_and_still_closes_the_rest(paper_env, monkeypatch):
+    """CR-01 regression: a straddle slot mixed into "Close all" must not abort
+    the dict comprehension and strand every other (real, possibly live)
+    position queued after it."""
+    monkeypatch.setattr(lanes.market_data, "ticker", lambda *a, **k: {"mark_price": 63000.0})
+    journal.save_state(
+        {
+            "btc_daily_straddle:BTCUSD": {
+                "position": {
+                    "venue": "delta",
+                    "strategy": "btc_daily_straddle",
+                    "asset": "BTCUSD",
+                    "call_symbol": "C-BTC-83800-021026",
+                    "put_symbol": "P-BTC-83800-021026",
+                    "strike": 83800.0,
+                    "size": 10,
+                    "mode": "paper",
+                }
+            },
+            "ny_n_break:BTCUSD": _open_pos("ny_n_break", "BTCUSD", 60000.0),
+        }
+    )
+    result = lanes.close_all_positions_manual()
+    assert result["closed"] == ["ny_n_break:BTCUSD"]
+    assert "btc_daily_straddle:BTCUSD" in result["failed"]
+    st = journal.load_state()
+    assert st["ny_n_break:BTCUSD"]["position"] is None
+    assert st["btc_daily_straddle:BTCUSD"]["position"] is not None  # untouched, not crashed
+
+
 def test_close_position_manual_waits_for_a_scan_holding_the_lock(paper_env, monkeypatch):
     """A manual close and the ~60s scan loop both mutate crypto_state.json /
     the journal -- they must never interleave. Prove _STATE_LOCK actually

@@ -368,3 +368,31 @@ def test_definite_rejection_never_calls_settle_entry(tmp_path, monkeypatch):
     assert replay.count("POST", "/v2/orders") == 0
     assert any(e.get("event") == "live_rejected" for e in events)
     assert journal.load_state().get("ny_n_break:BTCUSD", {}).get("position") is None
+
+
+def test_delta_5xx_with_non_json_body_is_an_unknown_outcome(monkeypatch):
+    """CR-02 regression: a 5xx response whose body isn't JSON (a gateway/proxy
+    failure -- the realistic shape of "Delta didn't answer") must set
+    DeltaError.status, so outcome_unknown() reads it as unknown (safe to look
+    up on Delta's own book) instead of a definite rejection."""
+    import dataclasses
+
+    from crypto import executor
+    from crypto.config import crypto_settings
+    from crypto.delta.client import DeltaClient, DeltaError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, text="<html>502 Bad Gateway</html>")
+
+    settings = dataclasses.replace(crypto_settings(), api_key="test-key", api_secret="test-secret")
+    client = DeltaClient(settings, transport=httpx.MockTransport(handler))
+
+    raised: DeltaError | None = None
+    try:
+        client.wallet()
+    except DeltaError as exc:
+        raised = exc
+
+    assert raised is not None
+    assert raised.status == 502
+    assert executor.outcome_unknown(raised) is True

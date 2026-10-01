@@ -601,7 +601,18 @@ def wait_for_inflight_entries() -> None:
     releases each in turn -- a lock held by an in-flight placement blocks this
     call until that placement finishes recording its trade. Creates no lock of
     its own and holds nothing once it returns; called with no instrument locks
-    held, it returns at once."""
+    held, it returns at once.
+
+    WR-02: locks are created lazily by acquire_execution_lock, so an
+    instrument traded for the first time in this process's lifetime might not
+    have a lock yet at the moment this snapshot is taken -- missing it here
+    would let the barrier return without waiting for that instrument's
+    in-flight entry. Touching every configured instrument's lock first
+    guarantees the snapshot below always includes all of them."""
+    from index_ai.instruments import configured_index_keys
+
+    for key in configured_index_keys():
+        _instrument_lock(key)
     with _GLOBAL_EXECUTE_LOCK:
         locks = list(_INSTRUMENT_LOCKS.values())
     for lock in locks:

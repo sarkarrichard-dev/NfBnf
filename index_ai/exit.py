@@ -211,9 +211,14 @@ def close_open_trade(
         if live_orders_enabled(app_settings):
             settled = settle_pending_entry(client, trade, settings=app_settings)
             settled_status = str(settled.get("status") or "")
-            if settled_status == "CANCELLED":
+            # WR-01: ALREADY_CLOSED means a concurrent close already won the
+            # race this lock exists to catch -- that is success, not a
+            # Close-all failure, and must pass through as its own status
+            # rather than fold into "BLOCKED" (server.py's success set is
+            # {CLOSED, ALREADY_CLOSED, CANCELLED} -- BLOCKED is not in it).
+            if settled_status in {"CANCELLED", "ALREADY_CLOSED"}:
                 return {
-                    "status": "CANCELLED",
+                    "status": settled_status,
                     "trade_id": trade_id,
                     "reason": settled.get("reason"),
                 }

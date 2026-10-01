@@ -251,8 +251,17 @@ class DeltaClient:
             try:
                 data = resp.json()
             except ValueError as exc:
+                # CR-02: status= must be set here too, not only in the branch
+                # below — outcome_unknown() reads DeltaError.status to decide
+                # whether a failed order is looked up on Delta's own book
+                # (never resent) instead of recorded as a definite rejection.
+                # A 5xx with a non-JSON body (a gateway/proxy failure — the
+                # realistic shape of "Delta didn't answer") must count as
+                # unknown, the same as it does on the Dhan client, which
+                # calls raise_for_status() before attempting JSON parsing.
                 raise DeltaError(
-                    f"{m} {path}: non-JSON response (HTTP {resp.status_code})"
+                    f"{m} {path}: non-JSON response (HTTP {resp.status_code})",
+                    status=resp.status_code,
                 ) from exc
 
             if resp.status_code >= 400 or (isinstance(data, dict) and data.get("success") is False):

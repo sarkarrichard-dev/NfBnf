@@ -199,8 +199,9 @@ trade whose stop has been crossed, so the worst-case extra delay is about 20
 seconds instead of instant — it never just waits for ticks to come back. The
 feed also reconnects on its own: after 90 seconds of silence, on any error,
 or right away if Dhan sends an explicit disconnect message. It resubscribes
-automatically, and any ticks it did receive before a drop are still saved to
-the tick log — nothing already received is lost.
+automatically, and any ticks it did receive before a drop are flushed to the
+tick log before reconnecting — a hard shutdown mid-flush can still lose the
+last few seconds (see `tick_feed.py`'s own comment for the exact ceiling).
 
 **The dashboard's Ticks pill, top bar, next to "Dhan OK":**
 

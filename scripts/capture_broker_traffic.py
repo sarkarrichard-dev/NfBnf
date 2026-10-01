@@ -56,6 +56,11 @@ REDACT_KEYS: frozenset[str] = frozenset(
         "phone",
         "mobile",
         "pan",
+        # WR-04: Delta's own ip_not_whitelisted_for_api_key error body embeds
+        # the caller's real public IP under this key -- not a credential, but
+        # PII the string-match secret check below doesn't catch.
+        "client_ip",
+        "ip",
     }
 )
 

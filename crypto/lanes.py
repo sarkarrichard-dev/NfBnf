@@ -1281,6 +1281,14 @@ def _close_position_manual_locked(key: str, client: DeltaClient | None) -> dict[
     pos = slot.get("position")
     if not pos:
         return {"ok": False, "error": f"no open position for {key}"}
+    if strat == "btc_daily_straddle":
+        # 2-leg straddle positions have no "side" key -- the rest of this
+        # function (and _build_exit_row) assumes a single-leg perp shape.
+        # CR-01: manual close isn't implemented for this strategy yet.
+        return {
+            "ok": False,
+            "error": "manual close for btc_daily_straddle is not implemented yet",
+        }
 
     try:
         mark = float(market_data.ticker(sym, client=client).get("mark_price") or 0)
@@ -1341,7 +1349,17 @@ def close_all_positions_manual(client: DeltaClient | None = None) -> dict[str, A
             k for k, v in journal.load_state().items() if isinstance(v, dict) and v.get("position")
         ]
     client = client or DeltaClient(crypto_settings())
-    results = {k: close_position_manual(k, client) for k in keys}
+
+    def _safe_close(k: str) -> dict[str, Any]:
+        # CR-01: an unhandled exception on one key (e.g. a position shape
+        # close_position_manual doesn't support) must never abort the dict
+        # comprehension below and strand every other key's close unattempted.
+        try:
+            return close_position_manual(k, client)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    results = {k: _safe_close(k) for k in keys}
     failed = {k: r.get("error") for k, r in results.items() if not r.get("ok")}
     return {
         "ok": not failed,
