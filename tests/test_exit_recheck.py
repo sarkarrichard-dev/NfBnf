@@ -616,6 +616,31 @@ def test_gate_no_candidate_beats_today(replay):
     assert "30, 50, 60" in s["message"] and "40-point" in s["message"]
 
 
+def test_gate_tiny_gain_is_not_a_suggestion(replay):
+    box, _ = replay
+    # 499 better is noise; exactly 500 better is enough
+    box["result"] = _canned(nets={40.0: -4000.0, 30.0: -3501.0, 50.0: -5000.0, 60.0: -4500.0})
+    s = _nifty_sell()
+    assert s["verdict"] == "no_better_distance" and s["suggestion"] is None
+    box["result"] = _canned(nets={40.0: -4000.0, 30.0: -3500.0, 50.0: -5000.0, 60.0: -4500.0})
+    s = _nifty_sell()
+    assert s["verdict"] == "suggestion" and s["suggestion"]["extra_net"] == 500.0
+
+
+def test_not_enough_data_message_says_what_is_missing():
+    row = {
+        "state": "observing",
+        "trades": 49,
+        "trading_days": 8,
+        "distance_label": "1.6% trail",
+        "venue": "crypto",
+    }
+    verdict, msg = er._verdict(row, [])
+    assert verdict == "not_enough_data"
+    assert "needs 40 trades over at least 15 trading days" in msg
+    assert "49 trades over 8 trading days" in msg
+
+
 def test_gate_suggestion_text_and_numbers(replay):
     s = _nifty_sell()
     assert s["verdict"] == "suggestion"
@@ -722,7 +747,9 @@ def journals(feed, tmp_path, monkeypatch):
     c, m = tmp_path / "crypto_journal.jsonl", tmp_path / "commodity_journal.jsonl"
     monkeypatch.setattr("crypto.journal.JOURNAL_PATH", c)
     monkeypatch.setattr("commodities.lanes.JOURNAL_PATH", m)
-    monkeypatch.setattr("crypto.config.crypto_settings", lambda: SimpleNamespace(point_trail_pct=1.6))
+    monkeypatch.setattr(
+        "crypto.config.crypto_settings", lambda: SimpleNamespace(point_trail_pct=1.6)
+    )
     monkeypatch.setattr(er, "now_ist_iso", lambda: NOW_IST)
     monkeypatch.setattr(er, "_utc_now_iso", lambda: NOW_UTC)
     return c, m
@@ -801,7 +828,9 @@ def test_rule_change_restarts_window(journals, monkeypatch):
     again = er.compute_segments(first)
     assert again["rules"] == first["rules"]
     # the crypto point trail goes 1.6 -> 2.0: the window restarts at the run time
-    monkeypatch.setattr("crypto.config.crypto_settings", lambda: SimpleNamespace(point_trail_pct=2.0))
+    monkeypatch.setattr(
+        "crypto.config.crypto_settings", lambda: SimpleNamespace(point_trail_pct=2.0)
+    )
     chg = er.compute_segments(first)
     assert chg["rules"]["crypto"] == {
         "rule": {"point_trail_pct": 2.0},
@@ -825,7 +854,11 @@ def test_rule_change_restarts_window(journals, monkeypatch):
 
 def _pool_rows(n, days, pnl):
     return [
-        _crow(f"2026-11-{1 + i % days:02d}T08:{i:02d}:00+00:00", pnl, day=f"2026-11-{1 + i % days:02d}")
+        _crow(
+            f"2026-11-{1 + i % days:02d}T08:{i:02d}:00+00:00",
+            pnl,
+            day=f"2026-11-{1 + i % days:02d}",
+        )
         for i in range(n)
     ]
 
@@ -845,7 +878,9 @@ def test_pooled_ready_not_frozen_is_no_replay_data(journals):
 def test_pooled_ready_frozen_is_working_and_below_bar_is_not_enough(journals):
     c, m = journals
     _w(c, _pool_rows(40, 15, 1.0))
-    _w(m, [_mrow(f"2026-11-{1 + i % 14:02d}T10:{i:02d}:00+05:30", 5.0) for i in range(40)])  # 14 days
+    _w(
+        m, [_mrow(f"2026-11-{1 + i % 14:02d}T10:{i:02d}:00+05:30", 5.0) for i in range(40)]
+    )  # 14 days
     out = er.compute_segments()
     s = _pooled(out, "crypto:point_trail")
     assert s["state"] == "ready" and s["frozen"] is True and s["verdict"] == "working"
@@ -904,11 +939,17 @@ def drift(monkeypatch):
     a real message: index_ai.notify.alert is replaced and conftest clears the bot variables."""
     box: dict = {"rows": [], "clock": T_BASE}
     alerts: list = []
-    monkeypatch.setattr("index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key)))
+    monkeypatch.setattr(
+        "index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key))
+    )
     monkeypatch.setattr(
         er,
         "compute_segments",
-        lambda prev_state=None: {"segments": [dict(r) for r in box["rows"]], "errors": [], "rules": {}},
+        lambda prev_state=None: {
+            "segments": [dict(r) for r in box["rows"]],
+            "errors": [],
+            "rules": {},
+        },
     )
     monkeypatch.setattr(er, "now_ist_iso", lambda: box["clock"])
     return box, alerts
@@ -1026,7 +1067,9 @@ def test_drift_state_is_stored_before_the_alert_and_a_failing_alert_is_harmless(
 
 def test_drift_through_real_india_rows(feed, monkeypatch):
     alerts: list = []
-    monkeypatch.setattr("index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key)))
+    monkeypatch.setattr(
+        "index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key))
+    )
     feed(_n_trades(40, 15, -100.0))  # ready, losing, no stop exits, no wins
     first = er.run_recheck("daily")
     assert _seg(first, "NIFTY", "sell")["baseline"]["trail_hits"] == 0 and alerts == []
@@ -1054,7 +1097,9 @@ def _eod(tmp_path, monkeypatch):
 
 def test_run_eod_hook(tmp_path, monkeypatch):
     calls: list = []
-    monkeypatch.setattr(er, "run_recheck", lambda trigger="button": calls.append(trigger) or {"ran": True})
+    monkeypatch.setattr(
+        er, "run_recheck", lambda trigger="button": calls.append(trigger) or {"ran": True}
+    )
     report = _eod(tmp_path, monkeypatch).run_eod()
     assert calls == ["daily"]
     assert report["exit_recheck"] == {"ran": True}
@@ -1070,4 +1115,6 @@ def test_run_eod_hook_failure_is_contained(tmp_path, monkeypatch):
     assert report["exit_recheck"] == {"error": "the re-check broke"}
     for key in ("brain", "spreads", "strategy_learning"):
         assert key in report
-    assert json.loads((tmp_path / "s.json").read_text())["eod_date"] == report["date"]  # day still stamped
+    assert (
+        json.loads((tmp_path / "s.json").read_text())["eod_date"] == report["date"]
+    )  # day still stamped

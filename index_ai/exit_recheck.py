@@ -57,6 +57,8 @@ QUOTE_MAX_AGE_S = 300
 # Alternative stop distances tried: today's x these, rounded to the nearest DISTANCE_STEP.
 CANDIDATE_FACTORS = (0.75, 1.25, 1.5)
 DISTANCE_STEP = 5.0  # index points
+# A gain smaller than this over 40 trades (about Rs 12 a trade) is inside the noise: no suggestion.
+MIN_EXTRA_RUPEES = 500.0
 
 # First match wins, in this order. Matched against the lower-cased exit note.
 _INDIA_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -229,9 +231,9 @@ def _verdict(row: dict[str, Any], trades: list[dict[str, Any]]) -> tuple[str, st
     if row["state"] != "ready":
         return (
             "not_enough_data",
-            f"Not enough trades yet to judge this stop — {row['trades']} of {OBSERVE_MAX} "
-            f"trades and {row['trading_days']} of {READY_MIN_DAYS} trading days so far "
-            f"under today's {row['distance_label']}.",
+            f"Not enough data yet to judge this stop — it needs {OBSERVE_MAX} trades over at least "
+            f"{READY_MIN_DAYS} trading days. So far: {row['trades']} trades over "
+            f"{row['trading_days']} trading days under today's {row['distance_label']}.",
         )
     if row["frozen"]:  # frozen first: a net-positive stop is never second-guessed
         return "working", "Making money over its recent trades — no change suggested."
@@ -279,12 +281,12 @@ def _india_replay_gate(row: dict[str, Any], trades: list[dict[str, Any]]) -> tup
     now = rep["by_distance"][dist]
     others = {d: v for d, v in rep["by_distance"].items() if d != dist}
     best = max(others, key=lambda d: others[d]["net"]) if others else None
-    if best is None or others[best]["net"] <= now["net"]:
+    if best is None or others[best]["net"] - now["net"] < MIN_EXTRA_RUPEES:
         tried = ", ".join(f"{d:g}" for d in sorted(others))
         return (
             "no_better_distance",
-            f"None of the other stops tried ({tried} points) would have made more over the last "
-            f"{n} trades — keep the {dist:g}-point stop.",
+            f"None of the other stops tried ({tried} points) would have clearly made more over "
+            f"the last {n} trades — keep the {dist:g}-point stop.",
         )
     alt = others[best]
     extra = alt["net"] - now["net"]
