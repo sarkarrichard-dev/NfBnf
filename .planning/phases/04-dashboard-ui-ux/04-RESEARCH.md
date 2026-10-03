@@ -399,7 +399,7 @@ const TONE: Record<Status, string> = {
 | A6 | `mode=ro` read of a WAL database works while the server writes (it did this session with the server running) | Pattern 2 | A transient `OperationalError` is caught -> `none`; no harm |
 | A7 | `ENABLE_TICK_FEED` current value in Richard's `.env` is unknown (`.env` is permission-blocked); the panel must handle both on and off | Pattern 2 | None if both states render |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Replace the old "Go-live readiness" block?**
    - What we know: it duplicates the new list with jargon and a `rounded-lg` drift, and only appears far below the arm button.
