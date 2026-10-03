@@ -42,6 +42,7 @@
 - Files: `crypto/lanes.py` (check against `strategy_performance.crypto_live_pairs()` per entry), `strategy_performance.py` (crypto_live_pairs function)
 - Trigger: Arm crypto live, then notice that some strategies aren't opening positions even though they're running.
 - Workaround: Check the server logs or call the readiness API endpoint to see which pairs cleared the gate.
+- Resolved 2026-10 (Phase 4): the Crypto tab lists every (strategy, coin) pair the lane trades as LIVE or PAPER right under the arm button, with a plain reason for each paper pair, from GET /api/crypto/live-pairs — the same rule crypto/lanes.py uses (live = armed and pair in crypto_live_pairs()).
 
 ## Security Considerations
 
@@ -141,6 +142,7 @@
 - Problem: Tick feed quality, option-chain staleness, and bid-ask spreads are visible only via logs or direct API calls.
 - Blocks: Operators can't quickly diagnose why a trade missed or a stop didn't fire.
 - Implementation sketch: Add a "Data Health" dashboard tab showing: last tick age, chain snapshot age per index, measured spread age, Dhan websocket status, exchange latency.
+- Resolved 2026-10 (Phase 4): Data health panel at the top of the Index Options page (GET /api/data-health) — live-price age, option-chain age and measured-spread age per index, Dhan live-feed status; amber/red only while the market is open, neutral when closed.
 
 ## Test Coverage Gaps
 
