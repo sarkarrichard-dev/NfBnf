@@ -107,6 +107,12 @@ function pct(v: number | null | undefined): string {
   return v == null ? '—' : `${Math.round(Number(v) * 100)}%`
 }
 
+const STATE_WORDS: Record<string, string> = {
+  watching: 'collecting data',
+  observing: 'almost enough data',
+  ready: 'enough data',
+}
+
 function ExitRecheckPanel() {
   const q = useExitRecheck(true)
   const run = useRunExitRecheck()
@@ -119,7 +125,7 @@ function ExitRecheckPanel() {
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-bold text-slate-100">Stop check</h3>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-[11px] text-slate-500">
+          <span className="font-mono text-[11px] tabular-nums text-slate-500">
             {d?.ran_at
               ? `last run ${d.ran_at.slice(0, 16).replace('T', ' ')} IST · ${d.trigger === 'daily' ? 'automatic' : 'by button'}`
               : 'not run yet'}
@@ -141,10 +147,12 @@ function ExitRecheckPanel() {
         </p>
       ) : !d ? (
         <p className="text-[12.5px] text-slate-500">Loading…</p>
-      ) : !d.ran_at || rows.length === 0 ? (
+      ) : !d.ran_at ? (
         <p className="text-[12.5px] text-slate-500">
           Not run yet — press Re-check now. It also runs by itself after the market closes.
         </p>
+      ) : rows.length === 0 ? (
+        <p className="text-[12.5px] text-slate-500">Ran, but nothing could be read.</p>
       ) : (
         <ul className="space-y-2">
           {rows.map((r) => (
@@ -159,11 +167,11 @@ function ExitRecheckPanel() {
                     STATE_STYLE[r.state] || STATE_STYLE.watching,
                   )}
                 >
-                  {r.state}
+                  {STATE_WORDS[r.state] || r.state}
                 </span>
                 {r.frozen ? (
                   <span className="rounded bg-[var(--up)]/10 px-1.5 py-0.5 font-mono text-[10px] text-[var(--up)]">
-                    frozen · working
+                    making money
                   </span>
                 ) : null}
                 {r.drift ? (

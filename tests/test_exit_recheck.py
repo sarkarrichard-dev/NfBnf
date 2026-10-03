@@ -680,7 +680,7 @@ def test_gate_unreadable_prices_never_raise(replay, feed):
     box["result"] = RuntimeError("database is locked")
     s = _nifty_sell()
     assert s["verdict"] == "replay_unreliable" and s["suggestion"] is None
-    assert "could not read the recorded prices" in s["message"].lower()
+    assert "could not read the saved prices" in s["message"].lower()
     assert er.run_recheck("button")["errors"] == []  # nothing escapes run_recheck
 
 
@@ -688,7 +688,7 @@ def test_gate_missing_price_log_is_unreliable_not_an_error(feed):
     feed(_n_trades(40, 15, -100.0))  # no tmp market log was created, replay is the real code
     s = _nifty_sell()
     assert s["verdict"] == "replay_unreliable"
-    assert "could not read the recorded prices" in s["message"].lower()
+    assert "could not read the saved prices" in s["message"].lower()
 
 
 def test_a_suggestion_changes_nothing(replay):
@@ -872,7 +872,7 @@ def test_pooled_ready_not_frozen_is_no_replay_data(journals):
         s = _pooled(out, seg)
         assert s["state"] == "ready" and s["frozen"] is False
         assert s["verdict"] == "no_replay_data" and s["suggestion"] is None
-        assert "no recorded price path" in s["message"]
+        assert "no saved price history" in s["message"]
 
 
 def test_pooled_ready_frozen_is_working_and_below_bar_is_not_enough(journals):

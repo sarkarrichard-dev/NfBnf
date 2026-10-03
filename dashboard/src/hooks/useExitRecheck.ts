@@ -61,6 +61,6 @@ export function useRunExitRecheck() {
       toast.success('Stop check done')
       void qc.invalidateQueries({ queryKey: ['exit-recheck'] })
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: () => toast.error('Stop check could not run — the app may need a restart.'),
   })
 }

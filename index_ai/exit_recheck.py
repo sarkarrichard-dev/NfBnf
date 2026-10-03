@@ -52,7 +52,7 @@ MATCH_MIN = 0.8
 # The live stop is checked on every tick (worst case every 20 s), so a correct replay lands well
 # inside two minutes; tick-delivery lag days will honestly show up as mismatches.
 MATCH_TOLERANCE_S = 120
-# The option chain is recorded about once a minute; a quote older than this is not a price.
+# The scanner records the option chain every ~90 s; a quote older than this (3-4 snapshots) is not a price.
 QUOTE_MAX_AGE_S = 300
 # Alternative stop distances tried: today's x these, rounded to the nearest DISTANCE_STEP.
 CANDIDATE_FACTORS = (0.75, 1.25, 1.5)
@@ -207,6 +207,7 @@ def _segment_row(
         "trades": n,
         "trading_days": days,
         "state": _state(n, days),
+        # deliberate: frozen is judged on net-after-charges P&L, stricter than strategy_learning (gross)
         "frozen": _frozen(nets[:FREEZE_LOOKBACK]),
         "window_n": wn,
         "wins": wins,
@@ -240,7 +241,7 @@ def _verdict(row: dict[str, Any], trades: list[dict[str, Any]]) -> tuple[str, st
     if row["venue"] != "india":  # crypto and commodities have no recorded price path
         return (
             "no_replay_data",
-            "Enough trades to judge, but these trades have no recorded price path, so a different "
+            "Enough trades to judge, but these trades have no saved price history, so a different "
             "stop can't be tested — the numbers are still watched for changes.",
         )
     return _india_replay_gate(row, trades)
@@ -256,27 +257,27 @@ def _india_replay_gate(row: dict[str, Any], trades: list[dict[str, Any]]) -> tup
     except Exception:
         return (
             "replay_unreliable",
-            "Could not read the recorded prices, so no new stop is suggested yet.",
+            "Could not read the saved prices, so no new stop is suggested yet.",
         )
     seen, matched, rate = rep["trades_with_ticks"], rep["matched"], rep["match_rate"]
     if rate is None:
         return (
             "replay_unreliable",
-            "None of the past trades could be replayed from the recorded prices, so no new stop "
+            "None of the past trades could be re-created from the saved prices, so no new stop "
             "is suggested yet.",
         )
     if rate < MATCH_MIN:
         return (
             "replay_unreliable",
-            f"The replay of past trades only reproduced {matched} of {seen} real exits, so no new "
-            "stop is suggested yet.",
+            f"We could only re-create {matched} of {seen} real exits from the saved prices, so no "
+            "new stop is suggested yet.",
         )
     n = rep["compared"]
     if n < OBSERVE_MAX:
         return (
             "replay_unreliable",
-            f"Only {n} of the last {OBSERVE_MAX} trades could be priced from the recorded option "
-            "prices, so no new stop is suggested yet.",
+            f"Only {n} of the last {OBSERVE_MAX} trades have saved option prices to test with, so "
+            "no new stop is suggested yet.",
         )
     now = rep["by_distance"][dist]
     others = {d: v for d, v in rep["by_distance"].items() if d != dist}
@@ -309,7 +310,7 @@ def _india_replay_gate(row: dict[str, Any], trades: list[dict[str, Any]]) -> tup
     if rough:
         text += (
             " The figure is rough: some trades had to be held longer than they really were, and "
-            "other exits in that extra time cannot be replayed."
+            "other exits in that extra time cannot be re-created."
         )
     return (
         "suggestion",
@@ -824,9 +825,12 @@ def run_recheck(trigger: str = "button") -> dict[str, Any]:
     try:
         prev = _load_state()
         state = compute_segments(prev)
-        state["baselines"], alerts = _track_drift(
-            state["segments"], (prev or {}).get("baselines") or {}
-        )
+        old_baselines = (prev or {}).get("baselines") or {}
+        try:
+            state["baselines"], alerts = _track_drift(state["segments"], old_baselines)
+        except Exception as exc:  # a bad stored baseline must not stop the numbers being saved
+            state["baselines"], alerts = old_baselines, []
+            state["errors"].append({"venue": "drift", "error": str(exc)[:200]})
         state["ran_at"] = now_ist_iso()
         state["trigger"] = trigger
         _store_state(state)  # stored first: the flag is the real de-dup, the message comes after
