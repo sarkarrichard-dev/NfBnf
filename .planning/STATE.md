@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 03
 current_phase_name: Exit Optimisation
 status: executing
-stopped_at: Completed 03-01-PLAN.md
-last_updated: "2026-10-03T08:17:07.085Z"
+stopped_at: Completed 03-02-PLAN.md
+last_updated: "2026-10-03T08:30:33.248Z"
 last_activity: 2026-10-03
 last_activity_desc: Phase 03 execution started
-state_head: bd66897abf66de0285f5dcfd489bcc588666a284
+state_head: 1e7db60d5caa1c6f0600e98e563505ed3ec9fa2d
 progress:
   total_phases: 10
   completed_phases: 2
   total_plans: 17
-  completed_plans: 12
+  completed_plans: 13
   percent: 20
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-09-30)
 ## Current Position
 
 Phase: 03 (Exit Optimisation) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-10-03 — Phase 03 execution started
 
@@ -71,6 +71,7 @@ Progress: [██░░░░░░░░] 20%
 | Phase 02 P06 | 35min | 2 tasks | 5 files |
 | Phase 02 P07 | ~25min | 3 tasks | 3 files |
 | Phase 03 P01 | 9 min | 2 tasks | 3 files |
+| Phase 03 P02 | 9 min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -108,6 +109,7 @@ Recent decisions affecting current work:
 - [Phase 2]: Mid-phase live incident (not part of the planned work): btc_daily_straddle's 2-leg position has no "side" key, crashing crypto/lanes.py's auto-prune loop every ~70s for 2+ hours once the straddle actually opened a position on 2026-10-01 -- fixed by adding it to _known_strategies(); server restarted to pick up the fix
 - [Phase 2]: Phase code review (02-REVIEW.md) then found the SAME gap still open on the manual Close/Close-all dashboard controls (CR-01) and a second, independent critical bug in Delta's client misclassifying a non-JSON 5xx response as a definite order rejection instead of unknown, skipping the settle-from-order-book path (CR-02) -- both fixed, plus 4 warnings (ALREADY_CLOSED mislabeled as BLOCKED, a lazy-lock barrier gap, a stale fixture README, a leaked IP in a committed fixture), each with a regression test, before the phase was marked complete
 - [Phase 03]: 03-01: re-check ladder bar is strategy_learning's 40 trades and 15 trading days (imported), one day stricter than D-03's 14; segment = (lane, index), ids india_<INDEX>_<lane> — D-03 intent is the same bar used everywhere else; recorded visibly
+- [Phase 03]: 03-02: sell-lane flip/regime/EMA exit suppression now keys on credit_spread.SELL_TRAIL_POINTS (NIFTY/BANKNIFTY/SENSEX, same strip/upper match) - pinned by a regression test that passed before and after the swap; premium_trail.py deleted, rupee profit_trail fallback kept (D-05)
 
 ### Pending Todos
 
@@ -129,6 +131,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-03T08:17:06.274Z
-Stopped at: Completed 03-01-PLAN.md
+Last session: 2026-10-03T08:30:32.886Z
+Stopped at: Completed 03-02-PLAN.md
 Resume file: None
