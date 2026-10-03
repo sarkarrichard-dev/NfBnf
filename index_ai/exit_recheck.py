@@ -22,6 +22,7 @@ import sqlite3
 import threading
 from collections import Counter
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from index_ai import market_log
@@ -76,17 +77,40 @@ _INDIA_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+# Crypto wording (crypto/lanes.py exit rows). "trailing stop/profit N% P&L" is the OLDER P&L-%
+# trail, not the 1.6% point trail; take_profit / stop_loss come only from the BTC straddle.
+_CRYPTO_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("trail_stop", re.compile(r"^point trail:")),
+    ("manual", re.compile(r"^manual close|^coin removed")),
+    ("time_exit", re.compile(r"^session end|max hold")),
+    ("other_rule", re.compile(r"^trailing stop |^trailing profit |^take_profit|^stop_loss")),
+    (
+        "signal_exit",
+        re.compile(r"sma|trend flip|kijun|cloud|supertrend|\bema\b|\brsi\b|flip|^15m "),
+    ),
+)
+# Commodity journal exit_reason, exactly (commodities/lanes.py).
+_COMMODITY_CLASSES = {
+    "stop": "trail_stop",
+    "manual close": "manual",
+    "square_off": "time_exit",
+    "trend_flip": "signal_exit",
+}
+
+
 def classify_exit(kind: str, reason: str | None) -> str:
     """Name the class of an exit reason. An unseen reason is "other", never dropped.
 
-    ``kind`` is "india" for now; crypto and commodities have their own wording
-    and are added with their segments.
+    ``kind`` is "india", "crypto" or "commodity" -- each market words its exits differently.
     """
     text = str(reason or "").strip().lower()
-    if kind == "india":
-        for name, pattern in _INDIA_RULES:
-            if pattern.search(text):
-                return name
+    if kind == "commodity":
+        return _COMMODITY_CLASSES.get(text, "other")
+    for name, pattern in (
+        _CRYPTO_RULES if kind == "crypto" else _INDIA_RULES if kind == "india" else ()
+    ):
+        if pattern.search(text):
+            return name
     return "other"
 
 
@@ -155,7 +179,7 @@ def _segment_row(
     lane: str,
     instrument: str,
     label: str,
-    distance: float,
+    distance: Any,  # India: points; crypto: percent; commodities: the ATR multipliers
     distance_label: str,
     currency: str,
     trades: list[dict[str, Any]],
@@ -212,8 +236,8 @@ def _verdict(row: dict[str, Any], trades: list[dict[str, Any]]) -> tuple[str, st
     if row["venue"] != "india":  # crypto and commodities have no recorded price path
         return (
             "no_replay_data",
-            "Enough trades to judge, but a different stop can't be tested on these trades yet — "
-            "the numbers above are still watched for changes.",
+            "Enough trades to judge, but these trades have no recorded price path, so a different "
+            "stop can't be tested — the numbers are still watched for changes.",
         )
     return _india_replay_gate(row, trades)
 
@@ -226,7 +250,10 @@ def _india_replay_gate(row: dict[str, Any], trades: list[dict[str, Any]]) -> tup
         with _market_log_ro() as db:
             rep = replay_segment(row["lane"], row["instrument"], trades, dist, db)
     except Exception:
-        return "replay_unreliable", "Could not read the recorded prices, so no new stop is suggested yet."
+        return (
+            "replay_unreliable",
+            "Could not read the recorded prices, so no new stop is suggested yet.",
+        )
     seen, matched, rate = rep["trades_with_ticks"], rep["matched"], rep["match_rate"]
     if rate is None:
         return (
@@ -280,15 +307,117 @@ def _india_replay_gate(row: dict[str, Any], trades: list[dict[str, Any]]) -> tup
             " The figure is rough: some trades had to be held longer than they really were, and "
             "other exits in that extra time cannot be replayed."
         )
-    return "suggestion", text + " Nothing was changed — this is only a suggestion for you to approve."
+    return (
+        "suggestion",
+        text + " Nothing was changed — this is only a suggestion for you to approve.",
+    )
 
 
-def compute_segments() -> dict[str, Any]:
-    """Every segment's current numbers. Pure: reads journals, writes nothing."""
+# --- crypto and commodities (03-05): one pooled segment each, read-only ---------------------------
+#
+# Each runs ONE shared rule (crypto: one global point trail; commodities: one set of ATR
+# multipliers), so each is one segment. Neither journal records a price path or the distance in
+# force, so these segments only get stats, drift and the honest "no_replay_data" verdict.
+
+# First "point trail:" exit in the crypto journal (verified in research); earlier rows used the
+# older P&L-% trail and are not "trades under today's rule".
+CRYPTO_POINT_TRAIL_SINCE = "2026-09-25T12:00:00+00:00"
+# These two run their own trails, not the 1.6% point trail.
+CRYPTO_OWN_TRAIL = frozenset({"ak_roxx_pro", "btc_daily_straddle"})
+COMMODITY_RULE_KEYS = (
+    "ATR_K_INITIAL_STOP",
+    "ATR_K_TRAIL_ACTIVATE",
+    "ATR_K_TRAIL",
+    "ATR_K_PROFIT_TRIGGER",
+    "ATR_K_PROFIT_TRAIL",
+)
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _live_rule(venue: str) -> dict[str, Any]:
+    """The trail rule in force right now, read from the live settings (never from the journal)."""
+    if venue == "crypto":
+        from crypto.config import crypto_settings
+
+        return {"point_trail_pct": crypto_settings().point_trail_pct}
+    from commodities import lanes
+
+    return {k: getattr(lanes, k) for k in COMMODITY_RULE_KEYS}
+
+
+def _rules_since(prev_rules: dict[str, Any] | None, venue: str, live: dict[str, Any]) -> str | None:
+    """Where this venue's window starts. No stored rule: crypto starts at its first point-trail
+    exit, commodities at the data epoch (None). Same rule as stored: keep the stored start.
+    A different rule: restart now, in the journal's own clock (crypto UTC, commodities IST).
+    The start is the moment the re-check first SEES the new rule, not when it was changed."""
+    prev = (prev_rules or {}).get(venue)
+    if not prev:
+        return CRYPTO_POINT_TRAIL_SINCE if venue == "crypto" else None
+    if prev.get("rule") == live:
+        return prev.get("since")
+    return _utc_now_iso() if venue == "crypto" else now_ist_iso()
+
+
+def _journal_rows(
+    path: Any, ts_key: str, net_key: str, kind: str, since: str | None, skip: Any = None
+) -> list[dict[str, Any]]:
+    """Closed trades from a JSONL journal, newest first. Blank or bad lines are skipped; rows
+    before the data epoch or before ``since`` are not counted. ``net`` is already after fees."""
+    if not path.is_file():
+        return []
+    epoch = data_epoch()
+    found: list[tuple[str, dict[str, Any]]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+            ts = r.get(ts_key) or r.get("day")
+            if (skip and skip(r)) or not _after_epoch(ts, epoch) or not _after_epoch(ts, since):
+                continue
+            rec = {
+                "day": str(r.get("day") or ts or "")[:10],
+                "net": float(r.get(net_key) or 0.0),
+                "cls": classify_exit(kind, r.get("exit_reason")),
+            }
+        except (ValueError, TypeError, AttributeError):
+            continue
+        found.append((str(ts or ""), rec))
+    return [rec for _, rec in sorted(found, key=lambda x: x[0], reverse=True)]
+
+
+def _crypto_rows(since: str | None) -> list[dict[str, Any]]:
+    from crypto import journal  # module attribute read at call time, so tests can repoint it
+
+    return _journal_rows(
+        journal.JOURNAL_PATH,
+        "closed_at",
+        "pnl_usd",
+        "crypto",
+        since,
+        skip=lambda r: r.get("strategy") in CRYPTO_OWN_TRAIL,
+    )
+
+
+def _commodity_rows(since: str | None) -> list[dict[str, Any]]:
+    from commodities import lanes
+
+    return _journal_rows(lanes.JOURNAL_PATH, "exit_time", "net_rupees", "commodity", since)
+
+
+def compute_segments(prev_state: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Every segment's current numbers. Pure: reads journals, writes nothing. ``prev_state`` (the
+    stored result) only supplies the trail rules seen last time, to detect a rule change."""
     from index_ai.strategies.credit_spread import SELL_TRAIL_POINTS
 
     segments: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    prev_rules = (prev_state or {}).get("rules") or {}
+    rules: dict[str, Any] = {}
     try:
         rows = _india_rows()
         for inst in SELL_TRAIL_POINTS:
@@ -309,7 +438,29 @@ def compute_segments() -> dict[str, Any]:
                 )
     except Exception as exc:
         errors.append({"venue": "india", "error": str(exc)[:200]})
-    return {"segments": segments, "errors": errors}
+    for venue, seg_id, label, lane, currency, rows_fn in (
+        ("crypto", "crypto:point_trail", "Crypto (all coins)", "all", "USD", _crypto_rows),
+        ("commodities", "commodities:atr_trail", "MCX commodities", "all", "INR", _commodity_rows),
+    ):
+        try:
+            live = _live_rule(venue)
+            since = _rules_since(prev_rules, venue, live)
+            rules[venue] = {"rule": live, "since": since}
+            if venue == "crypto":
+                dist: Any = live["point_trail_pct"]
+                dist_label = f"{dist:g}% trail"
+            else:
+                dist, dist_label = live, "stop sized to each contract's daily range"
+            segments.append(
+                _segment_row(
+                    seg_id, venue, lane, venue, label, dist, dist_label, currency, rows_fn(since)
+                )
+            )
+        except Exception as exc:
+            errors.append({"venue": venue, "error": str(exc)[:200]})
+            if venue in prev_rules:  # keep remembering the rule we last saw
+                rules[venue] = prev_rules[venue]
+    return {"segments": segments, "errors": errors, "rules": rules}
 
 
 # --- India replay (03-04): when would a different stop have closed a past trade? ----------------
@@ -337,11 +488,15 @@ def _market_log_ro() -> Iterator[sqlite3.Connection]:
 
 def _candidates(distance: float) -> list[float]:
     """Today's distance x each factor, to the nearest DISTANCE_STEP (halves round up)."""
-    out = {math.floor(distance * f / DISTANCE_STEP + 0.5) * DISTANCE_STEP for f in CANDIDATE_FACTORS}
+    out = {
+        math.floor(distance * f / DISTANCE_STEP + 0.5) * DISTANCE_STEP for f in CANDIDATE_FACTORS
+    }
     return sorted(d for d in out if d > 0 and d != distance)
 
 
-def _replay_exit(trade: dict[str, Any], distance: float, path: Any, real_exit_ts: Any, real_cls: str):
+def _replay_exit(
+    trade: dict[str, Any], distance: float, path: Any, real_exit_ts: Any, real_cls: str
+):
     """(exit time, how, extended) for a 1:1 stop at ``distance``, or None if it can't be replayed.
 
     Same anchor rule as ``strategy_lab._trail_hit`` (which only returns a bool, so it cannot be
@@ -472,16 +627,23 @@ def replay_segment(
         if (session, instrument) not in paths:
             paths[(session, instrument)] = strategy_lab._index_path(instrument, session, db=db)
         real_exit = pd.Timestamp(closed)
-        exits = {d: _replay_exit(trade, d, paths[(session, instrument)], real_exit, cls) for d in dists}
+        exits = {
+            d: _replay_exit(trade, d, paths[(session, instrument)], real_exit, cls) for d in dists
+        }
         if any(e is None for e in exits.values()):  # no entry price / no ticks / unknown action
             out["could_not_replay"] += 1
             continue
         out["trades_with_ticks"] += 1
         cur_ts, cur_how, _ = exits[distance]
         if cls == "trail_stop":
-            ok = cur_how == "trail" and abs((cur_ts - real_exit).total_seconds()) <= MATCH_TOLERANCE_S
+            ok = (
+                cur_how == "trail"
+                and abs((cur_ts - real_exit).total_seconds()) <= MATCH_TOLERANCE_S
+            )
         else:
-            ok = not (cur_how == "trail" and (real_exit - cur_ts).total_seconds() > MATCH_TOLERANCE_S)
+            ok = not (
+                cur_how == "trail" and (real_exit - cur_ts).total_seconds() > MATCH_TOLERANCE_S
+            )
         out["matched"] += int(ok)
         nets = {}
         for d, (ts, _how, _ext) in exits.items():
@@ -571,7 +733,7 @@ def run_recheck(trigger: str = "button") -> dict[str, Any]:
             pass
         return last_result()
     try:
-        state = compute_segments()
+        state = compute_segments(_load_state())
         state["ran_at"] = now_ist_iso()
         state["trigger"] = trigger
         _store_state(state)

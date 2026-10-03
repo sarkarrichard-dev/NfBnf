@@ -54,10 +54,14 @@ def _trade(tid, lane, inst, day, pnl, meta, qty=0):
 
 
 @pytest.fixture
-def feed(monkeypatch):
+def feed(monkeypatch, tmp_path):
     """Patch the journal feed; returns a setter taking (trades, notes, epoch)."""
     import index_ai.day_review as dr
     import index_ai.learning as learning
+
+    # the crypto and commodity journals are read by every recheck: never the real ones
+    monkeypatch.setattr("crypto.journal.JOURNAL_PATH", tmp_path / "no_crypto.jsonl")
+    monkeypatch.setattr("commodities.lanes.JOURNAL_PATH", tmp_path / "no_commodity.jsonl")
 
     def _set(trades, notes=None, epoch=None):
         monkeypatch.setattr(er, "data_epoch", lambda: epoch)
@@ -109,10 +113,50 @@ REAL_NOTES = {
 }
 
 
+# Real shapes from memory/crypto_journal.jsonl and memory/commodity_journal.jsonl (numbers kept).
+CRYPTO_REASONS = {
+    "trail_stop": [
+        "point trail: 1.88926 pts behind best 117.639 (stop 119.528, -1.44892 pts from entry)"
+    ],
+    "other_rule": [
+        "trailing stop 24% P&L (peak 3.1%, now 2.0%)",
+        "trailing profit 15% P&L (peak 40%, now 30%)",
+        "take_profit",
+        "stop_loss",
+    ],
+    "manual": ["manual close", "coin removed"],
+    "time_exit": ["session end", "1-day max hold", "3-day max hold"],
+    "signal_exit": [
+        "close 61000 back through SMA20 high band 60800",
+        "close 61000 back through SMA20 low band 61200",
+        "trend flip",
+        "15m N",
+        "15m inverted-N",
+        "Close 2.5 back above Kijun 2.4.",
+        "Close 2.5 back into cloud (top 2.6).",
+        "RSI + EMA rolled over with ADX confirming — momentum reversed",
+    ],
+    "other": ["", None, "something crypto has never said"],
+}
+COMMODITY_REASONS = {
+    "trail_stop": ["stop"],
+    "manual": ["manual close"],
+    "time_exit": ["square_off"],
+    "signal_exit": ["trend_flip"],
+    "other": ["", None, "mystery"],
+}
+
+
 def test_exit_classifier():
     for want, notes in REAL_NOTES.items():
         for note in notes:
             assert er.classify_exit("india", note) == want, (want, note)
+    for want, notes in CRYPTO_REASONS.items():
+        for note in notes:
+            assert er.classify_exit("crypto", note) == want, (want, note)
+    for want, notes in COMMODITY_REASONS.items():
+        for note in notes:
+            assert er.classify_exit("commodity", note) == want, (want, note)
 
 
 # --- segments -------------------------------------------------------------
@@ -132,10 +176,10 @@ def test_segments(feed, monkeypatch):
     feed(trades, notes, epoch="2026-11-02T00:00:00+05:30")
     out = er.compute_segments()
     segs = out["segments"]
-    assert len(segs) == 6 and out["errors"] == []
+    assert len(segs) == 8 and out["errors"] == []  # six India + crypto + commodities
     assert {s["segment"] for s in segs} == {
         f"india_{i}_{lane}" for i in INDEXES for lane in ("buy", "sell")
-    }
+    } | {"crypto:point_trail", "commodities:atr_trail"}
     sell = _seg(out, "NIFTY", "sell")
     assert sell["trades"] == 2 and sell["trading_days"] == 1
     assert sell["wins"] == 1 and sell["win_rate"] == 0.5
@@ -209,7 +253,7 @@ def test_endpoints(feed, tmp_path):
     r = client.post("/api/exit-recheck/run")
     assert r.status_code == 200
     body = r.json()
-    assert body["trigger"] == "button" and len(body["segments"]) == 6
+    assert body["trigger"] == "button" and len(body["segments"]) == 8
 
     again = client.get("/api/exit-recheck").json()
     assert again["ran_at"] == body["ran_at"]
@@ -234,7 +278,7 @@ def test_run_recheck_waits_when_busy(feed, monkeypatch):
     stored = er.run_recheck("daily")
     calls = []
     real = er.compute_segments
-    monkeypatch.setattr(er, "compute_segments", lambda: calls.append(1) or real())
+    monkeypatch.setattr(er, "compute_segments", lambda *a, **k: calls.append(1) or real(*a, **k))
 
     result = {}
     er._RECHECK_LOCK.acquire()
@@ -634,3 +678,175 @@ def test_a_suggestion_changes_nothing(replay):
     assert SELL_TRAIL_POINTS == sell_before
     assert {i: get_instrument(i).trail_distance_points for i in INDEXES} == buy_before
     assert cfg.ENV_PATH.read_text() == ""
+
+
+# --- crypto and commodities segments (03-05) -------------------------------
+
+NOW_IST = "2026-11-20T16:00:00+05:30"
+NOW_UTC = "2026-11-20T10:30:00+00:00"
+TRAIL_REASON = "point trail: 1.5 pts behind best 100 (stop 98.5, -1 pts from entry)"
+
+
+def _w(path, rows):
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+def _crow(closed_at, pnl, reason=TRAIL_REASON, strategy="cpr_trend", day=None):
+    return {
+        "strategy": strategy,
+        "asset": "BTCUSD",
+        "mode": "paper",
+        "day": day or closed_at[:10],
+        "closed_at": closed_at,
+        "pnl_usd": pnl,
+        "exit_reason": reason,
+    }
+
+
+def _mrow(exit_time, net, reason="stop", day=None):
+    return {
+        "instrument": "CRUDEOILM",
+        "exit_time": exit_time,
+        "day": day or exit_time[:10],
+        "net_rupees": net,
+        "exit_reason": reason,
+    }
+
+
+@pytest.fixture
+def journals(feed, tmp_path, monkeypatch):
+    """Tmp crypto + commodity journals, a fixed live crypto rule and fixed clocks. Nothing here can
+    reach the real journals, the real .env or the weekday."""
+    from types import SimpleNamespace
+
+    c, m = tmp_path / "crypto_journal.jsonl", tmp_path / "commodity_journal.jsonl"
+    monkeypatch.setattr("crypto.journal.JOURNAL_PATH", c)
+    monkeypatch.setattr("commodities.lanes.JOURNAL_PATH", m)
+    monkeypatch.setattr("crypto.config.crypto_settings", lambda: SimpleNamespace(point_trail_pct=1.6))
+    monkeypatch.setattr(er, "now_ist_iso", lambda: NOW_IST)
+    monkeypatch.setattr(er, "_utc_now_iso", lambda: NOW_UTC)
+    return c, m
+
+
+def _pooled(result, seg):
+    return next(s for s in result["segments"] if s["segment"] == seg)
+
+
+def test_segments_crypto_commodities(journals):
+    c, m = journals
+    _w(
+        c,
+        [
+            _crow("2026-11-10T08:00:00+00:00", 2.0),  # counts
+            _crow("2026-11-10T09:00:00+00:00", -1.0, "manual close"),  # counts
+            _crow("2026-11-11T09:00:00+00:00", 5.0, strategy="ak_roxx_pro"),  # own trail
+            _crow("2026-11-11T10:00:00+00:00", 5.0, strategy="btc_daily_straddle"),  # own lane
+            _crow("2026-09-25T11:59:59+00:00", 9.0),  # before the point trail existed
+            _crow("2026-09-25T12:00:00+00:00", 1.0),  # first point-trail exit: counts
+        ],
+    )
+    _w(
+        m,
+        [
+            _mrow("2026-11-12T10:00:00+05:30", 300.0),
+            _mrow("2026-11-13T10:00:00+05:30", -100.0, "square_off"),
+        ],
+    )
+    out = er.compute_segments()
+    assert out["errors"] == []
+    cs = _pooled(out, "crypto:point_trail")
+    assert cs["venue"] == "crypto" and cs["currency"] == "USD" and cs["distance"] == 1.6
+    assert cs["distance_label"] == "1.6% trail" and cs["label"] == "Crypto (all coins)"
+    assert cs["trades"] == 3 and cs["trading_days"] == 2 and cs["net"] == 2.0
+    assert cs["wins"] == 2 and cs["trail_hits"] == 2
+    assert cs["exit_mix"] == {"trail_stop": 2, "manual": 1}
+    ms = _pooled(out, "commodities:atr_trail")
+    assert ms["currency"] == "INR" and ms["trades"] == 2 and ms["net"] == 200.0
+    assert ms["trail_hits"] == 1 and ms["exit_mix"] == {"trail_stop": 1, "time_exit": 1}
+    assert "daily range" in ms["distance_label"]
+    assert set(ms["distance"]) == set(er.COMMODITY_RULE_KEYS)
+
+
+def test_segments_commodities_after_the_data_epoch(journals, feed):
+    c, m = journals
+    _w(m, [_mrow("2026-11-01T10:00:00+05:30", 10.0), _mrow("2026-11-03T10:00:00+05:30", 20.0)])
+    feed([], epoch="2026-11-02T00:00:00+05:30")
+    assert _pooled(er.compute_segments(), "commodities:atr_trail")["trades"] == 1
+
+
+def test_segments_crypto_commodities_missing_and_bad_journals(journals):
+    c, m = journals  # neither file exists
+    out = er.compute_segments()
+    assert out["errors"] == [] and len(out["segments"]) == 8
+    assert _pooled(out, "crypto:point_trail")["trades"] == 0
+    assert _pooled(out, "commodities:atr_trail")["trades"] == 0
+    good = json.dumps(_crow("2026-11-10T08:00:00+00:00", 1.0))
+    c.write_text("\n{not json\n" + good + "\n", encoding="utf-8")
+    assert _pooled(er.compute_segments(), "crypto:point_trail")["trades"] == 1
+
+
+def test_rule_change_restarts_window(journals, monkeypatch):
+    from types import SimpleNamespace
+
+    c, m = journals
+    _w(c, [_crow("2026-11-10T08:00:00+00:00", 2.0)])
+    _w(m, [_mrow("2026-11-10T10:00:00+05:30", 50.0)])
+    first = er.compute_segments()
+    assert first["rules"]["crypto"]["since"] == er.CRYPTO_POINT_TRAIL_SINCE
+    assert first["rules"]["commodities"]["since"] is None
+    assert _pooled(first, "crypto:point_trail")["trades"] == 1
+    assert _pooled(first, "commodities:atr_trail")["trades"] == 1
+    # unchanged rule -> same window, even a day later
+    monkeypatch.setattr(er, "_utc_now_iso", lambda: "2026-11-21T10:30:00+00:00")
+    again = er.compute_segments(first)
+    assert again["rules"] == first["rules"]
+    # the crypto point trail goes 1.6 -> 2.0: the window restarts at the run time
+    monkeypatch.setattr("crypto.config.crypto_settings", lambda: SimpleNamespace(point_trail_pct=2.0))
+    chg = er.compute_segments(first)
+    assert chg["rules"]["crypto"] == {
+        "rule": {"point_trail_pct": 2.0},
+        "since": "2026-11-21T10:30:00+00:00",
+    }
+    assert _pooled(chg, "crypto:point_trail")["trades"] == 0  # the old row is no longer counted
+    assert _pooled(chg, "crypto:point_trail")["distance"] == 2.0
+    assert _pooled(chg, "commodities:atr_trail")["trades"] == 1  # other venue untouched
+    # a row closed after the change counts on the next run, which keeps the same since
+    _w(c, [_crow("2026-11-10T08:00:00+00:00", 2.0), _crow("2026-11-21T11:00:00+00:00", 3.0)])
+    nxt = er.compute_segments(chg)
+    assert nxt["rules"] == chg["rules"] and _pooled(nxt, "crypto:point_trail")["trades"] == 1
+    # one commodity ATR constant changes -> that segment restarts at the IST run time
+    monkeypatch.setattr("commodities.lanes.ATR_K_TRAIL", 0.5)
+    cc = er.compute_segments(nxt)
+    assert cc["rules"]["commodities"]["since"] == NOW_IST
+    assert cc["rules"]["commodities"]["rule"]["ATR_K_TRAIL"] == 0.5
+    assert _pooled(cc, "commodities:atr_trail")["trades"] == 0
+    assert cc["rules"]["crypto"] == nxt["rules"]["crypto"]
+
+
+def _pool_rows(n, days, pnl):
+    return [
+        _crow(f"2026-11-{1 + i % days:02d}T08:{i:02d}:00+00:00", pnl, day=f"2026-11-{1 + i % days:02d}")
+        for i in range(n)
+    ]
+
+
+def test_pooled_ready_not_frozen_is_no_replay_data(journals):
+    c, m = journals
+    _w(c, _pool_rows(40, 15, -1.0))
+    _w(m, [_mrow(f"2026-11-{1 + i % 15:02d}T10:{i:02d}:00+05:30", -5.0) for i in range(40)])
+    out = er.compute_segments()
+    for seg in ("crypto:point_trail", "commodities:atr_trail"):
+        s = _pooled(out, seg)
+        assert s["state"] == "ready" and s["frozen"] is False
+        assert s["verdict"] == "no_replay_data" and s["suggestion"] is None
+        assert "no recorded price path" in s["message"]
+
+
+def test_pooled_ready_frozen_is_working_and_below_bar_is_not_enough(journals):
+    c, m = journals
+    _w(c, _pool_rows(40, 15, 1.0))
+    _w(m, [_mrow(f"2026-11-{1 + i % 14:02d}T10:{i:02d}:00+05:30", 5.0) for i in range(40)])  # 14 days
+    out = er.compute_segments()
+    s = _pooled(out, "crypto:point_trail")
+    assert s["state"] == "ready" and s["frozen"] is True and s["verdict"] == "working"
+    assert _pooled(out, "commodities:atr_trail")["verdict"] == "not_enough_data"
