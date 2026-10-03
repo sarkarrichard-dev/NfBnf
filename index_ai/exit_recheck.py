@@ -23,6 +23,7 @@ import threading
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from fractions import Fraction
 from typing import Any, Iterator
 
 from index_ai import market_log
@@ -214,6 +215,7 @@ def _segment_row(
         "exit_mix": dict(Counter(t["cls"] for t in window)),
         "suggestion": None,
         "drift": False,
+        "drift_detail": None,
         "baseline": None,
     }
     row["verdict"], row["message"] = _verdict(row, trades)
@@ -723,6 +725,91 @@ def last_result() -> dict[str, Any]:
     return _load_state() or {"ran_at": None, "trigger": None, "segments": [], "errors": []}
 
 
+# --- drift: has a ready segment's behaviour moved from its own baseline? ------------------------
+
+DRIFT_PP = 15  # percentage points, on the stop hit rate OR the win rate
+
+
+def _moved_more_than(k_now: int, n_now: int, k_base: int, n_base: int) -> bool:
+    """True when the two ratios differ by MORE than DRIFT_PP points. Exact fractions, not floats, so
+    exactly 15.0 points is never drift through rounding error (22/40 - 16/40 is 0.15000000000000002
+    in floats); rounding is for display only."""
+    if not n_now or not n_base:
+        return False
+    return abs(Fraction(k_now, n_now) - Fraction(k_base, n_base)) > Fraction(DRIFT_PP, 100)
+
+
+def _track_drift(
+    segments: list[dict[str, Any]], prev: dict[str, Any]
+) -> tuple[dict[str, Any], list[tuple[dict[str, Any], dict[str, Any]]]]:
+    """Update each segment's baseline and drift flag in place; return (baselines, alerts to send).
+
+    A baseline is the segment's counts the first time it is ready under a given stop distance. A
+    different distance drops it (the old numbers describe another stop) with no alert. Below the
+    ladder bar nothing is captured and nothing can drift. An alert is queued only on the
+    OK -> DRIFT change of the stored flag, so a segment that stays drifted is announced once."""
+    baselines = dict(prev)  # a segment missing from this run keeps what it had
+    alerts: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for row in segments:
+        seg = row["segment"]
+        base = baselines.get(seg)
+        if base and base.get("distance") != row["distance"]:
+            base = None
+        if row["state"] == "ready":
+            if base is None:
+                base = {
+                    "trail_hits": row["trail_hits"],
+                    "wins": row["wins"],
+                    "n": row["window_n"],
+                    "trail_hit_rate": row["trail_hit_rate"],
+                    "win_rate": row["win_rate"],
+                    "distance": row["distance"],
+                    "captured_at": now_ist_iso(),
+                    "drifted": False,
+                }
+            else:
+                now_drifted = _moved_more_than(
+                    row["trail_hits"], row["window_n"], base["trail_hits"], base["n"]
+                ) or _moved_more_than(row["wins"], row["window_n"], base["wins"], base["n"])
+                if now_drifted and not base["drifted"]:
+                    alerts.append((dict(row), dict(base)))
+                base["drifted"] = now_drifted
+                row["drift"] = now_drifted
+                row["drift_detail"] = {
+                    "trail_hit_rate": {"was": base["trail_hit_rate"], "now": row["trail_hit_rate"]},
+                    "win_rate": {"was": base["win_rate"], "now": row["win_rate"]},
+                }
+        if base is None:
+            baselines.pop(seg, None)
+        else:
+            baselines[seg] = base
+            row["baseline"] = base
+    return baselines, alerts
+
+
+def _alert_drift(row: dict[str, Any], base: dict[str, Any]) -> None:
+    """One plain Telegram message. Built only from the segment's own numbers (no settings, paths or
+    error text) and never raises -- a missing bot or a send failure must not break the re-check."""
+    try:
+        from index_ai import notify
+
+        def pct(k: int, n: int) -> int:
+            return round(100 * k / n)
+
+        n, bn = row["window_n"], base["n"]
+        since = datetime.fromisoformat(base["captured_at"][:10])
+        text = (
+            f"⚠️ Stop check — {row['label']} ({row['distance_label']}): its results have changed "
+            f"since it was last checked on {since.day} {since:%b}. Of its last {n} trades the stop "
+            f"closed {pct(row['trail_hits'], n)}% (was {pct(base['trail_hits'], bn)}%) and "
+            f"{pct(row['wins'], n)}% made money (was {pct(base['wins'], bn)}%). Nothing was changed "
+            "— have a look at the Strategy P&L tab."
+        )
+        notify.alert(text, key=f"exit-drift:{row['segment']}:{base['captured_at']}")
+    except Exception:
+        pass
+
+
 def run_recheck(trigger: str = "button") -> dict[str, Any]:
     """Recompute and store. A caller that finds a pass already running waits for
     it and returns what it stored, instead of computing the same thing again."""
@@ -733,10 +820,16 @@ def run_recheck(trigger: str = "button") -> dict[str, Any]:
             pass
         return last_result()
     try:
-        state = compute_segments(_load_state())
+        prev = _load_state()
+        state = compute_segments(prev)
+        state["baselines"], alerts = _track_drift(
+            state["segments"], (prev or {}).get("baselines") or {}
+        )
         state["ran_at"] = now_ist_iso()
         state["trigger"] = trigger
-        _store_state(state)
+        _store_state(state)  # stored first: the flag is the real de-dup, the message comes after
+        for row, base in alerts:
+            _alert_drift(row, base)
         return state
     finally:
         _RECHECK_LOCK.release()

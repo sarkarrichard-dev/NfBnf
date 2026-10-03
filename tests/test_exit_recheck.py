@@ -850,3 +850,191 @@ def test_pooled_ready_frozen_is_working_and_below_bar_is_not_enough(journals):
     s = _pooled(out, "crypto:point_trail")
     assert s["state"] == "ready" and s["frozen"] is True and s["verdict"] == "working"
     assert _pooled(out, "commodities:atr_trail")["verdict"] == "not_enough_data"
+
+
+# --- drift: baseline, 15-point rule, one plain message per event (03-05) ----
+
+SEG = "india_NIFTY_sell"
+T_BASE = "2026-11-12T16:00:00+05:30"
+
+
+def test_drift_threshold_exact():
+    # exactly 15 points is never drift, even where floats say 0.55 - 0.40 = 0.15000000000000002
+    assert 22 / 40 - 16 / 40 > 0.15
+    assert er._moved_more_than(22, 40, 16, 40) is False
+    assert er._moved_more_than(23, 40, 16, 40) is True
+    assert er._moved_more_than(16, 40, 23, 40) is True  # the other direction
+    assert er._moved_more_than(1501, 10000, 0, 10000) is True
+    assert er._moved_more_than(1500, 10000, 0, 10000) is False
+    assert er._moved_more_than(1, 0, 0, 40) is False and er._moved_more_than(1, 40, 0, 0) is False
+
+
+def _row(hits=16, wins=22, n=40, state="ready", distance=40.0, seg=SEG):
+    return {
+        "segment": seg,
+        "venue": "india",
+        "lane": "sell",
+        "instrument": "NIFTY",
+        "label": "NIFTY sell",
+        "distance": distance,
+        "distance_label": f"{distance:g}-point stop",
+        "currency": "INR",
+        "trades": n,
+        "trading_days": 15,
+        "state": state,
+        "frozen": False,
+        "window_n": n,
+        "wins": wins,
+        "trail_hits": hits,
+        "win_rate": round(wins / n, 3),
+        "trail_hit_rate": round(hits / n, 3),
+        "net": 0.0,
+        "exit_mix": {},
+        "suggestion": None,
+        "drift": False,
+        "baseline": None,
+        "verdict": "working",
+        "message": "",
+    }
+
+
+@pytest.fixture
+def drift(monkeypatch):
+    """Controlled segment rows, a fixed clock and a captured Telegram alert. Nothing here can send
+    a real message: index_ai.notify.alert is replaced and conftest clears the bot variables."""
+    box: dict = {"rows": [], "clock": T_BASE}
+    alerts: list = []
+    monkeypatch.setattr("index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key)))
+    monkeypatch.setattr(
+        er,
+        "compute_segments",
+        lambda prev_state=None: {"segments": [dict(r) for r in box["rows"]], "errors": [], "rules": {}},
+    )
+    monkeypatch.setattr(er, "now_ist_iso", lambda: box["clock"])
+    return box, alerts
+
+
+def _go(box, **kw):
+    box["rows"] = [_row(**kw)]
+    return er.run_recheck("daily")["segments"][0]
+
+
+def test_drift_below_bar(drift):
+    box, alerts = drift
+    s = _go(box, hits=0, wins=0, n=39, state="observing")
+    s = _go(box, hits=39, wins=39, n=39, state="observing")  # a 100-point swing
+    assert s["drift"] is False and s["baseline"] is None and alerts == []
+    assert er._load_state().get("baselines") == {}
+    # a baseline that already exists is kept, never judged, once the segment drops below the bar
+    _go(box)  # ready: baseline captured
+    s = _go(box, hits=40, wins=0, n=40, state="observing")
+    assert s["drift"] is False and alerts == []
+    assert er._load_state()["baselines"][SEG]["trail_hits"] == 16
+
+
+def test_drift_baseline_capture_and_restart(drift):
+    box, alerts = drift
+    s = _go(box)
+    base = er._load_state()["baselines"][SEG]  # a restart is just a fresh read of the stored row
+    assert base == {
+        "trail_hits": 16,
+        "wins": 22,
+        "n": 40,
+        "trail_hit_rate": 0.4,
+        "win_rate": 0.55,
+        "distance": 40.0,
+        "captured_at": T_BASE,
+        "drifted": False,
+    }
+    assert s["drift"] is False and s["baseline"] == base and alerts == []
+    box["clock"] = "2026-11-21T16:00:00+05:30"
+    s = _go(box, hits=18, wins=20)  # small moves: compared with the stored baseline, which is kept
+    assert s["drift"] is False and s["baseline"]["captured_at"] == T_BASE
+    assert s["drift_detail"] == {
+        "trail_hit_rate": {"was": 0.4, "now": 0.45},
+        "win_rate": {"was": 0.55, "now": 0.5},
+    }
+    assert er._load_state()["baselines"][SEG]["captured_at"] == T_BASE and alerts == []
+
+
+def test_drift_distance_change_rebaselines(drift):
+    box, alerts = drift
+    _go(box)
+    box["clock"] = "2026-11-25T16:00:00+05:30"
+    s = _go(box, hits=40, wins=0, distance=50.0)  # a new stop distance AND a huge swing: no alert
+    base = er._load_state()["baselines"][SEG]
+    assert s["drift"] is False and alerts == []
+    assert base["captured_at"] == "2026-11-25T16:00:00+05:30" and base["distance"] == 50.0
+    assert base["trail_hits"] == 40 and base["drifted"] is False
+
+
+def test_drift_alert_once(drift):
+    box, alerts = drift
+    _go(box)  # 1: baseline 16/40 stops, 22/40 wins
+    assert alerts == []
+    s = _go(box, hits=23)  # 2: +17.5 points on the stop rate
+    key = f"exit-drift:{SEG}:{T_BASE}"
+    assert s["drift"] is True and [k for _, k in alerts] == [key]
+    assert er._load_state()["baselines"][SEG]["drifted"] is True
+    s = _go(box, hits=24)  # 3: still drifting: nothing more
+    assert s["drift"] is True and len(alerts) == 1
+    s = _go(box, hits=18)  # 4: back within 15 points
+    assert s["drift"] is False and len(alerts) == 1
+    assert er._load_state()["baselines"][SEG]["drifted"] is False
+    _go(box, hits=23)  # 5: drifted again: one more
+    assert len(alerts) == 2 and alerts[1][1] == key
+
+
+def test_drift_on_win_rate_alone_alerts(drift):
+    box, alerts = drift
+    _go(box)
+    s = _go(box, wins=15)  # 55% -> 37.5%, the stop rate unchanged
+    assert s["drift"] is True and len(alerts) == 1
+    s = _go(box, wins=16)  # exactly 15 points lower than 55%: not drift
+    assert s["drift"] is False
+
+
+def test_drift_alert_text_plain(drift):
+    box, alerts = drift
+    _go(box)
+    _go(box, hits=24, wins=18)  # stop closed 60% (was 40%), 45% made money (was 55%)
+    text, key = alerts[0]
+    assert "NIFTY sell" in text and "40-point stop" in text and "12 Nov" in text
+    assert "the stop closed 60% (was 40%)" in text and "45% made money (was 55%)" in text
+    assert "Nothing was changed" in text
+    for word in ("baseline", "drift", "ladder", " pp"):
+        assert word not in text.lower()
+    assert key == f"exit-drift:{SEG}:{T_BASE}"
+
+
+def test_drift_state_is_stored_before_the_alert_and_a_failing_alert_is_harmless(drift, monkeypatch):
+    box, alerts = drift
+    _go(box)
+    seen = []
+
+    def boom(text, *, key, **k):
+        seen.append(er._load_state()["baselines"][SEG]["drifted"])  # already stored when we send
+        raise RuntimeError("telegram is down")
+
+    monkeypatch.setattr("index_ai.notify.alert", boom)
+    s = _go(box, hits=23)  # must not raise out of run_recheck
+    assert s["drift"] is True and seen == [True]
+    assert er._load_state()["baselines"][SEG]["drifted"] is True
+    _go(box, hits=23)  # and it is not retried every run
+    assert seen == [True]
+
+
+def test_drift_through_real_india_rows(feed, monkeypatch):
+    alerts: list = []
+    monkeypatch.setattr("index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key)))
+    feed(_n_trades(40, 15, -100.0))  # ready, losing, no stop exits, no wins
+    first = er.run_recheck("daily")
+    assert _seg(first, "NIFTY", "sell")["baseline"]["trail_hits"] == 0 and alerts == []
+    note = "Index trail: 1 crossed the stop 2 (40 pts behind best 3; 4 pts from entry)."
+    feed(_n_trades(40, 15, -100.0), notes={str(i): note for i in range(7)})  # 7 of 40 = 17.5 points
+    second = er.run_recheck("daily")
+    s = _seg(second, "NIFTY", "sell")
+    assert s["drift"] is True and s["trail_hits"] == 7
+    assert len(alerts) == 1 and alerts[0][1].startswith("exit-drift:india_NIFTY_sell:")
+    er.run_recheck("daily")
+    assert len(alerts) == 1  # a later run while still drifting sends nothing
