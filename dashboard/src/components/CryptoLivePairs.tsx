@@ -50,8 +50,13 @@ export function CryptoLivePairs() {
   return (
     <div className="mt-3 border-t border-[var(--hair)] pt-3">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-        {d?.armed ? 'Right now: which pairs use real money' : 'If you arm: which pairs would use real money'}
+        {d?.armed ? 'Right now: which pairs are cleared for real money' : 'If you arm: which pairs would use real money'}
       </p>
+      {q.isError && d ? (
+        <p className="mt-1 text-[11px] text-[var(--warn)]">
+          Couldn't refresh just now — this list may be out of date.
+        </p>
+      ) : null}
       {q.isError && !d ? (
         <p className="mt-1 text-[12.5px] text-slate-500">
           Live/paper list not available yet — the app may need a restart.
@@ -69,7 +74,7 @@ export function CryptoLivePairs() {
           </p>
           <p className="mt-0.5 text-[11.5px] text-slate-500">
             {d.armed
-              ? 'New trades on LIVE pairs use real money; PAPER pairs keep practising. Trades already open keep the mode they opened with.'
+              ? 'New trades on LIVE pairs use real money, unless the safety limits or trading hours pause them; PAPER pairs keep practising. Trades already open keep the mode they opened with.'
               : 'Nothing here uses real money until crypto is armed.'}
           </p>
           {!d.read_ok ? (

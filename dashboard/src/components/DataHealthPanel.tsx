@@ -72,6 +72,13 @@ function perIndex(line: Line): string {
     .join(' · ')
 }
 
+function feedValue(d: DataHealth['feed']): string {
+  if (d.status === 'off') return 'Off'
+  if (d.status === 'closed') return 'Idle'
+  if (d.status === 'none') return '—'
+  return d.connected ? 'Connected' : 'Not connected'
+}
+
 function feedSub(d: DataHealth['feed']): string {
   switch (d.status) {
     case 'off':
@@ -123,32 +130,37 @@ export function DataHealthPanel() {
             valueClass={TONE[d.ticks.status]}
           />
           <StatTile
-            label="Option chain"
+            label="Option prices"
             value={ageText(d.chain.age_seconds)}
             sub={lineSub(d.chain, d.chain.status === 'closed' && d.market_open && d.square_off_window)}
             valueClass={TONE[d.chain.status]}
           />
           <StatTile
-            label="Option spreads"
+            label="Buy/sell price gap"
             value={ageText(d.spread.age_seconds)}
             sub={lineSub(d.spread, false)}
             valueClass={TONE[d.spread.status]}
           />
           <StatTile
             label="Dhan live feed"
-            value={d.feed.status === 'off' ? 'Off' : d.feed.connected ? 'Connected' : 'Not connected'}
+            value={feedValue(d.feed)}
             sub={feedSub(d.feed)}
             valueClass={TONE[d.feed.status]}
           />
         </div>
       )}
+      {q.isError && d ? (
+        <p className="mt-2 text-[11px] text-[var(--warn)]">
+          Couldn't refresh just now — these numbers may be out of date.
+        </p>
+      ) : null}
       {d ? (
         <>
           <p className="mt-2 font-mono text-[11px] tabular-nums text-slate-500">
-            {`Option chain — ${perIndex(d.chain)}`}
+            {`Option prices — ${perIndex(d.chain)}`}
           </p>
           <p className="mt-1 font-mono text-[11px] tabular-nums text-slate-500">
-            {`Option spreads — ${perIndex(d.spread)}`}
+            {`Buy/sell price gap — ${perIndex(d.spread)}`}
           </p>
         </>
       ) : null}
