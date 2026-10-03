@@ -13,29 +13,31 @@ type TickFeed = {
 
 type PillSpec = { tone: 'idle' | 'good' | 'warn' | 'accent'; label: string; title: string }
 
-/** D-10: a small read of the existing GET /api/tick-feed, not a new panel —
- *  the full tick-age/chain-age/spread-age Data Health view is Phase 4. */
+/** D-10: a small read of the existing GET /api/tick-feed — the one-glance summary
+ *  on every page. The full view (price age, option-chain age, spread age, Dhan
+ *  live feed) is DataHealthPanel at the top of the Index Options page (Phase 4);
+ *  this pill points to it and does not duplicate it. */
 function tickFeedPill(feed: TickFeed | undefined, marketOpen?: boolean): PillSpec {
-  if (!feed) return { tone: 'idle', label: 'Ticks —', title: 'Tick feed status unavailable' }
+  if (!feed) return { tone: 'idle', label: 'Ticks —', title: 'Tick feed status unavailable — details: Data health, top of the Index Options page' }
   if (!feed.enabled) {
     return {
       tone: 'idle',
       label: 'Ticks off',
-      title: 'Live tick feed is switched off — stops are checked every 20 seconds from Dhan prices',
+      title: 'Live tick feed is switched off — stops are checked every 20 seconds from Dhan prices — details: Data health, top of the Index Options page',
     }
   }
   const down = !feed.connected || !!feed.stalled
   if (!down) {
-    return { tone: 'good', label: 'Ticks live', title: 'Stops react to every live tick' }
+    return { tone: 'good', label: 'Ticks live', title: 'Stops react to every live tick — details: Data health, top of the Index Options page' }
   }
   if (marketOpen) {
     return {
       tone: 'warn',
       label: 'Ticks: fallback',
-      title: 'Tick feed is down — stops are checked every 20 seconds from Dhan prices until it reconnects',
+      title: 'Tick feed is down — stops are checked every 20 seconds from Dhan prices until it reconnects — details: Data health, top of the Index Options page',
     }
   }
-  return { tone: 'idle', label: 'Ticks idle', title: 'Market closed' }
+  return { tone: 'idle', label: 'Ticks idle', title: 'Market closed — details: Data health, top of the Index Options page' }
 }
 
 function istClock(): string {
