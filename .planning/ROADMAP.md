@@ -155,8 +155,21 @@ Plans:
   2. A Data Health view shows tick age, option-chain snapshot age, measured spread age, and Dhan websocket status, so a missed trade or a stop that didn't fire can be diagnosed from the dashboard alone
   3. Every new/changed dashboard element passes the ui-consistency-reviewer's existing checks (design tokens, corner-radius, mono/tabular-nums on data) — no regressions on the existing visual bar
 
-**Plans**: TBD
+**Plans**: 3 plans
 **UI hint**: yes
+
+Plans:
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Tracer: crypto live/paper list end to end — read-only view mirroring lanes.py:599 over the pairs the lane really trades, GET /api/crypto/live-pairs, list under the arm button, old go-live block removed (UIUX-01, UIUX-03)
+
+**Wave 2** *(blocked on Wave 1 completion — shares index_ai/server.py)*
+
+- [ ] 04-02-PLAN.md — Data health: GET /api/data-health (read-only chain lookup, spread file tail, in-memory price feed; server-side ok/slow/stale/closed verdicts, neutral when the market is closed), four-tile panel on the Index Options page, Ticks pill points to it (UIUX-02, UIUX-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 04-03-PLAN.md — Phase gate: read-only check on the real data, money-path/ruff/lock tripwires, CONCERNS resolved, whole-phase visual-bar pass, end-of-phase look without arming (UIUX-01, UIUX-02, UIUX-03)
 
 ### Phase 5: Tenant Isolation Foundation
 
