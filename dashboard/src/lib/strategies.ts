@@ -199,7 +199,7 @@ export const STRATEGIES: StrategyDef[] = [
     side: 'mixed',
     teaser: 'Directional index-options entries on NIFTY / BANKNIFTY / SENSEX — both buying and selling — routed through the live executor. P&L in Trade History.',
     blurb:
-      'The live index-options engine. Buying: single-leg entries, needs 60% confidence plus real open-interest and liquidity support. Selling: 2-leg hedged credit spreads timed off the 5-minute setup and 15-minute trend, with the exit trailing the option premium itself. A choppy-market brake and a per-index cost check both hold back the sell side when the odds are bad; BANKNIFTY spreads stay switched off. Every trade runs through the same order executor and lands in Trade History.',
+      'The live index-options engine. Buying: single-leg entries, needs 60% confidence plus real open-interest and liquidity support. Selling: 2-leg hedged credit spreads timed off the 5-minute setup and 15-minute trend, with the stop following the index point for point. A choppy-market brake and a per-index cost check both hold back the sell side when the odds are bad; BANKNIFTY spreads stay switched off. Every trade runs through the same order executor and lands in Trade History.',
     reads: 'Tuned through Settings → Strategy tuning (.env), not the Builder. P&L is in Trade History / Reports (source: index).',
     backtest: { window: 'full history', net: 'net-negative after costs', trades: 0, note: 'broker charges eat the edge — see strategy-findings' },
     paperDefault: true,
