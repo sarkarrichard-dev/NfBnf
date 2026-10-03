@@ -9,11 +9,20 @@ import { StatTile } from './ui/StatTile'
 // and the NSE holiday calendar; this file only maps a word to a colour and text.
 type Status = 'ok' | 'slow' | 'stale' | 'closed' | 'off' | 'none'
 
+type Line = {
+  status: Status
+  age_seconds: number | null
+  last_seen: string | null
+  by_index: Record<string, number | null>
+}
+
 type DataHealth = {
   as_of_display: string
   market_open: boolean
   square_off_window: boolean
   ticks: { status: Status; age_seconds: number | null }
+  chain: Line
+  spread: Line
   feed: { status: Status; connected: boolean; reconnects: number }
 }
 
@@ -41,6 +50,26 @@ const PRICES_SUB: Record<Status, string> = {
   slow: 'Prices running late',
   stale: 'No new prices — stops checked every 20 seconds',
   none: 'No prices received yet',
+}
+
+const LINE_WORDS: Record<Status, string> = {
+  ok: 'Up to date',
+  slow: 'Running late',
+  stale: 'Not updating',
+  none: 'No readings found',
+  off: 'Off',
+  closed: 'Market closed',
+}
+
+function lineSub(line: Line, pausedForClose: boolean): string {
+  const word = pausedForClose ? 'Paused for the close' : LINE_WORDS[line.status]
+  return word + (line.last_seen ? ` · last ${line.last_seen}` : '')
+}
+
+function perIndex(line: Line): string {
+  return Object.entries(line.by_index)
+    .map(([index, age]) => `${index} ${ageText(age)}`)
+    .join(' · ')
 }
 
 function feedSub(d: DataHealth['feed']): string {
@@ -94,6 +123,18 @@ export function DataHealthPanel() {
             valueClass={TONE[d.ticks.status]}
           />
           <StatTile
+            label="Option chain"
+            value={ageText(d.chain.age_seconds)}
+            sub={lineSub(d.chain, d.chain.status === 'closed' && d.market_open && d.square_off_window)}
+            valueClass={TONE[d.chain.status]}
+          />
+          <StatTile
+            label="Option spreads"
+            value={ageText(d.spread.age_seconds)}
+            sub={lineSub(d.spread, false)}
+            valueClass={TONE[d.spread.status]}
+          />
+          <StatTile
             label="Dhan live feed"
             value={d.feed.status === 'off' ? 'Off' : d.feed.connected ? 'Connected' : 'Not connected'}
             sub={feedSub(d.feed)}
@@ -101,6 +142,16 @@ export function DataHealthPanel() {
           />
         </div>
       )}
+      {d ? (
+        <>
+          <p className="mt-2 font-mono text-[11px] tabular-nums text-slate-500">
+            {`Option chain — ${perIndex(d.chain)}`}
+          </p>
+          <p className="mt-1 font-mono text-[11px] tabular-nums text-slate-500">
+            {`Option spreads — ${perIndex(d.spread)}`}
+          </p>
+        </>
+      ) : null}
     </section>
   )
 }

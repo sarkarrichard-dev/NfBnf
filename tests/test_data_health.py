@@ -164,9 +164,10 @@ def test_chain_reads_newest_rows_read_only(tmp_path, monkeypatch):
 def test_chain_missing_database_creates_nothing(tmp_path, monkeypatch):
     missing = tmp_path / "missing.sqlite"
     monkeypatch.setattr(market_log, "DB_PATH", missing)
+    before = sorted(p.name for p in tmp_path.iterdir())  # conftest already put a .env here
     assert data_health.chain_last_seen(KEYS) == {k: None for k in KEYS}
     assert not missing.exists()
-    assert sorted(p.name for p in tmp_path.iterdir()) == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
 
 
 def test_spread_age_from_the_file_tail(tmp_path, monkeypatch):
