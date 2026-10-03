@@ -24,7 +24,15 @@ Backtest the "US-session-skip" short strangle spec'd in a YouTube video
     python -m scripts.backtest_btc_strangle                     # BTCUSD, full cached history
     python -m scripts.backtest_btc_strangle --instruments BTCUSD ETHUSD
     python -m scripts.backtest_btc_strangle --range-mult 1.5 --strike-step 250
+    python -m scripts.backtest_btc_strangle --margin-usd 200 --leverage 10
     python -m scripts.backtest_btc_strangle --fetch              # also top up the cache from Delta
+
+Lots are sized per trade from a $ margin budget at that trade's entry spot
+(crypto.sizing.lots_from_margin_budget -- the same formula and the same
+--margin-usd/--leverage default knobs, CRYPTO_MARGIN_PER_POSITION_USD and
+CRYPTO_LEVERAGE, every perp lane in this project already uses), not a fixed
+lot count. The budget and leverage stay constant across the whole backtest;
+the lot count a given trade affords varies with spot at that trade's entry.
 
 A DIFFERENT, already-implemented BTC options lane exists in this codebase:
 crypto/btc_straddle.py (paper-only, CRYPTO_BTC_STRADDLE_ENABLED, studied from
@@ -53,6 +61,14 @@ access before trusting an absolute dollar figure, and override via CLI:
     (Delta's options fee may be capped as a fraction of premium instead);
     that caveat carries over here unchanged. --maker switches to the maker
     rate; there is no separate --taker-fee-pct any more.
+  * --margin-usd/--leverage  lots are sized with crypto.sizing's PERP margin
+    formula (contract_value * spot / leverage), reused here for options at
+    the user's request -- a real short option's exchange margin is not
+    simply notional/leverage (it typically reflects the option's own max-loss
+    or a SPAN-style calc), so the lot count this produces is a convenience
+    consistent with the rest of this codebase, not a verified options margin
+    requirement. Confirm against Delta's real margin API before sizing a
+    live position this way.
   * --strike-step       default $500 -- a guess at Delta's BTC option strike
     granularity, not fetched from a live option chain (none exists to fetch
     here; crypto/delta/options.py *could* list the real strikes on a machine
@@ -85,6 +101,8 @@ import pandas as pd
 from crypto.candle_cache import cached_candles
 from crypto.charges import fee_usd
 from crypto.config import crypto_settings
+from crypto.delta.products import Contract
+from crypto.sizing import lots_from_margin_budget
 from index_ai.market_clock import IST
 from index_ai.strategies.options_cpr.premium import bs_price_delta
 
@@ -106,7 +124,14 @@ class Params:
     sl_mult: float = 2.0  # per-leg SL = this x entry premium
     realized_vol_days: int = 20  # trailing lookback for the IV proxy
     contract_value: float = 0.001  # BTC per lot -- see UNVERIFIED ASSUMPTIONS
-    lots: float = 500.0
+    # Lots are no longer a fixed count: sized per trade from a $ margin budget
+    # at that trade's entry spot, same formula + knobs crypto.sizing uses for
+    # every perp lane (crypto.config.crypto_settings().margin_per_position_usd
+    # / .leverage are this script's defaults -- see main()). A bigger BTC move
+    # before entry means fewer, bigger-notional lots fit the same budget, and
+    # vice versa; the budget and leverage stay constant, the lot count doesn't.
+    margin_usd: float = 50.0
+    leverage: float = 20.0
     taker: bool = True  # crypto.charges.fee_usd rate to apply -- see UNVERIFIED ASSUMPTIONS
     half_spread_bps: float = 150.0  # bps of premium, both legs, both sides
 
@@ -146,6 +171,7 @@ class Trade:
     symbol: str
     entry_ts: str
     exit_ts: str
+    lots: int
     spot_entry: float
     call_strike: float
     put_strike: float
@@ -165,6 +191,13 @@ def _run_symbol(symbol: str, candles: pd.DataFrame, p: Params) -> list[Trade]:
     """One short strangle per calendar day, entered once outside the US-session window."""
     if candles.empty:
         return []
+    # product_id/tick_size/min_size are unused by lots_from_margin_budget's
+    # math (margin = contract_value * mark / leverage) -- placeholders here,
+    # real options contract would come from crypto/delta/options.py live.
+    contract = Contract(
+        symbol=symbol, product_id=0, contract_value=p.contract_value,
+        tick_size=0.0, min_size=1.0, max_leverage=p.leverage,
+    )
     candles = candles.sort_values("datetime").reset_index(drop=True)
     candles["ist"] = candles["datetime"].dt.tz_convert(IST)
     log_ret = (candles["close"] / candles["close"].shift(1)).apply(
@@ -212,7 +245,13 @@ def _run_symbol(symbol: str, candles: pd.DataFrame, p: Params) -> list[Trade]:
 
         call_entry_px = _leg_premium(spot, call_strike, True, sigma, minutes_to_expiry)
         put_entry_px = _leg_premium(spot, put_strike, False, sigma, minutes_to_expiry)
-        coins = p.lots * p.contract_value
+        # sized from the $ budget at THIS trade's spot, not a fixed lot count --
+        # a $84k BTC and a $60k BTC afford a different number of 0.001-BTC
+        # contracts for the same margin_usd/leverage
+        lots = lots_from_margin_budget(
+            contract, spot, margin_usd=p.margin_usd, leverage=p.leverage
+        )
+        coins = lots * p.contract_value
         underlying_notional = coins * spot
 
         open_fee = fee_usd(underlying_notional, taker=p.taker) * 2.0
@@ -266,6 +305,7 @@ def _run_symbol(symbol: str, candles: pd.DataFrame, p: Params) -> list[Trade]:
                 symbol=symbol,
                 entry_ts=entry_wall.isoformat(),
                 exit_ts=candles["ist"].iloc[exit_i].isoformat(),
+                lots=lots,
                 spot_entry=round(spot, 2),
                 call_strike=call_strike,
                 put_strike=put_strike,
@@ -318,6 +358,7 @@ def _agg(trades: list[Trade]) -> dict:
 
 
 def main() -> None:
+    s = crypto_settings()
     ap = argparse.ArgumentParser()
     ap.add_argument("--instruments", nargs="*", default=["BTCUSD"],
                      help="video's liquidity argument is BTC-specific; pass more at your own risk")
@@ -328,7 +369,12 @@ def main() -> None:
     ap.add_argument("--expiry-offset-days", type=int, default=Params.expiry_offset_days)
     ap.add_argument("--realized-vol-days", type=int, default=Params.realized_vol_days)
     ap.add_argument("--contract-value", type=float, default=Params.contract_value)
-    ap.add_argument("--lots", type=float, default=Params.lots)
+    ap.add_argument("--margin-usd", type=float, default=s.margin_per_position_usd,
+                     help="$ margin budget per trade -- lots are sized from this at each "
+                          "entry's spot, not fixed (default: crypto.config's "
+                          "CRYPTO_MARGIN_PER_POSITION_USD, same knob every perp lane uses)")
+    ap.add_argument("--leverage", type=float, default=s.leverage,
+                     help="default: crypto.config's CRYPTO_LEVERAGE, same knob every perp lane uses")
     ap.add_argument("--maker", action="store_true", help="use crypto.charges maker rate instead of taker")
     ap.add_argument("--half-spread-bps", type=float, default=Params.half_spread_bps)
     ap.add_argument("--fetch", action="store_true", help="also top up the local cache from Delta's live API")
@@ -337,11 +383,11 @@ def main() -> None:
     p = Params(
         range_mult=args.range_mult, strike_step=args.strike_step, sl_mult=args.sl_mult,
         expiry_offset_days=args.expiry_offset_days, realized_vol_days=args.realized_vol_days,
-        contract_value=args.contract_value, lots=args.lots, taker=not args.maker,
-        half_spread_bps=args.half_spread_bps,
+        contract_value=args.contract_value, margin_usd=args.margin_usd, leverage=args.leverage,
+        taker=not args.maker, half_spread_bps=args.half_spread_bps,
     )
     OUT.mkdir(parents=True, exist_ok=True)
-    configured = set(crypto_settings().symbols)
+    configured = set(s.symbols)
     summary: dict[str, dict] = {}
     all_trades: dict[str, list[Trade]] = {}
 
