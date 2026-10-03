@@ -233,6 +233,13 @@ def run_eod() -> dict[str, Any]:
     except Exception as exc:
         report["strategy_learning"] = {"error": str(exc)[:200]}
 
+    try:  # suggest-only stop-distance re-check + drift warning (Phase 3)
+        from index_ai.exit_recheck import run_recheck
+
+        report["exit_recheck"] = run_recheck("daily")
+    except Exception as exc:
+        report["exit_recheck"] = {"error": str(exc)[:200]}
+
     # Off-machine backup before the report is written, so the snapshot it uploads
     # is of a settled memory/ dir; the report's own backup status is one run behind.
     try:

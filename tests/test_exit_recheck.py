@@ -1038,3 +1038,36 @@ def test_drift_through_real_india_rows(feed, monkeypatch):
     assert len(alerts) == 1 and alerts[0][1].startswith("exit-drift:india_NIFTY_sell:")
     er.run_recheck("daily")
     assert len(alerts) == 1  # a later run while still drifting sends nothing
+
+
+# --- the daily run: a contained step of daily_ops.run_eod (03-05) -----------
+
+
+def _eod(tmp_path, monkeypatch):
+    from index_ai import daily_ops
+
+    monkeypatch.setattr(daily_ops, "STATE_PATH", tmp_path / "s.json")
+    monkeypatch.setattr(daily_ops, "REPORT_DIR", tmp_path / "reports")
+    monkeypatch.setattr(daily_ops, "eod_due", lambda: True)
+    return daily_ops
+
+
+def test_run_eod_hook(tmp_path, monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(er, "run_recheck", lambda trigger="button": calls.append(trigger) or {"ran": True})
+    report = _eod(tmp_path, monkeypatch).run_eod()
+    assert calls == ["daily"]
+    assert report["exit_recheck"] == {"ran": True}
+
+
+def test_run_eod_hook_failure_is_contained(tmp_path, monkeypatch):
+    def boom(trigger="button"):
+        raise RuntimeError("the re-check broke")
+
+    monkeypatch.setattr(er, "run_recheck", boom)
+    daily_ops = _eod(tmp_path, monkeypatch)
+    report = daily_ops.run_eod()
+    assert report["exit_recheck"] == {"error": "the re-check broke"}
+    for key in ("brain", "spreads", "strategy_learning"):
+        assert key in report
+    assert json.loads((tmp_path / "s.json").read_text())["eod_date"] == report["date"]  # day still stamped
