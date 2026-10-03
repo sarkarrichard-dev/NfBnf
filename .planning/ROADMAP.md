@@ -123,7 +123,7 @@ Plans:
   2. `premium_trail.py`'s percent-of-premium code path no longer exists in the codebase, and nothing still imports it
   3. A monitoring signal fires if trail-stop hit rate or win rate drifts meaningfully from its last validated baseline, so a bad tune surfaces immediately rather than weeks later in the scorecard
 
-**Plans**: 3/6 plans executed
+**Plans**: 4/6 plans executed
 
 Plans:
 **Wave 1**
@@ -134,7 +134,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 03-03-PLAN.md — One trail in the docs: code comments, Strategy Guide (real 25/55/80 and 40/100/130 rule), CLAUDE.md, codebase map (EXIT-02)
-- [ ] 03-04-PLAN.md — India replay on recorded ticks + chain quotes, real-data feasibility run, suggest-only gate (ladder -> frozen -> replay quality -> net rupees) (EXIT-01)
+- [x] 03-04-PLAN.md — India replay on recorded ticks + chain quotes, real-data feasibility run, suggest-only gate (ladder -> frozen -> replay quality -> net rupees) (EXIT-01)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -251,7 +251,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 |-------|----------------|--------|-----------|
 | 1. Strategy Fixes | 4/4 | Complete    | 2026-09-30 |
 | 2. Order Placing & Tracking | 7/7 | Complete    | 2026-10-01 |
-| 3. Exit Optimisation | 3/6 | In Progress|  |
+| 3. Exit Optimisation | 4/6 | In Progress|  |
 | 4. Dashboard UI/UX | 0/TBD | Not started | - |
 | 5. Tenant Isolation Foundation | 0/TBD | Not started | - |
 | 6. Broker Connection & Credential Vault | 0/TBD | Not started | - |
