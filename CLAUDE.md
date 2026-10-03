@@ -64,9 +64,9 @@ tick-driven stop triggering (`on_index_tick`, needs `ENABLE_TICK_FEED=true`).
   from entry and moves 1:1 with the index. Buys: NIFTY 25 / BANKNIFTY 55 /
   SENSEX 80 (`instruments._buy_scalp_trail`, activation 0 — scalp, no wide
   initial stop). Sells: NIFTY 40 / BANKNIFTY 100 / SENSEX 130
-  (`credit_spread.SELL_TRAIL_POINTS`). `premium_trail.py`'s percent-of-premium
-  trail still exists in the repo but is bypassed for both lanes now — don't
-  assume it's the live rule just because it's still imported somewhere.
+  (`credit_spread.SELL_TRAIL_POINTS`). The old percent-of-premium trail was
+  deleted in Phase 3 (2026-10) — the 1:1 index trail is the only trailing stop
+  for both lanes.
   Crypto has its own separate point trail, `crypto/strategies/trailing.py`
   (`point_trail_pct`, default 1.6% of entry price).
 

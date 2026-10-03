@@ -163,19 +163,26 @@ When `STRATEGY_STYLE=AUTO` or `CREDIT` fires an iron condor / bull put / bear ca
 
 MTM marks **all legs** (net debit to close vs entry credit). Dashboard shows each leg, net credit, and max loss.
 
-Directional **index-point trails** apply only to long premium (`BUY_CALL` / `BUY_PUT`), not credit spreads.
+For bull put and bear call spreads on NIFTY, BANKNIFTY and SENSEX, the 1:1 index trailing stop (next section) replaces the profit-trail, profit-target and stop-loss rows above. The max loss and the short-strike breach still apply. Those rows still govern iron condors, which have no direction to trail.
 
-## Trailing stop (two phases) — long premium only
+## Trailing stop: one rule for both lanes
 
-Exits were too early with a 1-point index trail. New logic per index:
+There is one trailing-stop rule, used by both option buying and credit-spread selling. The stop starts a fixed number of index points away from the index price at entry. Then it moves one point for every point the index moves in the trade's favour, and it never moves back. When the index falls back to the stop, the trade closes.
 
-| Index | Initial stop | Arm trail after | Trail distance |
-|-------|----------------|-----------------|----------------|
-| NIFTY | 100 pts | +25 pts profit | 40 pts behind peak |
-| BANKNIFTY | 200 pts | +50 pts profit | 80 pts behind peak |
+| Index | Buy (option buying) | Sell (credit spreads) |
+|-------|---------------------|-----------------------|
+| NIFTY | 25 index points | 40 index points |
+| BANKNIFTY | 55 index points | 100 index points |
+| SENSEX | 80 index points | 130 index points |
 
-1. **Before activation** — only a wide initial stop (noise does not exit the trade).
-2. **After activation** — trail behind the best favorable index move.
+The buy numbers are `instruments._buy_scalp_trail` and the sell numbers are `SELL_TRAIL_POINTS` in `credit_spread.py`. The SENSEX numbers are the NIFTY numbers scaled up for the bigger index, not numbers Richard picked himself.
+
+- **Buys** trail from the very first tick. There is no wide starting stop and no waiting to "arm". A buy closes on the trail, on the 15:10 square-off, or on a manual close. The Supertrend backstop has been off for buys since 2026-09-28.
+- **Sells** keep three backstops beside the trail: the rupee max loss, the short-strike breach and the Supertrend stop.
+- **Profit trail:** the rupee profit trail (the `ENABLE_PROFIT_TRAIL` settings above) stays on as a fallback for buys and iron condors. It locks in profit if a trade gives back a lot of it. Bull put and bear call spreads leave it off while the index trail is running.
+- **How often the stop is checked** is in the next section.
+
+The old percent-of-option-price trail was deleted in Phase 3. This is the only trailing stop that runs.
 
 Square-off still closes open positions in the last minutes of the session (IST).
 

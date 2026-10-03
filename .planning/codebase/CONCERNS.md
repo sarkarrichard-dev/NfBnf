@@ -10,8 +10,9 @@
 - Impact: The stated destination (subscriptions to other traders) is architecturally impossible without per-tenant isolation. Every subscriber running side-by-side on the same instance corrupts each other's data and decisions.
 - Fix approach: Phase migration toward isolated worker containers per subscriber (as documented in `project-algo-bnf-vision.md`'s phased plan). Immediate steps: thread `tenant_id` through all config/DB lookups, move to Postgres + per-tenant schemas, implement credential vault (AWS Secrets Manager).
 
-**Premium-trail legacy code still in repo but bypassed:**
-- Issue: `premium_trail.py` implements percent-of-premium trailing stops. This was the original strategy (2026-09-24/28 Richard switched to index-point-based trails). The old file still exists and is still imported in some paths, but the live logic uses `credit_spread.SELL_TRAIL_POINTS` (index points) and `instruments._buy_scalp_trail` (also index points) instead. Having two contradictory implementations risks someone re-enabling the wrong one.
+**Premium-trail legacy code still in repo but bypassed (resolved 2026-10, Phase 3):**
+- Resolved: deleted; the sell-lane exit skip it fed now keys on `credit_spread.SELL_TRAIL_POINTS` (`position_exits._index_trailed_credit`); history preserved in `03-02-SUMMARY.md`.
+- Issue (as originally recorded): `premium_trail.py` implements percent-of-premium trailing stops. This was the original strategy (2026-09-24/28 Richard switched to index-point-based trails). The old file still exists and is still imported in some paths, but the live logic uses `credit_spread.SELL_TRAIL_POINTS` (index points) and `instruments._buy_scalp_trail` (also index points) instead. Having two contradictory implementations risks someone re-enabling the wrong one.
 - Files: `index_ai/premium_trail.py` (entire file), `index_ai/strategies/credit_spread.py` (lines 346, 388, 397 — SELL_TRAIL_POINTS), `index_ai/instruments.py` (_buy_scalp_trail)
 - Impact: A maintenance risk — the premium trail is no longer the truth, but it's still in the codebase where someone might assume it's active or try to switch back to it.
 - Fix approach: Delete `premium_trail.py` entirely. It's superseded and keeping it breeds confusion. Verify no other imports reference it first.

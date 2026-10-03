@@ -57,7 +57,6 @@ Algo BNF/
 │   ├── env.py                     # Helper to parse env vars (bool, int, float)
 │   ├── data_epoch.py              # Data refresh epoch marker (2026-09-10 cutoff)
 │   ├── execution_safety.py        # Pre-execution validation, per-instrument lock
-│   ├── premium_trail.py           # Premium-% trailing logic (bypassed in favor of point trail)
 │   ├── profit_trail.py            # Profit trailing logic
 │   ├── ticker.py                  # Ticker symbol normalization
 │   ├── llm.py                     # Claude API calls for setup narrative
