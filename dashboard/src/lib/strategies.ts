@@ -193,7 +193,7 @@ export const STRATEGIES: StrategyDef[] = [
     name: 'Index Options',
     kind: 'index',
     statusKey: 'index_options',
-    engine: 'CPR + EMA + Supertrend + OI · premium-trail exits',
+    engine: 'CPR + EMA + Supertrend + OI · 1:1 index-point trail exits',
     instrument: 'NIFTY · BANKNIFTY · SENSEX',
     timeframe: 'buy fast · sell 5m setup + 15m trend',
     side: 'mixed',

@@ -90,6 +90,7 @@
 - Why fragile: The trailing-stop points (NIFTY 40 / BANKNIFTY 100 / SENSEX 130 for sells, different values for buys) are hardcoded magic numbers. They were changed 2026-09-24/28 from percent-of-premium to absolute index points. If a new index is added or the markets' behavior changes, these numbers need re-tuning, but there's no monitoring or alert if they're no longer appropriate.
 - Safe modification: Any change to trail points requires re-backtesting against recent live journal data to confirm win rate and stop-hit frequency don't regress. Test both the main ladder and adjacent values to detect one-off tuning.
 - Test coverage: Trailing logic is tested in `test_trailing.py` and `test_exit_credit.py`, but with synthetic scenarios, not against live data.
+- Monitoring added 2026-10 (Phase 3): index_ai/exit_recheck.py re-checks every segment's stop daily after the close and on demand (Strategy P&L tab, Stop check), sends one Telegram message when a stop's hit rate or win rate moves more than 15 points from its last check, and only ever suggests a new distance for a human to approve.
 
 **Strategy lane eligibility gates are per-pair, not per-lane:**
 - Files: `strategy_performance.py` (crypto_live_pairs function), `crypto/lanes.py`
