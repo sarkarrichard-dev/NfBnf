@@ -42,6 +42,11 @@ def test_eod_runs_once_per_day(tmp_path, monkeypatch):
     monkeypatch.setattr(daily_ops, "STATE_PATH", tmp_path / "s.json")
     monkeypatch.setattr(daily_ops, "REPORT_DIR", tmp_path / "reports")
     monkeypatch.setattr(daily_ops, "eod_due", lambda: True)
+    # keep the end-of-day job from rewriting the live brain model, commentary, day review or backup
+    monkeypatch.setattr("index_ai.brain.model.train", lambda *a, **k: {"trained": False})
+    monkeypatch.setattr("index_ai.brain.commentary.generate", lambda *a, **k: {"text": ""})
+    monkeypatch.setattr("index_ai.day_review.build_day_review", lambda *a, **k: {"summary": {}})
+    monkeypatch.setattr("index_ai.cloud_backup.run_backup", lambda *a, **k: {})
     r = daily_ops.run_eod()
     assert r["date"] and "brain" in r and "spreads" in r and "viability" in r
     # state now records today, so the real eod_due would return False
