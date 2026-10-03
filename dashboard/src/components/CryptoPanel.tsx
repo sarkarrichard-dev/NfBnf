@@ -122,28 +122,6 @@ type Trade = {
   exit_reason?: string
 }
 
-type LiveReadiness = {
-  strategy: string
-  trades: number
-  trades_needed: number
-  days_span: number
-  days_needed: number
-  net_usd: number
-  instruments_positive: number
-  instruments_total: number
-  ready: boolean
-  why_not: string | null
-}
-
-type LivePair = {
-  strategy: string
-  coin: string
-  trades: number
-  net_usd: number
-  goes_live: boolean
-  why_not: string | null
-}
-
 /** Cumulative realised USD P&L, in row order, for the equity sparkline. */
 function equityCurve(rows: { pnl_usd: number }[]): number[] {
   const out: number[] = []
@@ -175,13 +153,6 @@ export function CryptoPanel() {
     queryFn: () => api<Lots>('/api/crypto/lots'),
     refetchInterval: 60_000,
   })
-  const readiness = useQuery({
-    queryKey: ['crypto', 'live-readiness'],
-    queryFn: () =>
-      api<{ strategies: LiveReadiness[]; pairs?: LivePair[] }>('/api/crypto/live-readiness'),
-    refetchInterval: 5 * 60_000,
-  })
-
   const s = status.data
 
   const cfg = useMutation({
@@ -458,13 +429,6 @@ export function CryptoPanel() {
 
       {s?.ml ? <LearningRow ml={s.ml} /> : null}
 
-      {readiness.data?.strategies?.length ? (
-        <LiveReadinessRow
-          strategies={readiness.data.strategies}
-          pairs={readiness.data.pairs ?? []}
-        />
-      ) : null}
-
       <CollapsibleSection title="Day review" summary="AI summary · why each trade" defaultOpen>
         <CryptoDayReviewPanel />
       </CollapsibleSection>
@@ -607,79 +571,6 @@ function LearningRow({ ml }: { ml: NonNullable<Status['ml']> }) {
           ))}
         </div>
       ) : null}
-    </div>
-  )
-}
-
-function LiveReadinessRow({
-  strategies,
-  pairs,
-}: {
-  strategies: LiveReadiness[]
-  pairs: LivePair[]
-}) {
-  return (
-    <div className={cn(fx.card, 'space-y-2 text-xs')}>
-      <div className="flex items-baseline justify-between">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-          Go-live readiness
-        </span>
-        <span className="text-slate-600">
-          real money goes only to coins marked live — each coin needs 5+ trades and a profit
-        </span>
-      </div>
-      <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-        {strategies.map((r) => (
-          <div
-            key={r.strategy}
-            className={cn(
-              'flex flex-col gap-0.5 rounded-lg border px-3 py-1.5',
-              r.ready ? 'border-[var(--up)]/35 bg-[var(--up)]/[0.06]' : 'border-[var(--hair-soft)]',
-            )}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-slate-200">{r.strategy}</span>
-              <span
-                className={cn(
-                  'rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                  r.ready ? 'bg-[var(--up)]/15 text-[var(--up)]' : 'bg-white/10 text-slate-400',
-                )}
-              >
-                {r.ready ? 'READY' : 'not yet'}
-              </span>
-            </div>
-            <span className="text-slate-500">
-              {r.trades}/{r.trades_needed} trades · {r.days_span}/{r.days_needed} days ·{' '}
-              <span className={pnlCls(r.net_usd)}>{usd(r.net_usd)}</span>
-            </span>
-            <span className="text-slate-600">
-              {r.instruments_positive}/{r.instruments_total} coins net-positive
-              {r.why_not ? ` · ${r.why_not}` : ''}
-            </span>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {pairs
-                .filter((p) => p.strategy === r.strategy)
-                .map((p) => (
-                  <span
-                    key={p.coin}
-                    title={p.why_not ?? 'would trade real money once armed'}
-                    className={cn(
-                      'rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums',
-                      p.goes_live
-                        ? 'bg-[var(--up)]/15 text-[var(--up)]'
-                        : p.net_usd < 0
-                          ? 'bg-[var(--down)]/10 text-[var(--down)]'
-                          : 'bg-white/[0.05] text-slate-400',
-                    )}
-                  >
-                    {p.coin.replace(/USD.?$/, '')} {p.trades}t {usd(p.net_usd)}
-                    {p.goes_live ? ' · live' : ''}
-                  </span>
-                ))}
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }
