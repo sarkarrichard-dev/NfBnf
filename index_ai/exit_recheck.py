@@ -192,11 +192,14 @@ def _segment_row(
         "drift": False,
         "baseline": None,
     }
-    row["verdict"], row["message"] = _verdict(row)
+    row["verdict"], row["message"] = _verdict(row, trades)
     return row
 
 
-def _verdict(row: dict[str, Any]) -> tuple[str, str]:
+def _verdict(row: dict[str, Any], trades: list[dict[str, Any]]) -> tuple[str, str]:
+    """The segment's verdict, in a fixed order that must not be rearranged: not ready on the
+    ladder -> not_enough_data; frozen (net-positive recent trades) -> working, BEFORE any replay is
+    opened; only then, for India, the replay gate. ``trades`` is the segment's newest-first rows."""
     if row["state"] != "ready":
         return (
             "not_enough_data",
@@ -206,11 +209,78 @@ def _verdict(row: dict[str, Any]) -> tuple[str, str]:
         )
     if row["frozen"]:  # frozen first: a net-positive stop is never second-guessed
         return "working", "Making money over its recent trades — no change suggested."
-    return (
-        "no_replay_data",
-        "Enough trades to judge, but a different stop can't be tested on these trades yet — "
-        "the numbers above are still watched for changes.",
+    if row["venue"] != "india":  # crypto and commodities have no recorded price path
+        return (
+            "no_replay_data",
+            "Enough trades to judge, but a different stop can't be tested on these trades yet — "
+            "the numbers above are still watched for changes.",
+        )
+    return _india_replay_gate(row, trades)
+
+
+def _india_replay_gate(row: dict[str, Any], trades: list[dict[str, Any]]) -> tuple[str, str]:
+    """Replay quality, then net rupees after real charges. A suggestion is a sentence plus numbers
+    stored in ``row["suggestion"]``; nothing here applies it or touches any stop setting (D-02)."""
+    dist = row["distance"]
+    try:
+        with _market_log_ro() as db:
+            rep = replay_segment(row["lane"], row["instrument"], trades, dist, db)
+    except Exception:
+        return "replay_unreliable", "Could not read the recorded prices, so no new stop is suggested yet."
+    seen, matched, rate = rep["trades_with_ticks"], rep["matched"], rep["match_rate"]
+    if rate is None:
+        return (
+            "replay_unreliable",
+            "None of the past trades could be replayed from the recorded prices, so no new stop "
+            "is suggested yet.",
+        )
+    if rate < MATCH_MIN:
+        return (
+            "replay_unreliable",
+            f"The replay of past trades only reproduced {matched} of {seen} real exits, so no new "
+            "stop is suggested yet.",
+        )
+    n = rep["compared"]
+    if n < OBSERVE_MAX:
+        return (
+            "replay_unreliable",
+            f"Only {n} of the last {OBSERVE_MAX} trades could be priced from the recorded option "
+            "prices, so no new stop is suggested yet.",
+        )
+    now = rep["by_distance"][dist]
+    others = {d: v for d, v in rep["by_distance"].items() if d != dist}
+    best = max(others, key=lambda d: others[d]["net"]) if others else None
+    if best is None or others[best]["net"] <= now["net"]:
+        tried = ", ".join(f"{d:g}" for d in sorted(others))
+        return (
+            "no_better_distance",
+            f"None of the other stops tried ({tried} points) would have made more over the last "
+            f"{n} trades — keep the {dist:g}-point stop.",
+        )
+    alt = others[best]
+    extra = alt["net"] - now["net"]
+    rough = alt["extended"] > 0
+    row["suggestion"] = {
+        "distance": best,
+        "current": dist,
+        "extra_net": round(extra, 2),
+        "trades": n,
+        "win_rate_now": round(now["wins"] / n, 3),
+        "win_rate_alt": round(alt["wins"] / n, 3),
+        "match_rate": round(rate, 3),
+        "rough": rough,
+    }
+    text = (
+        f"{row['label']} {dist:g}-point stop looks too {'tight' if best > dist else 'loose'} — "
+        f"{best:g} points would have kept ₹{round(extra):,} more over the last {n} trades "
+        f"(win rate {round(100 * now['wins'] / n)}% -> {round(100 * alt['wins'] / n)}%)."
     )
+    if rough:
+        text += (
+            " The figure is rough: some trades had to be held longer than they really were, and "
+            "other exits in that extra time cannot be replayed."
+        )
+    return "suggestion", text + " Nothing was changed — this is only a suggestion for you to approve."
 
 
 def compute_segments() -> dict[str, Any]:

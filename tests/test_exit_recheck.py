@@ -9,6 +9,7 @@ the data epoch are patched here so the real journal is never read.
 from __future__ import annotations
 
 import calendar
+import contextlib
 import json
 import sqlite3
 import threading
@@ -181,7 +182,8 @@ def test_verdict_ladder_ready(feed):
     feed(_n_trades(40, 15, -100.0))
     s = _seg(er.compute_segments(), "NIFTY", "sell")
     assert s["state"] == "ready" and s["frozen"] is False
-    assert s["verdict"] == "no_replay_data" and s["suggestion"] is None
+    # ready and not frozen now goes through the replay gate (no price log here -> unreliable)
+    assert s["verdict"] == "replay_unreliable" and s["suggestion"] is None
 
 
 def test_verdict_ladder_frozen_ignored_below_bar(feed):
@@ -452,3 +454,183 @@ def test_raw_trades_never_reach_the_stored_result(feed):
     stored = er.run_recheck("button")
     assert "_trade" not in json.dumps(stored, default=str)
     assert "_trade" not in json.dumps(er._load_state(), default=str)
+
+
+# --- suggestion gate in the India verdict ---------------------------------
+
+SUGGESTED_END = "Nothing was changed — this is only a suggestion for you to approve."
+
+
+def _canned(
+    matched=85,
+    with_ticks=100,
+    compared=40,
+    nets=None,
+    wins=None,
+    extended=None,
+    distance=40.0,
+):
+    """A replay_segment() result for NIFTY sell (today 40 points; tries 30, 50, 60)."""
+    nets = nets or {40.0: -4000.0, 30.0: -3000.0, 50.0: -5000.0, 60.0: -4500.0}
+    wins = wins or {40.0: 12, 30.0: 18, 50.0: 10, 60.0: 9}
+    extended = extended or {}
+    return {
+        "distance": distance,
+        "trades_with_ticks": with_ticks,
+        "matched": matched,
+        "match_rate": matched / with_ticks if with_ticks else None,
+        "could_not_replay": 0,
+        "could_not_price": 40 - compared,
+        "compared": compared,
+        "by_distance": {
+            d: {"net": n, "wins": wins[d], "extended": extended.get(d, 0)} for d, n in nets.items()
+        },
+    }
+
+
+@pytest.fixture
+def replay(feed, monkeypatch):
+    """A ready, not-frozen NIFTY sell segment whose replay is canned; records every call."""
+    feed(_n_trades(40, 15, -100.0))
+    box: dict = {"result": _canned()}
+    calls: list = []
+
+    def fake(lane, inst, records, distance, db, **kw):
+        calls.append((lane, inst, distance, len(records)))
+        if isinstance(box["result"], Exception):
+            raise box["result"]
+        return box["result"]
+
+    monkeypatch.setattr(er, "_market_log_ro", lambda: contextlib.nullcontext())
+    monkeypatch.setattr(er, "replay_segment", fake)
+    return box, calls
+
+
+def _nifty_sell():
+    return _seg(er.compute_segments(), "NIFTY", "sell")
+
+
+@pytest.mark.parametrize("n,days", [(39, 20), (40, 14)])
+def test_gate_not_ready_never_opens_the_replay(feed, monkeypatch, n, days):
+    def boom(*a, **k):
+        raise AssertionError("replay must not run below the ladder bar")
+
+    monkeypatch.setattr(er, "replay_segment", boom)
+    monkeypatch.setattr(er, "_market_log_ro", boom)
+    feed(_n_trades(n, days, -100.0))
+    s = _nifty_sell()
+    assert s["verdict"] == "not_enough_data" and s["suggestion"] is None
+
+
+def test_gate_frozen_is_working_and_never_replayed(feed, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("a net-positive segment must never be replayed")
+
+    monkeypatch.setattr(er, "replay_segment", boom)
+    monkeypatch.setattr(er, "_market_log_ro", boom)
+    feed(_n_trades(40, 15, 100.0))
+    s = _nifty_sell()
+    assert s["state"] == "ready" and s["frozen"] is True
+    assert s["verdict"] == "working" and s["suggestion"] is None
+
+
+def test_gate_match_rate_boundary(replay):
+    box, calls = replay
+    box["result"] = _canned(matched=79)  # 0.79
+    s = _nifty_sell()
+    assert s["verdict"] == "replay_unreliable" and s["suggestion"] is None
+    assert "79 of 100 real exits" in s["message"]
+    box["result"] = _canned(matched=80)  # exactly 0.8 passes
+    s = _nifty_sell()
+    assert s["verdict"] == "suggestion" and s["suggestion"] is not None
+    assert len(calls) == 2  # one replay per verdict, only for the one ready segment
+
+
+def test_gate_needs_forty_priced_trades(replay):
+    box, _ = replay
+    box["result"] = _canned(compared=39)
+    s = _nifty_sell()
+    assert s["verdict"] == "replay_unreliable" and s["suggestion"] is None
+    assert "39 of the last 40 trades" in s["message"]
+    box["result"] = _canned(compared=40)
+    assert _nifty_sell()["verdict"] == "suggestion"
+
+
+def test_gate_no_trade_could_be_replayed(replay):
+    box, _ = replay
+    box["result"] = _canned(matched=0, with_ticks=0, compared=0)
+    s = _nifty_sell()
+    assert s["verdict"] == "replay_unreliable" and s["suggestion"] is None
+
+
+def test_gate_no_candidate_beats_today(replay):
+    box, _ = replay
+    # one ties today's net, the rest are worse: strictly better is required
+    box["result"] = _canned(nets={40.0: -4000.0, 30.0: -4000.0, 50.0: -5000.0, 60.0: -4500.0})
+    s = _nifty_sell()
+    assert s["verdict"] == "no_better_distance" and s["suggestion"] is None
+    assert "30, 50, 60" in s["message"] and "40-point" in s["message"]
+
+
+def test_gate_suggestion_text_and_numbers(replay):
+    s = _nifty_sell()
+    assert s["verdict"] == "suggestion"
+    msg = s["message"]
+    assert "NIFTY sell" in msg and "40-point stop" in msg and "too loose" in msg
+    assert "30 points would have kept ₹1,000 more over the last 40 trades" in msg
+    assert "win rate 30% -> 45%" in msg
+    assert msg.endswith(SUGGESTED_END)
+    assert "rough" not in msg
+    assert s["suggestion"] == {
+        "distance": 30.0,
+        "current": 40.0,
+        "extra_net": 1000.0,
+        "trades": 40,
+        "win_rate_now": 0.3,
+        "win_rate_alt": 0.45,
+        "match_rate": 0.85,
+        "rough": False,
+    }
+
+
+def test_gate_wider_stop_with_held_trades_says_the_figure_is_rough(replay):
+    box, _ = replay
+    box["result"] = _canned(
+        nets={40.0: -4000.0, 30.0: -4100.0, 50.0: -2400.0, 60.0: -4500.0},
+        wins={40.0: 12, 30.0: 11, 50.0: 21, 60.0: 9},
+        extended={50.0: 6},
+    )
+    s = _nifty_sell()
+    assert s["verdict"] == "suggestion" and s["suggestion"]["rough"] is True
+    assert "too tight" in s["message"] and "50 points would have kept ₹1,600 more" in s["message"]
+    assert "rough" in s["message"] and s["message"].endswith(SUGGESTED_END)
+
+
+def test_gate_unreadable_prices_never_raise(replay, feed):
+    box, _ = replay
+    box["result"] = RuntimeError("database is locked")
+    s = _nifty_sell()
+    assert s["verdict"] == "replay_unreliable" and s["suggestion"] is None
+    assert "could not read the recorded prices" in s["message"].lower()
+    assert er.run_recheck("button")["errors"] == []  # nothing escapes run_recheck
+
+
+def test_gate_missing_price_log_is_unreliable_not_an_error(feed):
+    feed(_n_trades(40, 15, -100.0))  # no tmp market log was created, replay is the real code
+    s = _nifty_sell()
+    assert s["verdict"] == "replay_unreliable"
+    assert "could not read the recorded prices" in s["message"].lower()
+
+
+def test_a_suggestion_changes_nothing(replay):
+    import index_ai.config as cfg
+
+    sell_before = dict(SELL_TRAIL_POINTS)
+    buy_before = {i: get_instrument(i).trail_distance_points for i in INDEXES}
+    out = er.run_recheck("button")
+    seg = _seg(out, "NIFTY", "sell")
+    assert seg["verdict"] == "suggestion" and seg["suggestion"]["distance"] == 30.0
+    assert er._load_state()["segments"] == out["segments"]  # lives only in the stored result
+    assert SELL_TRAIL_POINTS == sell_before
+    assert {i: get_instrument(i).trail_distance_points for i in INDEXES} == buy_before
+    assert cfg.ENV_PATH.read_text() == ""
