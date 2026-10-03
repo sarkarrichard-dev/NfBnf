@@ -353,7 +353,8 @@ def evaluate_credit_open_trade(
     *,
     fresh_supertrend: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Exit credit spreads on PnL targets, short-strike breach, or EOD (not index-point trail)."""
+    """Exit credit spreads on the 1:1 index trail (directional verticals), rupee max loss,
+    short-strike breach or EOD; iron condors (no direction) use the rupee target/stop rules."""
     from index_ai.trailing import check_supertrend_exit
 
     _ = risk
@@ -387,9 +388,9 @@ def evaluate_credit_open_trade(
     # Richard's index trail (2026-09-24), the same rule as option buying with
     # more room: the stop starts SELL_TRAIL_POINTS from the entry index price
     # and moves one point for every point the index moves in the spread's
-    # favour. It replaces the short-leg premium trail and the rupee
-    # target/stop; the rupee max-loss, short-strike breach and Supertrend
-    # stay as backstops.
+    # favour. It replaced the old percent-of-option-price trail (deleted in
+    # Phase 3) and the rupee target/stop; the rupee max-loss, short-strike
+    # breach and Supertrend stay as backstops.
     inst_key = str(trade.get("instrument") or option.get("instrument") or "NIFTY")
     direction = {"SELL_BULL_PUT_SPREAD": 1, "SELL_BEAR_CALL_SPREAD": -1}.get(action.upper(), 0)
     pt_active = False

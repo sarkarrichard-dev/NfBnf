@@ -100,8 +100,6 @@ def test_init_credit_trail_meta_uses_the_passed_in_stop_pct() -> None:
     assert meta_tight["stop_loss_rupees"] < meta_normal["stop_loss_rupees"]
 
 
-
-
 def test_credit_uses_credit_eval_not_index_trail() -> None:
     inst = get_instrument("NIFTY")
     trade = {
@@ -151,7 +149,7 @@ def _dummy_risk():
     )
 
 
-# --- premium trail on the short leg (NIFTY / BANKNIFTY) ------------------------
+# --- BANKNIFTY bear call fixtures for the 1:1 index trail test below ----------
 
 
 def _bn_bear_call(short_now: float, long_now: float = 30.0) -> dict:
@@ -195,9 +193,6 @@ def _bn_trade(option: dict) -> dict:
     }
 
 
-
-
-
 # --- hedge strike picked by its own premium -----------------------------------
 
 
@@ -238,8 +233,13 @@ def _nifty_bull_put(mtm: float = 0.0) -> dict:
         "instrument": "NIFTY",
         "action": "SELL_BULL_PUT_SPREAD",
         "signal": {"price": 24050.0, "action": "SELL_BULL_PUT_SPREAD"},
-        "option": {"legs": _bull_put_legs(), "structure": "BULL_PUT_SPREAD", "quantity": 65,
-                   "net_credit_points": 40.0, "mtm_pnl": mtm},
+        "option": {
+            "legs": _bull_put_legs(),
+            "structure": "BULL_PUT_SPREAD",
+            "quantity": 65,
+            "net_credit_points": 40.0,
+            "mtm_pnl": mtm,
+        },
     }
 
 
@@ -257,7 +257,7 @@ def test_sell_index_trail_starts_40_below_and_follows_one_for_one() -> None:
     t = _nifty_bull_put()
     r = _walk(t, [24050.0])
     assert r["trail"]["it_stop"] == 24010.0 and not r["should_exit"]
-    r = _walk(t, [24120.0, 24100.0])                 # best 24120 -> stop 24080, pullback holds
+    r = _walk(t, [24120.0, 24100.0])  # best 24120 -> stop 24080, pullback holds
     assert r["trail"]["it_stop"] == 24080.0 and not r["should_exit"]
     r = _walk(t, [24079.0])
     assert r["should_exit"] and "Index trail" in r["exit_reason"] and "+30 pts" in r["exit_reason"]
@@ -274,7 +274,7 @@ def test_banknifty_bear_call_mirrors_with_100_points() -> None:
     r = evaluate_credit_open_trade(_bn_trade(opt), 57900.0, _dummy_risk())
     assert r["trail"]["it_stop"] == 58000.0
     opt["trail_meta"] = r["trail"]
-    r = evaluate_credit_open_trade(_bn_trade(opt), 57750.0, _dummy_risk())   # falls 150: good
+    r = evaluate_credit_open_trade(_bn_trade(opt), 57750.0, _dummy_risk())  # falls 150: good
     assert r["trail"]["it_stop"] == 57850.0 and not r["should_exit"]
     opt["trail_meta"] = r["trail"]
     r = evaluate_credit_open_trade(_bn_trade(opt), 57851.0, _dummy_risk())
@@ -283,8 +283,12 @@ def test_banknifty_bear_call_mirrors_with_100_points() -> None:
 
 def test_max_loss_backstop_still_applies() -> None:
     t = _nifty_bull_put()
-    meta = init_credit_trail_meta(option=t["option"], instrument=get_instrument("NIFTY"),
-                                  action="SELL_BULL_PUT_SPREAD", entry_index_price=24050.0)
+    meta = init_credit_trail_meta(
+        option=t["option"],
+        instrument=get_instrument("NIFTY"),
+        action="SELL_BULL_PUT_SPREAD",
+        entry_index_price=24050.0,
+    )
     t["option"]["trail_meta"] = meta
     t["option"]["mtm_pnl"] = -meta["max_loss_rupees"] - 1
     r = evaluate_credit_open_trade(t, 24049.0, _dummy_risk())

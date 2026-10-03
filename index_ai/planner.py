@@ -31,7 +31,9 @@ def _pivot_target(
     previous_day, cpr_regime, action: str, spot: float
 ) -> tuple[float | None, str | None]:
     """Nearest prior-session pivot / CPR level in the trade's favour — a
-    take-profit *reference* that arms the premium trail early, never a stop."""
+    take-profit *reference*, recorded on the plan as option["pivot_target"] (it
+    feeds the ML feature dist_pivot_target_pct). Never a stop; no exit rule
+    reads it."""
     a = str(action or "").upper()
     if spot <= 0 or not (a in _BULLISH or a in _BEARISH):
         return None, None
@@ -154,7 +156,9 @@ def plan_instrument(
 
                 in_background(record_chain_snapshot, instrument_key, expiry, spot_now, chain)
                 if record_next_expiry:
-                    _record_next_expiry(client, instrument, instrument_key, expiries, expiry, spot_now)
+                    _record_next_expiry(
+                        client, instrument, instrument_key, expiries, expiry, spot_now
+                    )
     except Exception as exc:
         oi_fetch_error = str(classify_http_error(exc, f"{instrument_key} option chain"))
 

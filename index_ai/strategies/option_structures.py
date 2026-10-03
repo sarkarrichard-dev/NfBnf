@@ -68,9 +68,9 @@ def _sum_credit(legs: list[dict[str, Any]]) -> float:
 # (lo, hi, max_width_pts): the target band for the hedge premium, and a hard cap
 # on how far the hedge may sit from the short. BANKNIFTY premiums decay slowly,
 # so reaching a 30-80 premium needs a wide spread (~1800-2200 pts on a monthly);
-# the cap bounds the worst case but the premium trailing stop (100 pts on the
-# short = ~Rs 3k/lot) is the real per-trade risk control — a gap through that
-# stop is the only path to the structural max loss.
+# the cap bounds the worst case but the 1:1 index trail (BANKNIFTY 100 index
+# points, credit_spread.SELL_TRAIL_POINTS) is the real per-trade risk control —
+# a gap through that stop is the only path to the structural max loss.
 _HEDGE_PREMIUM_BAND: dict[str, tuple[float, float, float]] = {
     "NIFTY": (5.0, 10.0, 400.0),
     "BANKNIFTY": (30.0, 80.0, 2200.0),

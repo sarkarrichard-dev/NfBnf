@@ -54,8 +54,8 @@ def _buy_scalp_trail(points: float) -> dict[str, float]:
     trade's favour -- a 1:1 trail from the first tick, no wide initial stop,
     no waiting to arm. NIFTY 25 and BANKNIFTY 55 are the middle of his 20-30 /
     50-60 ranges; SENSEX 80 is NIFTY's 25 scaled by index size (~3.2x), not
-    his own number. Only the buy lane reads these (credit spreads have
-    their own premium trail)."""
+    his own number. Only the buy lane reads these (credit spreads use their
+    own 1:1 index trail, credit_spread.SELL_TRAIL_POINTS)."""
     return {
         "trail_activation_points": 0.0,
         "trail_distance_points": points,
