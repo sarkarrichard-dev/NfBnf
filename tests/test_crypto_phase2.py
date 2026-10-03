@@ -185,6 +185,9 @@ def paper_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         lanes, "_nb_cfg", lambda st: dataclasses.replace(_orig_nb(st), signal_exits=True)
     )
+    # never read the live funding-rate samples: they change day to day and flipped this
+    # suite's fee assertions once funding receipts outgrew fees (2026-10-03)
+    monkeypatch.setattr("crypto.charges._FUNDING_SAMPLES_PATH", tmp_path / "no_funding.jsonl")
     monkeypatch.setenv("CRYPTO_NY_NBREAK_ENABLED", "true")
     monkeypatch.setenv("CRYPTO_NBREAK_ALLROUND", "false")  # these tests exercise the NY-window gate
     monkeypatch.setenv("CRYPTO_ICHIMOKU_ENABLED", "false")

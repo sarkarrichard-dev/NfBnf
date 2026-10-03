@@ -309,6 +309,10 @@ def crypto_positions() -> dict:
             p.update(info)
             if info.get("unrealized_usd") is not None:
                 open_pnl_usd += info["unrealized_usd"]
+            # label the row so the dashboard doesn't show a blank coin/strategy
+            p.setdefault("asset", "BTCUSD")
+            p.setdefault("strategy", "btc_daily_straddle")
+            p.setdefault("side", "short")
             open_pos.append({"key": k, **p})
             continue
         sym = p.get("asset", "")

@@ -22,11 +22,12 @@ mode were LIVE. This needs real paper trades before "should this go live" is
 even a question worth asking.
 
 ponytail: entry/exit fills are read from ``mark_price`` (no bid/ask crossing
-simulated), and premiums are assumed quoted in USD per contract (not scaled
-by ``contract_value`` the way perp prices are) — matches how the video itself
-talked in whole-dollar premium terms. Verify against a couple of real Delta
-option quotes before trusting the paper P&L numbers; fix here if that
-assumption is wrong. The exchange fee is approximated as the same taker rate
+simulated). Premiums are quoted in USD per 1 BTC of underlying, so money =
+premium x ``size`` x ``contract_value`` (0.001 BTC per contract) -- see
+``_btc_qty``. (Until 2026-10-03 this module multiplied by ``size`` alone, which
+overstated every straddle P&L figure 1000x; the entry prices stored on a
+position are the source of truth, so ``_credit`` re-derives the credit from
+them instead of trusting a stored ``total_credit``.) The exchange fee is approximated as the same taker rate
 applied to each leg's underlying notional (``size * contract_value *
 entry_spot``, held fixed at the entry spot rather than re-priced per fill) —
 Delta's real options fee schedule may cap it as a fraction of premium
@@ -84,6 +85,16 @@ def is_straddle_position(pos: dict[str, Any]) -> bool:
     return "call_symbol" in pos
 
 
+def _btc_qty(pos: dict[str, Any]) -> float:
+    """BTC of underlying per leg: contracts x BTC per contract."""
+    return float(pos["size"]) * float(pos["contract_value"])
+
+
+def _credit(pos: dict[str, Any]) -> float:
+    """Premium received, in USD, from the stored entry prices (per-BTC quotes)."""
+    return (float(pos["call_entry"]) + float(pos["put_entry"])) * _btc_qty(pos)
+
+
 def unrealized(pos: dict[str, Any], client: DeltaClient) -> dict[str, Any]:
     """Live mark-to-market for one open straddle, in the same shape the
     dashboard's positions endpoint expects (mark/unrealized_usd/...). None
@@ -98,12 +109,12 @@ def unrealized(pos: dict[str, Any], client: DeltaClient) -> dict[str, Any]:
             "unrealized_pct": None,
         }
     size = pos["size"]
-    debit_now = (call_mark + put_mark) * size
-    gross = pos["total_credit"] - debit_now
+    debit_now = (call_mark + put_mark) * _btc_qty(pos)
+    gross = _credit(pos) - debit_now
     leg_notional = size * pos["contract_value"] * pos["entry_spot"]
     cost = fee_usd(leg_notional) * 4  # same approximation as _build_exit_row
     upnl = gross - cost
-    credit = pos["total_credit"]
+    credit = _credit(pos)
     return {
         "mark": round(call_mark + put_mark, 2),
         "unrealized_usd": round(upnl, 2),
@@ -231,8 +242,8 @@ def _manage_position(
         }
     if call_mark is None or put_mark is None:
         return None  # a quote failed this tick — try again next scan, don't force a bad exit
-    size = pos["size"]
-    credit_per_contract = pos["total_credit"] / size
+    # per-BTC premium units (same units as the marks), from the stored entry prices
+    credit_per_contract = float(pos["call_entry"]) + float(pos["put_entry"])
     pnl_per_contract = credit_per_contract - (call_mark + put_mark)
     tp_level = credit_per_contract * pos["tp_fraction"]
     sl_level = -credit_per_contract * pos["sl_fraction"]
@@ -287,7 +298,7 @@ def _try_entry(s, client: DeltaClient, now: datetime) -> dict[str, Any]:
             }
         }
     size = max(1, round(s.btc_straddle_size_btc / max(call.contract_value, 1e-9)))
-    total_credit = (call_px + put_px) * size
+    total_credit = (call_px + put_px) * size * call.contract_value
     today = now.date().isoformat()
     position = {
         "call_symbol": call.symbol,
@@ -323,8 +334,9 @@ def _try_entry(s, client: DeltaClient, now: datetime) -> dict[str, Any]:
 def _build_exit_row(pos: dict[str, Any], close: dict[str, Any]) -> dict[str, Any]:
     size = pos["size"]
     call_exit, put_exit = close["call_exit"], close["put_exit"]
-    exit_debit = (call_exit + put_exit) * size
-    gross = pos["total_credit"] - exit_debit
+    exit_debit = (call_exit + put_exit) * _btc_qty(pos)
+    credit = _credit(pos)
+    gross = credit - exit_debit
     # Fee basis is the underlying notional per leg (matches every other Delta
     # fee calc in this codebase — crypto/lanes.py, crypto/backtest.py — which
     # all charge the taker rate on size*contract_value*price, never on
@@ -352,7 +364,7 @@ def _build_exit_row(pos: dict[str, Any], close: dict[str, Any]) -> dict[str, Any
         "entry_time": pos["entry_time"],
         "exit_time": close["exit_time"],
         "closed_at": datetime.now(timezone.utc).isoformat(),
-        "total_credit_usd": round(pos["total_credit"], 4),
+        "total_credit_usd": round(credit, 4),
         "exit_debit_usd": round(exit_debit, 4),
         "gross_usd": round(gross, 4),
         "fees_usd": round(fees, 4),
