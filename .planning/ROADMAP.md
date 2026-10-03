@@ -123,7 +123,26 @@ Plans:
   2. `premium_trail.py`'s percent-of-premium code path no longer exists in the codebase, and nothing still imports it
   3. A monitoring signal fires if trail-stop hit rate or win rate drifts meaningfully from its last validated baseline, so a bad tune surfaces immediately rather than weeks later in the scorecard
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 03-01-PLAN.md — Tracer: "Re-check now" end to end for the six India segments — exit-reason classifier, stats under today's stop distance, confidence-ladder verdict, stored row, GET + POST /api/exit-recheck; read-only real-journal proof (EXIT-01, EXIT-03)
+- [ ] 03-02-PLAN.md — Delete premium_trail.py: preserve its history first, pin and re-key the sell-lane exit suppression on SELL_TRAIL_POINTS (the trap), remove the dead branch, keep the profit_trail fallback (EXIT-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 03-03-PLAN.md — One trail in the docs: code comments, Strategy Guide (real 25/55/80 and 40/100/130 rule), CLAUDE.md, codebase map (EXIT-02)
+- [ ] 03-04-PLAN.md — India replay on recorded ticks + chain quotes, real-data feasibility run, suggest-only gate (ladder -> frozen -> replay quality -> net rupees) (EXIT-01)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 03-05-PLAN.md — Crypto + commodities segments, baselines and the 15-point drift rule, one Telegram message per drift event, daily run after the close (EXIT-01, EXIT-03)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 03-06-PLAN.md — Strategy P&L "Stop check" panel with Re-check now and the results-changed flag; last dashboard wording; concerns map (EXIT-01, EXIT-02, EXIT-03)
 
 ### Phase 4: Dashboard UI/UX
 
