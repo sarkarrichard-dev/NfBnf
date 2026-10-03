@@ -1585,6 +1585,23 @@ async def crypto_live_readiness_api() -> dict[str, Any]:
     return await asyncio.to_thread(_read)
 
 
+@app.get("/api/crypto/live-pairs", include_in_schema=False)
+async def crypto_live_pairs_api() -> dict[str, Any]:
+    """Which crypto (strategy, coin) pairs send real orders right now and why the
+    rest stay on paper. Mirrors crypto/lanes.py:599. Read-only."""
+
+    def _read() -> dict[str, Any]:
+        from crypto.config import crypto_settings
+        from crypto.lanes import _enabled_strategies, _symbols_for
+        from index_ai.strategy_performance import crypto_live_pair_view
+
+        s = crypto_settings()
+        active = {(st, sym) for st in _enabled_strategies(s) for sym in _symbols_for(st, s)}
+        return crypto_live_pair_view(active, s.live_orders_enabled)
+
+    return await asyncio.to_thread(_read)
+
+
 @app.get("/api/strategy-learning", include_in_schema=False)
 async def strategy_learning_api() -> dict[str, Any]:
     """The confidence ladder per (strategy, instrument): how much data each has,

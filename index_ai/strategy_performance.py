@@ -435,6 +435,90 @@ def crypto_live_pair_table() -> list[dict[str, Any]]:
     return out
 
 
+def _usd_text(v: float) -> str:
+    return f"-${abs(v):.2f}" if v < 0 else f"${v:.2f}"
+
+
+def _paper_reason(strat: dict[str, Any] | None, trades: int, net: float) -> str:
+    """Plain-words reason a pair is not live; strategy-level checks come first."""
+    if not strat:
+        return f"this strategy has no paper trades yet (needs {CRYPTO_LIVE_MIN_TRADES})"
+    if not strat["ready"]:
+        if strat["trades"] < CRYPTO_LIVE_MIN_TRADES:
+            return (
+                f"this strategy needs {CRYPTO_LIVE_MIN_TRADES} trades first "
+                f"({strat['trades']} so far)"
+            )
+        if strat["days_span"] < CRYPTO_LIVE_MIN_DAYS:
+            return (
+                f"this strategy needs {CRYPTO_LIVE_MIN_DAYS} days of results first "
+                f"({strat['days_span']} so far)"
+            )
+        return f"this strategy is losing overall so far ({_usd_text(strat['net_usd'])})"
+    if trades == 0:
+        return "no trades on this coin yet"
+    if trades < CRYPTO_PAIR_MIN_TRADES:
+        word = "trade" if trades == 1 else "trades"
+        return f"only {trades} {word} on this coin so far (needs {CRYPTO_PAIR_MIN_TRADES})"
+    if net < 0:
+        return f"losing on this coin so far ({_usd_text(net)})"
+    return "not making money on this coin yet ($0.00)"
+
+
+def crypto_live_pair_view(active: set[tuple[str, str]], armed: bool) -> dict[str, Any]:
+    """Every pair the crypto lane really visits, marked live or paper by the same
+    expression as crypto/lanes.py:599 (live = armed and pair in crypto_live_pairs()).
+    Read-only; only pairs in `active` are emitted, so retired coins and the
+    paper-only straddle never show."""
+    try:
+        allowed = crypto_live_pairs()
+        ready = {r["strategy"]: r for r in crypto_live_readiness()}
+        rows = {(r["strategy"], r["instrument"]): r for r in _crypto_rows() if r["mode"] == "PAPER"}
+    except Exception:
+        return {
+            "armed": bool(armed),
+            "read_ok": False,
+            "pairs": [
+                {
+                    "strategy": st,
+                    "coin": coin,
+                    "trades": None,
+                    "net_usd": None,
+                    "eligible": False,
+                    "live": False,
+                    "reason": "trade results could not be read just now, so this stays on paper",
+                }
+                for st, coin in sorted(active)
+            ],
+        }
+    pairs = []
+    for st, coin in sorted(active):
+        row = rows.get((st, coin))
+        trades = row["trades"] if row else 0
+        net = round(row["net"], 2) if row else 0.0
+        eligible = (st, coin) in allowed
+        live = bool(armed) and eligible
+        reason = (
+            None
+            if live
+            else "ready: new trades use real money once crypto is armed"
+            if eligible
+            else _paper_reason(ready.get(st), trades, net)
+        )
+        pairs.append(
+            {
+                "strategy": st,
+                "coin": coin,
+                "trades": trades,
+                "net_usd": net,
+                "eligible": eligible,
+                "live": live,
+                "reason": reason,
+            }
+        )
+    return {"armed": bool(armed), "read_ok": True, "pairs": pairs}
+
+
 if __name__ == "__main__":  # self-check — runs against the real journals, no network
     sc = strategy_scorecard()
     assert set(sc) == {"generated_at", "india", "crypto", "commodities", "note"}

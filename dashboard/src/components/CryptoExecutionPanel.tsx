@@ -6,6 +6,7 @@ import { cn } from '../lib/cn'
 import { fx } from '../lib/theme'
 import { usd0 } from '../lib/cryptoFmt'
 import { Button } from './ui/Button'
+import { CryptoLivePairs } from './CryptoLivePairs'
 
 type KillSwitch = {
   tripped: boolean
@@ -263,6 +264,8 @@ export function CryptoExecutionPanel() {
           )}
         </div>
       ) : null}
+
+      <CryptoLivePairs />
 
       {isLive ? (
         <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
