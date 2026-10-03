@@ -1595,6 +1595,26 @@ async def strategy_learning_api() -> dict[str, Any]:
     return await asyncio.to_thread(learning_report)
 
 
+@app.get("/api/exit-recheck", include_in_schema=False)
+async def exit_recheck_api() -> dict[str, Any]:
+    """The last stop-distance re-check, as stored. Suggest-only: nothing here
+    changes a stop."""
+    from index_ai.exit_recheck import last_result
+
+    return await asyncio.to_thread(last_result)
+
+
+@app.post("/api/exit-recheck/run", include_in_schema=False)
+async def exit_recheck_run_api() -> dict[str, Any]:
+    """Run the stop-distance re-check now. Non-financial and deliberately NOT
+    behind require_admin_secret: it cannot place an order or change a stop, it
+    only recomputes from the journals and writes its own result row. Takes no
+    body, so no stop value can be passed in."""
+    from index_ai.exit_recheck import run_recheck
+
+    return await asyncio.to_thread(run_recheck, "button")
+
+
 @app.get("/api/market-context", include_in_schema=False)
 async def market_context_api(refresh: bool = Query(False)) -> dict[str, Any]:
     """FII/DII/Pro/Client positioning, India VIX, IV term structure, OI walls, pinning."""
