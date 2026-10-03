@@ -374,16 +374,18 @@ def _scan(s, client: DeltaClient | None) -> list[dict[str, Any]]:
 
     # measure the real top-of-book spread while we are here (Phase 3 cost path)
     for sym in s.symbols:
+        book = tick = None
         try:
-            charges.sample_spread(sym, market_data.depth(sym, client=client))
+            book = market_data.depth(sym, client=client)
+            charges.sample_spread(sym, book)
         except Exception:
             pass
         try:
-            charges.sample_funding_rate(
-                sym, market_data.ticker(sym, client=client).get("funding_rate")
-            )
+            tick = market_data.ticker(sym, client=client)
+            charges.sample_funding_rate(sym, tick.get("funding_rate"))
         except Exception:
             pass
+        _record_micro(sym, book, tick)
 
     st = journal.load_state()
     fx = _fx_rate(client, s)
@@ -656,12 +658,40 @@ def _already_journalled(exit_id: str) -> bool:
     return any(r.get("exit_id") == exit_id for r in journal.recent(200))
 
 
+# Latest order-book / funding / open-interest reading per symbol, refreshed by
+# the sampling loop at the top of every scan from the book and ticker it was
+# already fetching — so attaching it to an entry costs no network call and
+# adds no latency to a live order. Only touched inside ``_scan`` (which holds
+# ``_STATE_LOCK``). ``micro_t`` (unix seconds) lets analysis see how old a
+# reading was at entry; a symbol whose fetch failed has its reading dropped
+# rather than letting a stale one ride along.
+_micro: dict[str, dict[str, float]] = {}
+
+
+def _record_micro(sym: str, book, tick) -> None:
+    # optional telemetry sitting in the scan loop: nothing here may ever stop a scan
+    try:
+        from crypto.ml.features import microstructure_snapshot
+
+        snap = microstructure_snapshot(book, tick)
+        if snap:
+            _micro[sym] = {**snap, "micro_t": int(datetime.now(timezone.utc).timestamp())}
+        else:
+            _micro.pop(sym, None)
+    except Exception:
+        logger.debug("crypto micro capture failed for %s", sym, exc_info=True)
+
+
 def _entry_features(strat: str, sym: str, frame, side: str) -> dict[str, Any]:
     """Entry snapshot for the crypto model — defined in crypto.ml.features so
-    capture and training share one definition."""
+    capture and training share one definition. Also carries the order-book /
+    funding / open-interest reading for later analysis; the trained vector
+    ignores those keys (see ``crypto.ml.features.MICRO_KEYS``)."""
     from crypto.ml.features import entry_snapshot
 
-    return entry_snapshot(strat, sym, frame, side)
+    snap = entry_snapshot(strat, sym, frame, side)
+    snap.update(_micro.get(sym, {}))
+    return snap
 
 
 def _live_wallet_usd(client: DeltaClient) -> float:

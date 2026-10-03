@@ -33,6 +33,66 @@ def test_features_snapshot_and_vector():
     assert label({"pnl_usd": 4.0}) == 1 and label({"pnl_usd": -1.0}) == 0 and label({}) is None
 
 
+def _frame(n=40):
+    return pd.DataFrame(
+        {
+            "datetime": pd.date_range("2026-09-01", periods=n, freq="1h", tz="UTC"),
+            "open": range(n),
+            "high": [x + 3 for x in range(n)],
+            "low": [x - 3 for x in range(n)],
+            "close": range(n),
+            "volume": [1.0] * n,
+        }
+    )
+
+
+_BOOK = {
+    "bids": [{"price": 100 - i, "size": 10} for i in range(5)],
+    "asks": [{"price": 101 + i, "size": 5} for i in range(5)],
+}
+
+
+def test_microstructure_readings_and_dropped_junk():
+    from crypto.ml.features import MICRO_KEYS, microstructure_snapshot
+
+    m = microstructure_snapshot(_BOOK, {"funding_rate": "0.0001", "oi": "1234.5"})
+    assert m == {"obi_top5": 0.3333, "funding_rate": 0.0001, "open_interest": 1234.5}
+    # an empty/garbled source is left out, never written as 0 ("balanced")
+    assert microstructure_snapshot(None, None) == {}
+    assert (
+        microstructure_snapshot({"bids": [], "asks": []}, {"oi": "x", "funding_rate": None}) == {}
+    )
+    assert set(MICRO_KEYS) == set(m)
+
+
+def test_microstructure_does_not_change_the_models_input():
+    from crypto.ml.features import microstructure_snapshot
+
+    snap = entry_snapshot("ny_n_break", "BTCUSD", _frame(), "long")
+    extra = microstructure_snapshot(_BOOK, {"funding_rate": 0.0001, "oi": 5})
+    base = row_features({"features": snap, "pnl_usd": 1.0})
+    assert row_features({"features": {**snap, **extra}, "pnl_usd": 1.0}) == base
+    assert set(base) == set(FEATURES)
+
+
+def test_scan_reading_reaches_the_entry_snapshot():
+    from crypto import lanes
+
+    lanes._micro.clear()
+    try:
+        lanes._record_micro("BTCUSD", _BOOK, {"funding_rate": "0.0002", "oi": "10"})
+        snap = lanes._entry_features("ny_n_break", "BTCUSD", _frame(), "long")
+        assert snap["obi_top5"] == 0.3333 and snap["funding_rate"] == 0.0002
+        assert snap["open_interest"] == 10.0 and snap["micro_t"] > 0
+        # another symbol with no reading gets none of it
+        assert "obi_top5" not in lanes._entry_features("ny_n_break", "ETHUSD", _frame(), "long")
+        # a failed fetch drops the old reading instead of letting it go stale
+        lanes._record_micro("BTCUSD", None, None)
+        assert "obi_top5" not in lanes._entry_features("ny_n_break", "BTCUSD", _frame(), "long")
+    finally:
+        lanes._micro.clear()
+
+
 def test_dataset_join_is_chronological(tmp_path, monkeypatch):
     jp = tmp_path / "crypto_journal.jsonl"
     rows = [
