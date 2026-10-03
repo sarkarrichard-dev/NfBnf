@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 current_phase: 03
 current_phase_name: Exit Optimisation
 status: executing
-stopped_at: Completed 03-04-PLAN.md
-last_updated: "2026-10-03T09:04:11.672Z"
+stopped_at: Completed 03-05-PLAN.md
+last_updated: "2026-10-03T09:20:56.131Z"
 last_activity: 2026-10-03
 last_activity_desc: Phase 03 execution started
-state_head: 4e965583a0f366557ea8ee362b01fb40f38908dd
+state_head: 63723f2a87cc9ec1d25c73f611d5c1c8501e05b4
 progress:
   total_phases: 10
   completed_phases: 2
   total_plans: 17
-  completed_plans: 15
+  completed_plans: 16
   percent: 20
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-09-30)
 ## Current Position
 
 Phase: 03 (Exit Optimisation) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-10-03 — Phase 03 execution started
 
@@ -74,6 +74,7 @@ Progress: [██░░░░░░░░] 20%
 | Phase 03 P02 | 9 min | 3 tasks | 7 files |
 | Phase 03 P03 | 10 min | 2 tasks | 9 files |
 | Phase 03 P04 | 40 min | 3 tasks | 3 files |
+| Phase 03 P05 | 10 min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,7 @@ Recent decisions affecting current work:
 - [Phase 03]: 03-02: sell-lane flip/regime/EMA exit suppression now keys on credit_spread.SELL_TRAIL_POINTS (NIFTY/BANKNIFTY/SENSEX, same strip/upper match) - pinned by a regression test that passed before and after the swap; premium_trail.py deleted, rupee profit_trail fallback kept (D-05)
 - [Phase 03]: 03-03: comment/docstring/doc refresh is words-only; five money-path .py files proven AST-identical (docstrings stripped) vs the pre-plan commit; Strategy Guide trailing-stop numbers verified by script against SELL_TRAIL_POINTS and get_instrument(...).trail_distance_points
 - [Phase 03]: 03-04: replay thresholds kept at MATCH_MIN 0.8 / 120 s / 300 s; real data prices only 5 of 37 trades at every distance (legs missing from newest chain snapshot), so suggestions stay unreachable until pricing or recording improves
+- [Phase 03]: 03-05: crypto and commodities are one pooled segment each (crypto:point_trail, commodities:atr_trail); a changed trail rule restarts that window; drift = stop rate or win rate more than 15 points on exact fractions, one Telegram message per stored OK->DRIFT transition
 
 ### Pending Todos
 
@@ -135,6 +137,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-03T09:04:11.303Z
-Stopped at: Completed 03-04-PLAN.md
+Last session: 2026-10-03T09:20:55.757Z
+Stopped at: Completed 03-05-PLAN.md
 Resume file: None

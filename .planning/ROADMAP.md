@@ -123,7 +123,7 @@ Plans:
   2. `premium_trail.py`'s percent-of-premium code path no longer exists in the codebase, and nothing still imports it
   3. A monitoring signal fires if trail-stop hit rate or win rate drifts meaningfully from its last validated baseline, so a bad tune surfaces immediately rather than weeks later in the scorecard
 
-**Plans**: 4/6 plans executed
+**Plans**: 5/6 plans executed
 
 Plans:
 **Wave 1**
@@ -138,7 +138,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 03-05-PLAN.md — Crypto + commodities segments, baselines and the 15-point drift rule, one Telegram message per drift event, daily run after the close (EXIT-01, EXIT-03)
+- [x] 03-05-PLAN.md — Crypto + commodities segments, baselines and the 15-point drift rule, one Telegram message per drift event, daily run after the close (EXIT-01, EXIT-03)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -251,7 +251,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 |-------|----------------|--------|-----------|
 | 1. Strategy Fixes | 4/4 | Complete    | 2026-09-30 |
 | 2. Order Placing & Tracking | 7/7 | Complete    | 2026-10-01 |
-| 3. Exit Optimisation | 4/6 | In Progress|  |
+| 3. Exit Optimisation | 5/6 | In Progress|  |
 | 4. Dashboard UI/UX | 0/TBD | Not started | - |
 | 5. Tenant Isolation Foundation | 0/TBD | Not started | - |
 | 6. Broker Connection & Credential Vault | 0/TBD | Not started | - |
