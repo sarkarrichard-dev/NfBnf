@@ -155,7 +155,7 @@ Plans:
   2. A Data Health view shows tick age, option-chain snapshot age, measured spread age, and Dhan websocket status, so a missed trade or a stop that didn't fire can be diagnosed from the dashboard alone
   3. Every new/changed dashboard element passes the ui-consistency-reviewer's existing checks (design tokens, corner-radius, mono/tabular-nums on data) — no regressions on the existing visual bar
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans executed
 **UI hint**: yes
 
 Plans:
@@ -169,7 +169,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 04-03-PLAN.md — Phase gate: read-only check on the real data, money-path/ruff/lock tripwires, CONCERNS resolved, whole-phase visual-bar pass, end-of-phase look without arming (UIUX-01, UIUX-02, UIUX-03)
+- [x] 04-03-PLAN.md — Phase gate: read-only check on the real data, money-path/ruff/lock tripwires, CONCERNS resolved, whole-phase visual-bar pass, end-of-phase look without arming (UIUX-01, UIUX-02, UIUX-03)
 
 ### Phase 5: Tenant Isolation Foundation
 
@@ -265,7 +265,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 | 1. Strategy Fixes | 4/4 | Complete    | 2026-09-30 |
 | 2. Order Placing & Tracking | 7/7 | Complete    | 2026-10-01 |
 | 3. Exit Optimisation | 6/6 | Complete    | 2026-10-03 |
-| 4. Dashboard UI/UX | 2/3 | In Progress|  |
+| 4. Dashboard UI/UX | 3/3 | In Progress|  |
 | 5. Tenant Isolation Foundation | 0/TBD | Not started | - |
 | 6. Broker Connection & Credential Vault | 0/TBD | Not started | - |
 | 7. Per-Subscriber Trading Safety | 0/TBD | Not started | - |
