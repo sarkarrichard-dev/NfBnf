@@ -40,6 +40,86 @@ def test_bootstrap_scanner_skips_when_dhan_not_ready(monkeypatch: pytest.MonkeyP
     assert result["reason"] == "dhan_not_ready"
 
 
+def _ready_cfg(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = MagicMock()
+    cfg.dhan.ready = True
+    monkeypatch.setattr("index_ai.scanner.settings", lambda: cfg)
+
+
+def test_network_down_at_boot_is_not_a_bad_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    from index_ai import scanner
+
+    _ready_cfg(monkeypatch)
+    monkeypatch.setattr(
+        "index_ai.dhan_auth.check_dhan_health",
+        lambda cfg: {
+            "token_ok": False,
+            "issues": ["Dhan token check failed: profile: [Errno 11001] getaddrinfo failed"],
+        },
+    )
+    scanner._state.auth_blocked = False
+    result = asyncio.run(scanner.bootstrap_scanner(respect_disable_flag=False))
+    assert result["reason"] == "network_down" and result["started"] is False
+    assert scanner._state.auth_blocked is False  # a dead network must not block the scanner
+
+
+def test_a_rejected_token_is_still_a_bad_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    from index_ai import scanner
+
+    _ready_cfg(monkeypatch)
+    monkeypatch.setattr(
+        "index_ai.dhan_auth.check_dhan_health",
+        lambda cfg: {"token_ok": False, "issues": ["Access token rejected by Dhan (401)."]},
+    )
+    result = asyncio.run(scanner.bootstrap_scanner(respect_disable_flag=False))
+    assert result["reason"] == "token_invalid"
+    assert scanner._state.auth_blocked is True
+    scanner._state.auth_blocked = False
+
+
+def test_boot_keeps_retrying_until_the_internet_is_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    from index_ai import scanner
+
+    answers = [
+        {"started": False, "reason": "network_down", "message": "getaddrinfo failed"},
+        {"started": False, "reason": "network_down", "message": "getaddrinfo failed"},
+        {"started": True, "status": {}},
+    ]
+    calls: list[int] = []
+
+    async def fake_bootstrap(**kw):
+        calls.append(1)
+        return answers[len(calls) - 1]
+
+    alerts: list[tuple[str, str]] = []
+    monkeypatch.setattr(scanner, "bootstrap_scanner", fake_bootstrap)
+    monkeypatch.setattr(scanner, "BOOT_AUTO_START_DELAY_SECONDS", 0)
+    monkeypatch.setattr(scanner, "BOOT_NETWORK_RETRY_SECONDS", 0)
+    monkeypatch.setattr(
+        "index_ai.notify.alert", lambda text, *, key, **k: alerts.append((text, key))
+    )
+    asyncio.run(scanner.schedule_boot_auto_start())
+    assert len(calls) == 3
+    assert len(alerts) == 1 and "late" in alerts[0][0]
+
+
+def test_boot_gives_up_after_the_retry_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from index_ai import scanner
+
+    calls: list[int] = []
+
+    async def always_down(**kw):
+        calls.append(1)
+        return {"started": False, "reason": "network_down", "message": "getaddrinfo failed"}
+
+    monkeypatch.setattr(scanner, "bootstrap_scanner", always_down)
+    monkeypatch.setattr(scanner, "BOOT_AUTO_START_DELAY_SECONDS", 0)
+    monkeypatch.setattr(scanner, "BOOT_NETWORK_RETRY_SECONDS", 0)
+    monkeypatch.setattr(scanner, "BOOT_NETWORK_RETRY_MAX", 3)
+    asyncio.run(scanner.schedule_boot_auto_start())
+    assert len(calls) == 4  # first try plus three retries, then it stops
+
+
 def test_auto_status_and_stop() -> None:
     client = TestClient(app)
     status = client.get("/api/auto/status")

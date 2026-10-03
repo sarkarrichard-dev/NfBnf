@@ -59,6 +59,32 @@ TRAIL_INDEX_GAP_SECONDS = 0.8
 # three indices + option chains). Richard, 2026-09-24: must be under 60s.
 TRAIL_FAST_SECONDS = 20
 BOOT_AUTO_START_DELAY_SECONDS = 1.5
+# If the internet is down when the server boots (common right after the PC wakes or starts),
+# keep trying instead of giving up for the whole trading day (1 Oct 2026: no scanner, no
+# option-chain or spread recording from 09:47 until a manual restart at 21:26).
+BOOT_NETWORK_RETRY_SECONDS = 60.0
+BOOT_NETWORK_RETRY_MAX = 720  # 12 hours of once-a-minute tries
+_NETWORK_ERROR_MARKERS = (
+    "getaddrinfo",
+    "errno 11001",
+    "errno 11002",
+    "errno 10060",
+    "errno 10061",
+    "errno 10051",
+    "name or service not known",
+    "network is unreachable",
+    "timed out",
+    "connection error",
+    "connection aborted",
+    "max retries exceeded",
+)
+
+
+def _looks_like_network_error(text: str) -> bool:
+    """True when a Dhan check failed because the machine cannot reach the internet, not
+    because Dhan rejected the token."""
+    low = str(text or "").lower()
+    return any(m in low for m in _NETWORK_ERROR_MARKERS)
 
 
 def auto_start_scanner_enabled() -> bool:
@@ -1091,16 +1117,23 @@ async def bootstrap_scanner(*, respect_disable_flag: bool = True) -> dict[str, A
 
     from index_ai.dhan_auth import check_dhan_health
 
-    health = check_dhan_health(cfg.dhan)
+    health = await asyncio.to_thread(check_dhan_health, cfg.dhan)  # blocking network call
     if not health.get("token_ok"):
         issues = "; ".join(health.get("issues") or ["Dhan token not accepted."])
         _state.last_error = issues
+        if _looks_like_network_error(issues):
+            # not a bad token: do NOT block auth, the boot loop will retry
+            _log("auto_start_skipped", reason="network_down", message=issues)
+            return {"started": False, "reason": "network_down", "message": issues}
         _state.auth_blocked = True
         _log("auto_start_skipped", reason="token_invalid", message=issues)
         return {"started": False, "reason": "token_invalid", "message": issues}
     if not health.get("charts_ok"):
         issues = "; ".join(health.get("issues") or ["Intraday chart data unavailable."])
         _state.last_error = issues
+        if _looks_like_network_error(issues):
+            _log("auto_start_skipped", reason="network_down", message=issues)
+            return {"started": False, "reason": "network_down", "message": issues}
         _log("auto_start_skipped", reason="charts_unavailable", message=issues)
         return {"started": False, "reason": "charts_unavailable", "message": issues}
 
@@ -1118,8 +1151,27 @@ async def schedule_boot_auto_start() -> None:
     """Deferred scanner start so startup token refresh can finish first."""
     await asyncio.sleep(BOOT_AUTO_START_DELAY_SECONDS)
     result = await bootstrap_scanner()
+    waited = 0
+    while result.get("reason") == "network_down" and waited < BOOT_NETWORK_RETRY_MAX:
+        if waited == 0:
+            _log("boot_auto_start_waiting", reason="no internet at start, will keep trying")
+        await asyncio.sleep(BOOT_NETWORK_RETRY_SECONDS)
+        waited += 1
+        result = await bootstrap_scanner()
     if result.get("started"):
-        _log("boot_auto_start", reason=result.get("reason") or "ok")
+        _log("boot_auto_start", reason=result.get("reason") or "ok", retries=waited)
+        if waited:
+            try:
+                from index_ai import notify
+
+                mins = round(waited * BOOT_NETWORK_RETRY_SECONDS / 60)
+                notify.alert(
+                    f"Trading app started about {mins} min late: there was no internet when it "
+                    "launched, so prices, option chains and spreads were not recorded until now.",
+                    key=f"late-start:{now_ist_iso()[:16]}",
+                )
+            except Exception:
+                pass
     else:
         _log("boot_auto_start_skipped", **{k: v for k, v in result.items() if k != "status"})
 

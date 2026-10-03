@@ -406,7 +406,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             sync_all_configured(dhan_client, interval=candle_interval_minutes())
         except Exception:
             pass
+    from index_ai import keep_awake
+
+    awake = keep_awake.start()  # no PC sleep while the server runs (Windows)
     yield
+    keep_awake.stop(awake)
     tick_stop.set()
     renew_task.cancel()
     boot_scanner_task.cancel()
