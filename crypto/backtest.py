@@ -31,6 +31,7 @@ from crypto.strategies import (
     ema_jaguar,
     ichimoku as ichi,
     ny_n_break as nb,
+    orb_break,
     rsi_adx_trend,
     tma_phoenix,
     vp_edge,
@@ -73,12 +74,18 @@ _SIMPLE = {
         "1h",
         lambda s, **kw: rsi_adx_trend.RsiAdxTrendConfig(trail=_trail(s), **kw),
     ),
+    "orb_break": (
+        orb_break,
+        "5m",
+        lambda s, **kw: orb_break.OrbBreakConfig(trail=_trail(s), **kw),
+    ),
 }
 _WIN_N = {
     "ichimoku": 220,
     "ak_roxx_pro": 60,
     "tma_phoenix": 340,
     "rsi_adx_trend": 60,
+    "orb_break": 10,  # only reads the last bar; state carries the range across calls
 }  # ak_roxx: 34 EMA + prior hour
 ALL_STRATEGIES = ["ny_n_break", *_SIMPLE]
 

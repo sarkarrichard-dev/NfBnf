@@ -280,3 +280,45 @@ trades 3 of its 6 symbols) rather than something to decide unilaterally —
 flagged to Richard rather than shipped. Kept as research tooling
 (`crypto/strategies/rsi_adx_trend.py`, the new `rsi`/`adx` indicator helpers,
 and the `rsi_adx_trend` entry in `crypto/backtest.py`) either way.
+
+# ORB (Opening Range Breakout) — 2026-09-22
+
+Richard shared an Instagram reel of someone building an ORB bot for ES
+futures (first 30 minutes of the NY cash open, breakout entry, R-multiple
+target) and asked for the concept tested on crypto. Crypto has no equivalent
+"market open," so the opening range anchors to the same 18:00 IST NY-window
+start already established for `ny_n_break` — the closest existing analog in
+this codebase. Exit reuses the shared crypto P&L trail rather than a
+separate R-multiple target, so it's judged the same way as every other
+strategy here. Module `crypto/strategies/orb_break.py`; new
+`crypto/session.py::session_date_for`/`parse_hhmm` helpers (a single-anchor
+day boundary, reused from `ny_session_date`'s pattern); `orb_break` entry in
+`crypto/backtest.py`.
+
+## Backtest — real Delta history + real charges, 120 days, all 7 live symbols, 5m
+
+| symbol | trades | net USD | win rate |
+|---|---:|---:|---:|
+| BTCUSD | 172 | **−$340** | 27% |
+| ETHUSD | 190 | **−$272** | 30% |
+| SOLUSD | 191 | **−$232** | 31% |
+| PAXGUSD | 104 | **−$252** | 29% |
+| XRPUSD | 188 | **−$266** | 30% |
+| BNBUSD | 172 | **−$293** | 30% |
+| XAUTUSD | 100 | **−$278** | 28% |
+| **total (all 7)** | **1,117** | **−$1,933** | 29% |
+
+`avg win $11.44` vs `avg loss −$7.18` — a real payoff edge per trade, but the
+win rate (27-31% everywhere) is far too low to clear it. **Net-negative on
+every single symbol, no exceptions** — unlike `ny_n_break`/`rsi_adx_trend`,
+there's no "works on the majors" split to salvage here; this is a clean,
+uniform negative result. Consistent with the standing prior on strategies
+pulled from social-media videos.
+
+## Status
+
+**Not wired into `crypto/lanes.py`.** Net-negative across the full symbol
+universe with no subset that clears it — does not meet the bar. Kept as
+research tooling (`crypto/strategies/orb_break.py`, the `crypto/session.py`
+helpers, and the `orb_break` entry in `crypto/backtest.py`) for reference;
+don't re-test this exact config.
