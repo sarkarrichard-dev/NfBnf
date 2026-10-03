@@ -10,6 +10,8 @@ import {
 import { useStrategyLearning, type LearnRow } from '../../hooks/useStrategyLearning'
 import { useStrategyLab, type LabRow } from '../../hooks/useStrategyLab'
 import { useRiskManager, type SizeSuggestion } from '../../hooks/useRiskManager'
+import { useExitRecheck, useRunExitRecheck, type ExitRecheckRow } from '../../hooks/useExitRecheck'
+import { Button } from '../ui/Button'
 
 const STATE_STYLE: Record<string, string> = {
   watching: 'bg-white/[0.05] text-slate-400',
@@ -103,6 +105,112 @@ function fmt(v: number | null | undefined, currency: 'INR' | 'USD', signed = fal
 
 function pct(v: number | null | undefined): string {
   return v == null ? '—' : `${Math.round(Number(v) * 100)}%`
+}
+
+function ExitRecheckPanel() {
+  const q = useExitRecheck(true)
+  const run = useRunExitRecheck()
+  const d = q.data
+  const rows: ExitRecheckRow[] = d?.segments ?? []
+  const changed = rows.filter((r) => r.drift).length
+
+  return (
+    <section className={cn(fx.panel, 'p-4')}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-bold text-slate-100">Stop check</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-[11px] text-slate-500">
+            {d?.ran_at
+              ? `last run ${d.ran_at.slice(0, 16).replace('T', ' ')} IST · ${d.trigger === 'daily' ? 'automatic' : 'by button'}`
+              : 'not run yet'}
+          </span>
+          {changed > 0 ? (
+            <span className="rounded bg-[var(--down)]/15 px-1.5 py-0.5 font-mono text-[10px] text-[var(--down)]">
+              {changed} changed
+            </span>
+          ) : null}
+          <Button variant="secondary" pending={run.isPending} onClick={() => run.mutate()}>
+            Re-check now
+          </Button>
+        </div>
+      </div>
+
+      {q.isError && !d ? (
+        <p className="text-[12.5px] text-slate-500">
+          The stop check is not available yet — the app may need a restart.
+        </p>
+      ) : !d ? (
+        <p className="text-[12.5px] text-slate-500">Loading…</p>
+      ) : !d.ran_at || rows.length === 0 ? (
+        <p className="text-[12.5px] text-slate-500">
+          Not run yet — press Re-check now. It also runs by itself after the market closes.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {rows.map((r) => (
+            <li key={r.segment} className="text-[12.5px]">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-medium text-slate-200">
+                  {r.label} · {r.distance_label}
+                </span>
+                <span
+                  className={cn(
+                    'rounded px-1.5 py-0.5 font-mono text-[10px] uppercase',
+                    STATE_STYLE[r.state] || STATE_STYLE.watching,
+                  )}
+                >
+                  {r.state}
+                </span>
+                {r.frozen ? (
+                  <span className="rounded bg-[var(--up)]/10 px-1.5 py-0.5 font-mono text-[10px] text-[var(--up)]">
+                    frozen · working
+                  </span>
+                ) : null}
+                {r.drift ? (
+                  <span className="rounded bg-[var(--down)]/15 px-1.5 py-0.5 font-mono text-[10px] text-[var(--down)]">
+                    results changed
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-0.5 pl-3 font-mono text-[11px] tabular-nums text-slate-500">
+                {r.trades} trades · {r.trading_days}d · win {pct(r.win_rate)} · stop closed{' '}
+                {pct(r.trail_hit_rate)} · net {fmt(r.net, r.currency, true)}
+              </p>
+              {r.drift && r.drift_detail ? (
+                <p className="mt-0.5 pl-3 font-mono text-[11px] tabular-nums text-[var(--down)]">
+                  stop closed {pct(r.drift_detail.trail_hit_rate.was)} →{' '}
+                  {pct(r.drift_detail.trail_hit_rate.now)} · made money{' '}
+                  {pct(r.drift_detail.win_rate.was)} → {pct(r.drift_detail.win_rate.now)}
+                </p>
+              ) : null}
+              <p
+                className={cn(
+                  'mt-0.5 pl-3 text-[11.5px]',
+                  r.verdict === 'suggestion' ? 'text-[var(--warn)]' : 'text-slate-500',
+                )}
+              >
+                {r.message}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {d && d.errors?.length > 0 ? (
+        <p className="mt-2 text-[11px] text-[var(--down)]">
+          Could not read: {d.errors.map((e) => e.venue).join(', ')}
+        </p>
+      ) : null}
+
+      <p className="mt-3 border-t border-[var(--hair)] pt-2 text-[11px] leading-relaxed text-slate-500">
+        Nothing here changes a stop. A suggestion only appears after 40 trades and 15 trading days
+        under the same stop, and only for you to approve. &ldquo;Results changed&rdquo; means the
+        share of trades the stop closed, or the share that made money, moved more than 15 points
+        since its last check — Telegram gets one message when that happens. Runs by itself after the
+        market closes.
+      </p>
+    </section>
+  )
 }
 
 type Group = {
@@ -468,6 +576,8 @@ export function StrategyPerformancePage() {
       ) : null}
 
       <RiskManagerPanel />
+
+      <ExitRecheckPanel />
 
       <LearningPanel />
 
