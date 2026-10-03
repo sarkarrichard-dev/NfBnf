@@ -1470,6 +1470,14 @@ async def tick_feed_api() -> dict[str, Any]:
     return status()
 
 
+@app.get("/api/data-health", include_in_schema=False)
+async def data_health_api() -> dict[str, Any]:
+    """Ages of the data the bot trades on — prices, option chain, spreads, the Dhan live feed — for the Data health panel. Read-only."""
+    from index_ai.data_health import collect
+
+    return await asyncio.to_thread(collect)
+
+
 @app.get("/api/market-log", include_in_schema=False)
 async def market_log_api(
     session: str | None = Query(None),

@@ -14,6 +14,7 @@ import {
   IconChart,
   IconList,
 } from './components/ui/Icons'
+import { DataHealthPanel } from './components/DataHealthPanel'
 import { ExecutionPanel } from './components/ExecutionPanel'
 import { JournalPanel } from './components/JournalPanel'
 import { StatsOverview } from './components/StatsRail'
@@ -234,6 +235,7 @@ function App() {
             title={greeting()}
             status={`${phaseLabel} · CPR + EMA + OI${refreshLabel ? ` · ${refreshLabel}` : ''}`}
           />
+          <DataHealthPanel />
           <StatsOverview
             period={period}
             onPeriodChange={setPeriod}
