@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Strategy Fixes** - Raise the option buy lane's real win rate, keep every parameter change on the confidence ladder, re-validate Strategy Lab verdicts against real option-chain data (completed 2026-09-30)
 - [x] **Phase 2: Order Placing & Tracking** - Close the untested money-path edge cases: cancel-while-placing races, broker-disconnect reconciliation, websocket reconnection, tick-feed fallback (completed 2026-10-01)
 - [x] **Phase 3: Exit Optimisation** - Re-validate trailing-stop tuning against live data, remove the dead percent-of-premium code path, add drift monitoring (completed 2026-10-03)
-- [ ] **Phase 4: Dashboard UI/UX** - Surface which crypto pairs are actually live, add a Data Health view, hold every change to the existing visual bar
+- [x] **Phase 4: Dashboard UI/UX** - Surface which crypto pairs are actually live, add a Data Health view, hold every change to the existing visual bar (completed 2026-10-03)
 - [ ] **Phase 5: Tenant Isolation Foundation** - Per-subscriber risk state, sizing, kill switch, and pause control, fully separated from every other subscriber's
 - [ ] **Phase 6: Broker Connection & Credential Vault** - Subscriber connects and verifies their own broker account; credentials encrypted and scoped to them alone
 - [ ] **Phase 7: Per-Subscriber Trading Safety** - Paper-by-default and two-lock live arming, scoped to each subscriber's own account
@@ -265,7 +265,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 | 1. Strategy Fixes | 4/4 | Complete    | 2026-09-30 |
 | 2. Order Placing & Tracking | 7/7 | Complete    | 2026-10-01 |
 | 3. Exit Optimisation | 6/6 | Complete    | 2026-10-03 |
-| 4. Dashboard UI/UX | 3/3 | In Progress|  |
+| 4. Dashboard UI/UX | 3/3 | Complete    | 2026-10-03 |
 | 5. Tenant Isolation Foundation | 0/TBD | Not started | - |
 | 6. Broker Connection & Credential Vault | 0/TBD | Not started | - |
 | 7. Per-Subscriber Trading Safety | 0/TBD | Not started | - |

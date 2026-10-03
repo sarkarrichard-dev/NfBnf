@@ -117,6 +117,12 @@ trusting a result is the thing that must not slip.
   win rate moves more than 15 points gets one Telegram message and a dashboard
   flag. The old percent-of-premium trail is deleted, so the 1:1 index-point
   trail is the only one (Phase 3, EXIT-01/02/03).
+- ✓ The dashboard now shows, without reading logs, which crypto (strategy,
+  coin) pairs are live vs paper (with a plain reason for each paper pair, under
+  the arm button) and a Data Health panel (price-feed, option-chain and spread
+  ages plus the Dhan live feed; neutral when the market is closed). Both are
+  read-only and use the same rule/files the trading code uses (Phase 4,
+  UIUX-01/02/03).
 
 ### Active
 
@@ -252,7 +258,7 @@ re-deriving them from scratch.
 | Stop re-check is suggest-only and uses the same 40-trade / 15-day bar as the strategy ladder; replay of past trades uses only recorded ticks and option quotes, never a proxy | Richard's rule: never present a tuning change as ready until measured on real data; a suggestion needs a human to approve | ✓ Good — today every stop says "not enough data yet"; replay can price only ~1 in 4 past trades (saved option prices rarely hold both spread legs), to revisit once a stop reaches 40 trades |
 
 ---
-*Last updated: 2026-10-03 after Phase 3 (Exit Optimisation).*
+*Last updated: 2026-10-03 after Phase 4 (Dashboard UI/UX).*
 
 ## Evolution
 

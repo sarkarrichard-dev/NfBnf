@@ -62,13 +62,13 @@ Requirements for the first outside subscriber. Each maps to a roadmap phase.
 
 ### Dashboard UI/UX (UIUX)
 
-- [ ] **UIUX-01**: The dashboard shows which (strategy, coin) pairs are
+- [x] **UIUX-01**: The dashboard shows which (strategy, coin) pairs are
   actually live vs. paper after arming crypto — today this requires reading
   server logs to find out (`.planning/codebase/CONCERNS.md`).
-- [ ] **UIUX-02**: A "Data Health" view shows tick age, option-chain
+- [x] **UIUX-02**: A "Data Health" view shows tick age, option-chain
   snapshot age, measured spread age, and Dhan websocket status, so a missed
   trade or a stop that didn't fire can be diagnosed without reading logs.
-- [ ] **UIUX-03**: Every dashboard change continues to meet QuantHawk's
+- [x] **UIUX-03**: Every dashboard change continues to meet QuantHawk's
   existing visual bar — design tokens (not raw colors), correct
   corner-radius, mono/tabular-nums on data — the standard the
   ui-consistency-reviewer already enforces.
@@ -209,9 +209,9 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 | EXIT-01 | Phase 3 | Complete |
 | EXIT-02 | Phase 3 | Complete |
 | EXIT-03 | Phase 3 | Complete |
-| UIUX-01 | Phase 4 | Pending |
-| UIUX-02 | Phase 4 | Pending |
-| UIUX-03 | Phase 4 | Pending |
+| UIUX-01 | Phase 4 | Complete |
+| UIUX-02 | Phase 4 | Complete |
+| UIUX-03 | Phase 4 | Complete |
 | BROK-01 | Phase 6 | Pending |
 | BROK-02 | Phase 6 | Pending |
 | BROK-03 | Phase 6 | Pending |
