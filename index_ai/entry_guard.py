@@ -15,8 +15,9 @@ Four gates, all measured off the trade journal (so they survive a restart):
      a directional credit spread is a coin flip, skip it
   4. daily trade cap    — a hard per-index ceiling, tighter for BANKNIFTY
 
-The exit side of the same problem is handled by letting ``premium_trail`` own
-the exit once a spread is open — see ``position_exits.strategy_exit_reason``.
+The exit side of the same problem is handled by letting the 1:1 index trail
+(``credit_spread.SELL_TRAIL_POINTS``) own the exit once a spread is open — see
+``position_exits.strategy_exit_reason``.
 """
 
 from __future__ import annotations

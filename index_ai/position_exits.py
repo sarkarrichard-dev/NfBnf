@@ -22,19 +22,19 @@ def _entry_strategy_mode(trade: dict[str, Any], signal: dict[str, Any]) -> str:
     )
 
 
-# Only the two-leg directional verticals — premium_trail watches a single short
-# leg, so a two-sided structure (iron condor) still needs its regime close.
+# Only the directional credit positions — the 1:1 index trail follows the index
+# for those, so a two-sided structure (iron condor) still needs its regime close.
 _TRAILED_VERTICALS = frozenset(
     {"SELL_BEAR_CALL_SPREAD", "SELL_BULL_PUT_SPREAD", "SELL_ATM_CALL", "SELL_ATM_PUT"}
 )
 
 
-def _premium_trailed_credit(trade: dict[str, Any]) -> bool:
-    from index_ai.premium_trail import premium_trail_enabled
+def _index_trailed_credit(trade: dict[str, Any]) -> bool:
+    from index_ai.strategies.credit_spread import SELL_TRAIL_POINTS
 
     action = str(trade.get("action") or (trade.get("signal") or {}).get("action") or "").upper()
     inst = str(trade.get("instrument") or (trade.get("option") or {}).get("instrument") or "")
-    return action in _TRAILED_VERTICALS and premium_trail_enabled(inst)
+    return action in _TRAILED_VERTICALS and inst.strip().upper() in SELL_TRAIL_POINTS
 
 
 def trade_created_ist_date(trade: dict[str, Any]) -> str | None:
@@ -82,10 +82,11 @@ def strategy_exit_reason(
 ) -> str | None:
     """Close when CPR regime, EMA flip, or a new signal opposes the open structure.
 
-    Skipped for a credit spread on a premium-trailed index (NIFTY / BANKNIFTY):
-    the entry signal was the thesis, and ``premium_trail`` owns the exit from
-    there (a quarter-premium target, then a trailing stop, with a hard stop
-    behind it). Bailing on a flip-floppy CPR read instead is what turned a flat
+    Skipped for a directional credit spread on an index with a sell trail
+    (NIFTY / BANKNIFTY / SENSEX): the entry signal was the thesis, and the 1:1
+    index trail in ``credit_spread.evaluate_credit_open_trade`` owns the exit
+    from there, with the rupee max loss, short-strike breach and Supertrend as
+    backstops. Bailing on a flip-floppy CPR read instead is what turned a flat
     BANKNIFTY day into 7 round-trips and -3,954 on 2026-09-02. Stale-open and the
     EOD square-off are handled elsewhere and still fire.
     """
@@ -93,7 +94,7 @@ def strategy_exit_reason(
     if not pos_action or pos_action == "NO_TRADE":
         return None
 
-    if _premium_trailed_credit(trade):
+    if _index_trailed_credit(trade):
         return None
 
     fresh = str(new_action or "NO_TRADE").upper()
