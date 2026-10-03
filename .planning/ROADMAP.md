@@ -123,12 +123,12 @@ Plans:
   2. `premium_trail.py`'s percent-of-premium code path no longer exists in the codebase, and nothing still imports it
   3. A monitoring signal fires if trail-stop hit rate or win rate drifts meaningfully from its last validated baseline, so a bad tune surfaces immediately rather than weeks later in the scorecard
 
-**Plans**: 6 plans
+**Plans**: 1/6 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Tracer: "Re-check now" end to end for the six India segments — exit-reason classifier, stats under today's stop distance, confidence-ladder verdict, stored row, GET + POST /api/exit-recheck; read-only real-journal proof (EXIT-01, EXIT-03)
+- [x] 03-01-PLAN.md — Tracer: "Re-check now" end to end for the six India segments — exit-reason classifier, stats under today's stop distance, confidence-ladder verdict, stored row, GET + POST /api/exit-recheck; read-only real-journal proof (EXIT-01, EXIT-03)
 - [ ] 03-02-PLAN.md — Delete premium_trail.py: preserve its history first, pin and re-key the sell-lane exit suppression on SELL_TRAIL_POINTS (the trap), remove the dead branch, keep the profit_trail fallback (EXIT-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -251,7 +251,7 @@ run in parallel if that's preferred later — flagged here, not assumed.
 |-------|----------------|--------|-----------|
 | 1. Strategy Fixes | 4/4 | Complete    | 2026-09-30 |
 | 2. Order Placing & Tracking | 7/7 | Complete    | 2026-10-01 |
-| 3. Exit Optimisation | 0/TBD | Not started | - |
+| 3. Exit Optimisation | 1/6 | In Progress|  |
 | 4. Dashboard UI/UX | 0/TBD | Not started | - |
 | 5. Tenant Isolation Foundation | 0/TBD | Not started | - |
 | 6. Broker Connection & Credential Vault | 0/TBD | Not started | - |

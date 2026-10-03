@@ -1,18 +1,18 @@
 ---
 gsd_state_version: 1.0
-current_phase: 3
+current_phase: 03
 current_phase_name: Exit Optimisation
 status: executing
-stopped_at: Phase 3 context gathered
-last_updated: "2026-10-03T08:04:32.119Z"
-last_activity: 2026-10-01
-last_activity_desc: Phase 2 complete, transitioned to Phase 3
-state_head: fe3cec0ec0d13c1870295025a8e84f4181e4602e
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-10-03T08:17:07.085Z"
+last_activity: 2026-10-03
+last_activity_desc: Phase 03 execution started
+state_head: bd66897abf66de0285f5dcfd489bcc588666a284
 progress:
   total_phases: 10
   completed_phases: 2
   total_plans: 17
-  completed_plans: 11
+  completed_plans: 12
   percent: 20
 ---
 
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-30)
 
 **Core value:** Never presents a strategy as ready for real money until it has been measured — against real broker charges, on the real live journal, not a backtest — to actually make money.
-**Current focus:** Phase 3 — Exit Optimisation
+**Current focus:** Phase 03 — Exit Optimisation
 
 ## Current Position
 
-Phase: 3 (Exit Optimisation) — READY TO EXECUTE
-Plan: Not started
+Phase: 03 (Exit Optimisation) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-10-01 — Phase 2 complete, transitioned to Phase 3
+Last activity: 2026-10-03 — Phase 03 execution started
 
-Progress: [█░░░░░░░░░] 10%
+Progress: [██░░░░░░░░] 20%
 
 ## Performance Metrics
 
@@ -70,6 +70,7 @@ Progress: [█░░░░░░░░░] 10%
 | Phase 02-order-placing-tracking P05 | 38min | 2 tasks | 3 files |
 | Phase 02 P06 | 35min | 2 tasks | 5 files |
 | Phase 02 P07 | ~25min | 3 tasks | 3 files |
+| Phase 03 P01 | 9 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -106,6 +107,7 @@ Recent decisions affecting current work:
 - [Phase 2]: [Phase 2]: 02-07: ui-consistency-reviewer's 7-point checklist applied manually to StatusPills.tsx (no Task/Agent tool in this execution context) -- no findings, documented in the SUMMARY for human confirmation
 - [Phase 2]: Mid-phase live incident (not part of the planned work): btc_daily_straddle's 2-leg position has no "side" key, crashing crypto/lanes.py's auto-prune loop every ~70s for 2+ hours once the straddle actually opened a position on 2026-10-01 -- fixed by adding it to _known_strategies(); server restarted to pick up the fix
 - [Phase 2]: Phase code review (02-REVIEW.md) then found the SAME gap still open on the manual Close/Close-all dashboard controls (CR-01) and a second, independent critical bug in Delta's client misclassifying a non-JSON 5xx response as a definite order rejection instead of unknown, skipping the settle-from-order-book path (CR-02) -- both fixed, plus 4 warnings (ALREADY_CLOSED mislabeled as BLOCKED, a lazy-lock barrier gap, a stale fixture README, a leaked IP in a committed fixture), each with a regression test, before the phase was marked complete
+- [Phase 03]: 03-01: re-check ladder bar is strategy_learning's 40 trades and 15 trading days (imported), one day stricter than D-03's 14; segment = (lane, index), ids india_<INDEX>_<lane> — D-03 intent is the same bar used everywhere else; recorded visibly
 
 ### Pending Todos
 
@@ -127,6 +129,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-03T06:27:57.948Z
-Stopped at: Phase 3 context gathered
-Resume file: C:/Richard Docx/personal/Algo BNF/.planning/phases/03-exit-optimisation/03-CONTEXT.md
+Last session: 2026-10-03T08:17:06.274Z
+Stopped at: Completed 03-01-PLAN.md
+Resume file: None
