@@ -110,6 +110,13 @@ trusting a result is the thing that must not slip.
   explicit disconnect message instead of waiting out a 90-second stall
   timer, and the dashboard shows a live "Ticks: live / fallback" indicator
   fed by the real feed state (Phase 2, ORD-03/ORD-04).
+- ✓ Every trailing stop (NIFTY/BANKNIFTY/SENSEX buy and sell, crypto, MCX
+  commodities) is re-checked daily after the close and on demand (Strategy
+  P&L tab, "Stop check") against the trades taken under today's stop. It only
+  reports and suggests; a person approves any change. A stop whose hit rate or
+  win rate moves more than 15 points gets one Telegram message and a dashboard
+  flag. The old percent-of-premium trail is deleted, so the 1:1 index-point
+  trail is the only one (Phase 3, EXIT-01/02/03).
 
 ### Active
 
@@ -242,9 +249,10 @@ re-deriving them from scratch.
 | Hold on the buy-lane tightening gates (`BUY_BLOCK_CONTRA_CPR`, `BUY_BLOCK_INTO_OI_WALL`) rather than switching on for paper | Real-chain sanity check (1 week, 6-9 trades/index) showed NIFTY and BANKNIFTY worse on both win rate and net rupees; only SENSEX improved, and the two gates weren't isolated from each other in that run — not proof either way, but the one index Richard weighs first got worse | ✓ Good — matches the project's core value (never treat a strategy as ready before it's measured); test the CPR gate alone next if revisited |
 | Crypto (Delta) order-placement fixes done first, ahead of Dhan, in Phase 2 | Crypto is the one aiming to arm real money soonest (~November 2026) — harden the path closer to carrying real risk first, even though Dhan has been live longer | ✓ Good — both brokers ended up fixed in the same phase anyway |
 | Real (read-only) broker traffic captured live from Richard's own Dhan/Delta accounts to build Phase 2's test fixtures, rather than fabricated data | More realistic than hand-rolled mocks for proving disconnect/cancel-race handling; capture tool is structurally GET-only (cannot place/cancel/modify) and redacts secrets before any fixture is written | ✓ Good — caught a real IP-whitelist account issue and a real PII leak in the first fixture (both handled: recorded as-is, then redacted) |
+| Stop re-check is suggest-only and uses the same 40-trade / 15-day bar as the strategy ladder; replay of past trades uses only recorded ticks and option quotes, never a proxy | Richard's rule: never present a tuning change as ready until measured on real data; a suggestion needs a human to approve | ✓ Good — today every stop says "not enough data yet"; replay can price only ~1 in 4 past trades (saved option prices rarely hold both spread legs), to revisit once a stop reaches 40 trades |
 
 ---
-*Last updated: 2026-10-01 after Phase 2 (Order Placing & Tracking).*
+*Last updated: 2026-10-03 after Phase 3 (Exit Optimisation).*
 
 ## Evolution
 

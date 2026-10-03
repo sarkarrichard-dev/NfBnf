@@ -16,7 +16,7 @@
     {
       "number": "3",
       "name": "Exit Optimisation",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "4",
@@ -56,8 +56,8 @@
   ],
   "next": {
     "command": "/gsd:progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 3 of 10 · 20% · ready to verify"
+    "label": "Advance to the next step (plan phase 4)",
+    "reason": "Phase 4 of 10 — needs a plan"
   },
-  "updated_at": "2026-10-03T09:32:59.720Z"
+  "updated_at": "2026-10-03T12:32:21.185Z"
 }

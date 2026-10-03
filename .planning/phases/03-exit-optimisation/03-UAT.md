@@ -1,5 +1,5 @@
 ---
-status: testing
+status: complete
 phase: 03-exit-optimisation
 source: [03-VERIFICATION.md]
 started: 2026-10-03
@@ -21,14 +21,14 @@ awaiting: user response (needs a server restart first)
 
 ### 1. Stop check panel on the Strategy P&L tab
 expected: see above
-result: [pending]
+result: passed (Richard, 2026-10-03, after server restart)
 
 ## Summary
 
 total: 1
-passed: 0
+passed: 1
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 

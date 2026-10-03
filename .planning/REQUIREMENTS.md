@@ -49,14 +49,14 @@ Requirements for the first outside subscriber. Each maps to a roadmap phase.
 
 ### Exit Optimisation (EXIT)
 
-- [ ] **EXIT-01**: Trailing-stop point values (NIFTY/BANKNIFTY/SENSEX, buy
+- [x] **EXIT-01**: Trailing-stop point values (NIFTY/BANKNIFTY/SENSEX, buy
   and sell lanes) are re-validated against recent live-journal data on a
   recurring basis instead of staying a one-time hardcoded tune from
   2026-09-24/28.
-- [ ] **EXIT-02**: The dead `premium_trail.py` percent-of-premium code path
+- [x] **EXIT-02**: The dead `premium_trail.py` percent-of-premium code path
   is removed so there is exactly one, unambiguous trailing-stop
   implementation in the codebase.
-- [ ] **EXIT-03**: A monitoring signal exists if trail-stop hit rate or win
+- [x] **EXIT-03**: A monitoring signal exists if trail-stop hit rate or win
   rate drifts meaningfully from its last validated baseline, so a bad tune
   is caught rather than discovered weeks later in the scorecard.
 
@@ -206,9 +206,9 @@ Explicitly excluded, with reasoning, so these don't get quietly re-proposed.
 | ORD-02 | Phase 2 | Complete |
 | ORD-03 | Phase 2 | Complete |
 | ORD-04 | Phase 2 | Complete |
-| EXIT-01 | Phase 3 | Pending |
-| EXIT-02 | Phase 3 | Pending |
-| EXIT-03 | Phase 3 | Pending |
+| EXIT-01 | Phase 3 | Complete |
+| EXIT-02 | Phase 3 | Complete |
+| EXIT-03 | Phase 3 | Complete |
 | UIUX-01 | Phase 4 | Pending |
 | UIUX-02 | Phase 4 | Pending |
 | UIUX-03 | Phase 4 | Pending |

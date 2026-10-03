@@ -1,8 +1,8 @@
 ---
 phase: 03-exit-optimisation
 verified: 2026-10-03T00:00:00Z
-status: human_needed
-score: 3/3 roadmap success criteria verified (code-level); 1 human check outstanding
+status: passed
+score: 3/3 roadmap success criteria verified; human check passed (Richard, 2026-10-03, after server restart)
 behavior_unverified: 0
 overrides_applied: 0
 re_verification: false
