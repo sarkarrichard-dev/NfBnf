@@ -1,18 +1,18 @@
 ---
 gsd_state_version: 1.0
-current_phase: 4
+current_phase: 04
 current_phase_name: Dashboard UI/UX
 status: executing
-stopped_at: Phase 3 complete, ready to plan Phase 4
-last_updated: "2026-10-03T14:00:34.920Z"
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-10-03T14:38:17.678Z"
 last_activity: 2026-10-03
-last_activity_desc: Phase 3 complete, transitioned to Phase 4
-state_head: 9f9a91033f037804de757453975ed0744614beb7
+last_activity_desc: Phase 04 execution started
+state_head: f91bd9275f55d9514c91cfd2fbfe8e65cd7f9ffc
 progress:
   total_phases: 10
   completed_phases: 3
   total_plans: 20
-  completed_plans: 17
+  completed_plans: 18
   percent: 30
 ---
 
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-30)
 
 **Core value:** Never presents a strategy as ready for real money until it has been measured — against real broker charges, on the real live journal, not a backtest — to actually make money.
-**Current focus:** Phase 03 — Exit Optimisation
+**Current focus:** Phase 04 — Dashboard UI/UX
 
 ## Current Position
 
-Phase: 4 (dashboard-ui-ux) — READY TO EXECUTE
-Plan: Not started
+Phase: 04 (Dashboard UI/UX) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-10-03 — Phase 3 complete, transitioned to Phase 4
+Last activity: 2026-10-03 — Phase 04 execution started
 
-Progress: [██░░░░░░░░] 20%
+Progress: [███░░░░░░░] 30%
 
 ## Performance Metrics
 
@@ -77,6 +77,7 @@ Progress: [██░░░░░░░░] 20%
 | Phase 03 P04 | 40 min | 3 tasks | 3 files |
 | Phase 03 P05 | 10 min | 3 tasks | 3 files |
 | Phase 03 P06 | 12 min | 2 tasks | 4 files |
+| Phase 04 P01 | 25 min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -118,6 +119,7 @@ Recent decisions affecting current work:
 - [Phase 03]: 03-03: comment/docstring/doc refresh is words-only; five money-path .py files proven AST-identical (docstrings stripped) vs the pre-plan commit; Strategy Guide trailing-stop numbers verified by script against SELL_TRAIL_POINTS and get_instrument(...).trail_distance_points
 - [Phase 03]: 03-04: replay thresholds kept at MATCH_MIN 0.8 / 120 s / 300 s; real data prices only 5 of 37 trades at every distance (legs missing from newest chain snapshot), so suggestions stay unreachable until pricing or recording improves
 - [Phase 03]: 03-05: crypto and commodities are one pooled segment each (crypto:point_trail, commodities:atr_trail); a changed trail rule restarts that window; drift = stop rate or win rate more than 15 points on exact fractions, one Telegram message per stored OK->DRIFT transition
+- [Phase 04]: Phase 04-01: old Go-live readiness block replaced by server-decided live/paper list under the arm button; LIVE chip uses var(--armed)
 
 ### Pending Todos
 
@@ -139,6 +141,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-03T09:33:03.243Z
-Stopped at: Phase 3 complete, ready to plan Phase 4
+Last session: 2026-10-03T14:38:17.034Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None
