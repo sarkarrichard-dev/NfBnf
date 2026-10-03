@@ -16,11 +16,15 @@ numbers (D-03). Its only write is its own ``learned_settings`` row.
 from __future__ import annotations
 
 import json
+import math
 import re
+import sqlite3
 import threading
 from collections import Counter
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
+from index_ai import market_log
 from index_ai.data_epoch import data_epoch
 from index_ai.market_clock import now_ist_iso
 from index_ai.strategy_learning import (
@@ -38,6 +42,19 @@ TRIGGERS = ("daily", "button")
 # One pass at a time: the daily run and the button (or a double click) must not
 # interleave their recompute-and-store.
 _RECHECK_LOCK = threading.Lock()
+
+# Replay rules (03-04). All judgement calls; do not loosen them to make real numbers look better.
+# Four of every five real exits must be reproduced, else the rupee comparison measures the
+# replay's own error as much as the stop.
+MATCH_MIN = 0.8
+# The live stop is checked on every tick (worst case every 20 s), so a correct replay lands well
+# inside two minutes; tick-delivery lag days will honestly show up as mismatches.
+MATCH_TOLERANCE_S = 120
+# The option chain is recorded about once a minute; a quote older than this is not a price.
+QUOTE_MAX_AGE_S = 300
+# Alternative stop distances tried: today's x these, rounded to the nearest DISTANCE_STEP.
+CANDIDATE_FACTORS = (0.75, 1.25, 1.5)
+DISTANCE_STEP = 5.0  # index points
 
 # First match wins, in this order. Matched against the lower-cased exit note.
 _INDIA_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -114,6 +131,7 @@ def _india_rows() -> dict[str, list[dict[str, Any]]]:
                 "day": str(t.get("created_at") or "")[:10],
                 "net": gross - cs[0] - cs[1] if cs else gross,
                 "cls": classify_exit("india", notes.get(str(t.get("id")))),
+                "_trade": t,  # raw trade for the replay only; never stored (see _segment_row)
             }
         )
     return out
@@ -121,6 +139,14 @@ def _india_rows() -> dict[str, list[dict[str, Any]]]:
 
 def _segment_id(inst: str, lane: str) -> str:
     return f"india_{inst}_{lane}"
+
+
+def _distance(inst: str, lane: str) -> float:
+    """Today's stop distance, in index points, for an India index and lane."""
+    from index_ai.instruments import get_instrument
+    from index_ai.strategies.credit_spread import SELL_TRAIL_POINTS
+
+    return SELL_TRAIL_POINTS[inst] if lane == "sell" else get_instrument(inst).trail_distance_points
 
 
 def _segment_row(
@@ -194,16 +220,10 @@ def compute_segments() -> dict[str, Any]:
     segments: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     try:
-        from index_ai.instruments import get_instrument
-
         rows = _india_rows()
         for inst in SELL_TRAIL_POINTS:
             for lane in ("buy", "sell"):
-                dist = (
-                    SELL_TRAIL_POINTS[inst]
-                    if lane == "sell"
-                    else get_instrument(inst).trail_distance_points
-                )
+                dist = _distance(inst, lane)
                 segments.append(
                     _segment_row(
                         _segment_id(inst, lane),
@@ -220,6 +240,218 @@ def compute_segments() -> dict[str, Any]:
     except Exception as exc:
         errors.append({"venue": "india", "error": str(exc)[:200]})
     return {"segments": segments, "errors": errors}
+
+
+# --- India replay (03-04): when would a different stop have closed a past trade? ----------------
+#
+# Read-only and honest: prices come only from the recorded index ticks and the recorded option
+# chain (bid/ask). No candles, no Black-Scholes proxy, no interpolation -- a leg with no quote is
+# reported as "could not price". The result is numbers only; nothing here applies a distance.
+
+_DIRECTION = {"BUY_CALL": 1, "SELL_BULL_PUT_SPREAD": 1, "BUY_PUT": -1, "SELL_BEAR_CALL_SPREAD": -1}
+
+
+@contextmanager
+def _market_log_ro() -> Iterator[sqlite3.Connection]:
+    """The market log opened read-only. The market log module's own connect helper is NOT used: it
+    switches the file to WAL, runs a migration and commits -- all writes to a live database the
+    scanner is filling."""
+    uri = market_log.DB_PATH.resolve().as_uri() + "?mode=ro"
+    db = sqlite3.connect(uri, uri=True, timeout=10)
+    db.row_factory = sqlite3.Row
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def _candidates(distance: float) -> list[float]:
+    """Today's distance x each factor, to the nearest DISTANCE_STEP (halves round up)."""
+    out = {math.floor(distance * f / DISTANCE_STEP + 0.5) * DISTANCE_STEP for f in CANDIDATE_FACTORS}
+    return sorted(d for d in out if d > 0 and d != distance)
+
+
+def _replay_exit(trade: dict[str, Any], distance: float, path: Any, real_exit_ts: Any, real_cls: str):
+    """(exit time, how, extended) for a 1:1 stop at ``distance``, or None if it can't be replayed.
+
+    Same anchor rule as ``strategy_lab._trail_hit`` (which only returns a bool, so it cannot be
+    called here): direction +1 -> anchor is the best (highest) price since entry and the stop is
+    touched when price <= anchor - distance; direction -1 mirrors it. The anchor starts at the
+    trade's own entry index price. ``how``: "trail" (stop crossed), "real_exit" (the trade really
+    ended another way first), "square_off" (never crossed). Nothing later than the 15:10 square-off.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from index_ai import strategy_lab
+
+    direction = _DIRECTION.get(str(trade.get("action") or ""))
+    entry_px = ((trade.get("option") or {}).get("trail_meta") or {}).get("entry_index_price")
+    if direction is None or not entry_px or path.empty:
+        return None
+    entry_px = float(entry_px)
+    entry = pd.Timestamp(trade["created_at"])
+    cutoff = pd.Timestamp(f"{str(trade['created_at'])[:10]}T{strategy_lab.SQUARE_OFF}:00+05:30")
+    lo = path.index.searchsorted(entry, side="right")  # ticks after entry, up to the square-off
+    hi = path.index.searchsorted(cutoff, side="right")
+    seg = path.iloc[lo:hi]
+    px = seg.to_numpy()
+    if direction > 0:
+        hits = px <= np.maximum.accumulate(np.maximum(px, entry_px)) - distance
+    else:
+        hits = px >= np.minimum.accumulate(np.minimum(px, entry_px)) + distance
+    crossing = seg.index[int(hits.argmax())] if hits.any() else None
+    if real_cls != "trail_stop" and (crossing is None or real_exit_ts <= crossing):
+        return real_exit_ts, "real_exit", False  # it really ended another way first
+    if crossing is not None:
+        return crossing, "trail", bool(crossing > real_exit_ts)
+    return cutoff, "square_off", bool(cutoff > real_exit_ts)
+
+
+def _quotes_at(db: Any, instrument: str, session: str, ts: Any) -> dict[str, dict[str, Any]] | None:
+    """{security_id: {bid, ask}} from the newest recorded chain snapshot at or before ``ts`` --
+    None if there is none, or it is older than QUOTE_MAX_AGE_S."""
+    import pandas as pd
+
+    stamp = ts.tz_convert("Asia/Kolkata").strftime("%Y-%m-%dT%H:%M:%S+05:30")
+    snap = db.execute(
+        "SELECT MAX(ts) FROM chain WHERE session=? AND instrument=? AND ts<=?",
+        (session, instrument, stamp),
+    ).fetchone()[0]
+    if not snap or (ts - pd.Timestamp(snap)).total_seconds() > QUOTE_MAX_AGE_S:
+        return None
+    rows = db.execute(
+        "SELECT security_id, bid, ask FROM chain"
+        " WHERE session=? AND instrument=? AND ts=? AND security_id IS NOT NULL",
+        (session, instrument, snap),
+    ).fetchall()
+    return {str(r[0]): {"bid": r[1], "ask": r[2]} for r in rows}
+
+
+def _net_at(trade: dict[str, Any], quotes: dict[str, dict[str, Any]] | None) -> float | None:
+    """Net rupees of closing the trade into ``quotes``: a bought leg sells at the bid, a sold leg
+    buys back at the ask, entry at the journal's own leg prices, real Dhan charges on both sides.
+    None if any leg has no recorded quote -- never estimated."""
+    from index_ai import strategy_lab
+    from index_ai.charges import leg_charge_rupees
+
+    if not quotes:
+        return None
+    opt = trade.get("option") or {}
+    qty = int(opt.get("quantity") or 0)
+    inst = str(trade.get("instrument") or opt.get("instrument") or "").upper()
+    exch = "BSE" if inst == "SENSEX" else "NSE"
+    net = 0.0
+    for leg in opt.get("legs") or [opt]:
+        side = str(leg.get("transaction_type") or "").upper()
+        entry = float(leg.get("ltp") or 0)
+        if side not in ("BUY", "SELL") or entry <= 0 or qty <= 0:
+            return None
+        closing = strategy_lab._flip(side)
+        px = strategy_lab._fill(quotes.get(str(leg.get("security_id"))), closing)
+        if px is None:
+            return None
+        net += ((px - entry) if side == "BUY" else (entry - px)) * qty
+        net -= leg_charge_rupees(entry, qty, side, exchange=exch)
+        net -= leg_charge_rupees(px, qty, closing, exchange=exch)
+    return net
+
+
+def replay_segment(
+    lane: str,
+    instrument: str,
+    records: list[dict[str, Any]],
+    distance: float,
+    db: Any,
+    _paths: dict[Any, Any] | None = None,
+) -> dict[str, Any]:
+    """Replay a segment's newest OBSERVE_MAX trades under today's distance and each candidate.
+
+    ``matched`` counts trades whose replay at TODAY's distance agrees with what really happened:
+    a real stop exit matches when the replayed stop fires within MATCH_TOLERANCE_S of it; any
+    other real exit matches unless the replayed stop would have fired more than MATCH_TOLERANCE_S
+    earlier. ``compared`` counts trades priced at today's distance AND every candidate; the
+    rupee sums in ``by_distance`` are over exactly those trades (unrounded).
+    """
+    import pandas as pd
+
+    from index_ai import strategy_lab
+
+    paths = {} if _paths is None else _paths
+    dists = [distance, *_candidates(distance)]
+    out: dict[str, Any] = {
+        "lane": lane,
+        "instrument": instrument,
+        "distance": distance,
+        "trades_with_ticks": 0,
+        "matched": 0,
+        "match_rate": None,
+        "could_not_replay": 0,
+        "could_not_price": 0,
+        "compared": 0,
+        "by_distance": {d: {"net": 0.0, "wins": 0, "extended": 0} for d in dists},
+    }
+    quotes: dict[Any, Any] = {}
+    for rec in records[:OBSERVE_MAX]:
+        trade, cls = rec["_trade"], rec["cls"]
+        closed = (trade.get("option") or {}).get("closed_at")
+        session = str(trade.get("created_at") or "")[:10]
+        if not closed or not session:
+            out["could_not_replay"] += 1
+            continue
+        if (session, instrument) not in paths:
+            paths[(session, instrument)] = strategy_lab._index_path(instrument, session, db=db)
+        real_exit = pd.Timestamp(closed)
+        exits = {d: _replay_exit(trade, d, paths[(session, instrument)], real_exit, cls) for d in dists}
+        if any(e is None for e in exits.values()):  # no entry price / no ticks / unknown action
+            out["could_not_replay"] += 1
+            continue
+        out["trades_with_ticks"] += 1
+        cur_ts, cur_how, _ = exits[distance]
+        if cls == "trail_stop":
+            ok = cur_how == "trail" and abs((cur_ts - real_exit).total_seconds()) <= MATCH_TOLERANCE_S
+        else:
+            ok = not (cur_how == "trail" and (real_exit - cur_ts).total_seconds() > MATCH_TOLERANCE_S)
+        out["matched"] += int(ok)
+        nets = {}
+        for d, (ts, _how, _ext) in exits.items():
+            if (session, ts) not in quotes:
+                quotes[(session, ts)] = _quotes_at(db, instrument, session, ts)
+            nets[d] = _net_at(trade, quotes[(session, ts)])
+        if any(n is None for n in nets.values()):
+            out["could_not_price"] += 1
+            continue
+        out["compared"] += 1
+        for d, n in nets.items():
+            b = out["by_distance"][d]
+            b["net"] += n
+            b["wins"] += int(n > 0)
+            b["extended"] += int(exits[d][2])
+    if out["trades_with_ticks"]:
+        out["match_rate"] = out["matched"] / out["trades_with_ticks"]
+    return out
+
+
+def replay_diagnostic() -> list[dict[str, Any]]:
+    """A manual look: replay all six India segments regardless of the ladder. Informational only
+    -- never called by the daily run, and a result here is never a suggestion."""
+    from index_ai.strategies.credit_spread import SELL_TRAIL_POINTS
+
+    rows = _india_rows()
+    out: list[dict[str, Any]] = []
+    paths: dict[Any, Any] = {}
+    with _market_log_ro() as db:
+        for inst in SELL_TRAIL_POINTS:
+            for lane in ("buy", "sell"):
+                seg = _segment_id(inst, lane)
+                try:
+                    res = replay_segment(
+                        lane, inst, rows[seg], _distance(inst, lane), db, _paths=paths
+                    )
+                    out.append({"segment": seg, **res})
+                except Exception as exc:
+                    out.append({"segment": seg, "error": str(exc)[:200]})
+    return out
 
 
 def _load_state() -> dict[str, Any] | None:

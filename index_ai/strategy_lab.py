@@ -299,17 +299,20 @@ def _trail_hit(pos: _Pos, path: pd.Series, until: str, dist: float, spot: float)
     return False
 
 
-def _index_path(instrument: str, session: str) -> pd.Series:
+def _index_path(instrument: str, session: str, db: Any | None = None) -> pd.Series:
     """The index's real recorded prices for the session, indexed by the
     EXCHANGE's own trade time (``ltt``), not when the tick reached us --
     delivery usually lags 3-10s but spiked to 7 min on 2026-09-16 and 29 min
     on 2026-09-17. Dhan's ltt is IST wall-clock seconds stored as an epoch,
-    so decode it as UTC. 09:15-15:30 only."""
-    with market_log.connect() as db:
-        rows = db.execute(
-            "SELECT ltt, ltp FROM ticks WHERE session=? AND instrument=? AND ltp > 0 AND ltt > 0",
-            (session, instrument.upper()),
-        ).fetchall()
+    so decode it as UTC. 09:15-15:30 only. ``db``: an already-open (e.g.
+    read-only) connection to read from instead of opening the market log."""
+    sql = "SELECT ltt, ltp FROM ticks WHERE session=? AND instrument=? AND ltp > 0 AND ltt > 0"
+    args = (session, instrument.upper())
+    if db is not None:
+        rows = db.execute(sql, args).fetchall()
+    else:
+        with market_log.connect() as con:
+            rows = con.execute(sql, args).fetchall()
     if not rows:
         return pd.Series(dtype=float)
     idx = pd.to_datetime([r[0] for r in rows], unit="s").tz_localize("Asia/Kolkata")
